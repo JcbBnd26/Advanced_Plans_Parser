@@ -61,10 +61,20 @@ def draw_overlay(
             width=2,
         )
 
-    # Blocks in red; tables get a yellow tint.
+    # Blocks: headers in purple, tables in yellow, others in red.
     for blk in blocks:
         x0, y0, x1, y1 = blk.bbox()
-        if blk.is_table:
+        if getattr(blk, "label", None) == "note_column_header":
+            # Outline header blocks in purple
+            draw.rectangle(
+                [
+                    _scale_point(x0, y0, scale),
+                    _scale_point(x1, y1, scale),
+                ],
+                outline=(128, 0, 128, 220),  # purple
+                width=3,
+            )
+        elif blk.is_table:
             draw.rectangle(
                 [
                     _scale_point(x0, y0, scale),

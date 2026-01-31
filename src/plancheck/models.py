@@ -54,6 +54,7 @@ class BlockCluster:
     label: Optional[str] = None
     is_table: bool = False
     is_notes: bool = False
+    is_header: bool = False
 
     def bbox(self) -> Tuple[float, float, float, float]:
         xs0: List[float] = []

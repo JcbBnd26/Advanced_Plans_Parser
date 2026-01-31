@@ -418,20 +418,55 @@ def mark_tables(blocks: List[BlockCluster], settings: GroupingConfig) -> None:
         )
 
 
-def mark_notes(blocks: List[BlockCluster]) -> None:
+def mark_headers(blocks: List[BlockCluster], debug_path: str = None) -> None:
+    """Identify and label header blocks before notes grouping."""
+    header_re = re.compile(r"^[A-Z0-9\s\-\(\)\'\.]+: *$", re.ASCII)
+    debug_path = debug_path or "debug_headers.txt"
+    with open(debug_path, "a", encoding="utf-8") as dbg:
+        for i, blk in enumerate(blocks):
+            blk.is_header = False
+            if blk.rows:
+                first_row = blk.rows[0]
+                texts = [
+                    b.text
+                    for b in sorted(first_row.boxes, key=lambda b: b.x0)
+                    if b.text
+                ]
+                if texts:
+                    row_text = " ".join(texts).strip()
+                    row_text_norm = re.sub(r"\s+", " ", row_text).upper()
+                    is_bold = any(
+                        getattr(b, "fontname", "").lower().find("bold") >= 0
+                        for b in first_row.boxes
+                    )
+                    if header_re.match(row_text_norm):
+                        blk.is_header = True
+                        blk.label = "note_column_header"
+                        dbg.write(f"[DEBUG] Header block {i}: '{row_text_norm}'\n")
+
+
+def mark_notes(blocks: List[BlockCluster], debug_path: str = None) -> None:
+    """Label notes blocks, skipping any block already labeled as header."""
     note_re = re.compile(r"^\d+\.")
-    for blk in blocks:
-        blk.is_notes = False
-        if len(blk.rows) < 2:
-            continue
-        first_row = blk.rows[0]
-        texts = [b.text for b in sorted(first_row.boxes, key=lambda b: b.x0) if b.text]
-        if not texts:
-            continue
-        row_text = " ".join(texts).strip()
-        if note_re.match(row_text):
-            blk.is_notes = True
-            blk.label = "notes_block"
+    debug_path = debug_path or "debug_headers.txt"
+    with open(debug_path, "a", encoding="utf-8") as dbg:
+        for i, blk in enumerate(blocks):
+            blk.is_notes = False
+            if getattr(blk, "is_header", False):
+                continue  # Skip header blocks
+            if blk.rows:
+                first_row = blk.rows[0]
+                texts = [
+                    b.text
+                    for b in sorted(first_row.boxes, key=lambda b: b.x0)
+                    if b.text
+                ]
+                if texts:
+                    row_text = " ".join(texts).strip()
+                    row_text_norm = re.sub(r"\s+", " ", row_text).upper()
+                    if note_re.match(row_text_norm) and len(blk.rows) >= 2:
+                        blk.is_notes = True
+                        blk.label = "notes_block"
 
 
 def build_clusters(
@@ -440,5 +475,6 @@ def build_clusters(
     rows = group_rows(boxes, settings)
     blocks = group_blocks(rows, settings)
     mark_tables(blocks, settings)
-    mark_notes(blocks)
+    mark_headers(blocks, debug_path=None)
+    mark_notes(blocks, debug_path=None)
     return blocks

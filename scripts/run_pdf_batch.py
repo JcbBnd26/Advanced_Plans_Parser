@@ -1,3 +1,58 @@
+import re
+
+
+def detect_headers_from_words(boxes: list[GlyphBox]) -> list[GlyphBox]:
+    """Tag header candidates directly from word boxes (before grouping)."""
+    # Improved: group words into lines by y0 and horizontal proximity
+    from collections import defaultdict
+
+    header_re = re.compile(r"^[A-Z0-9\s\-\(\)\'\.]+: *$", re.ASCII)
+    # Step 1: group by y0 (row)
+    y_tol = 2.0  # tolerance for y alignment in points
+    rows = defaultdict(list)
+    for b in boxes:
+        found = False
+        for y in rows:
+            if abs(b.y0 - y) < y_tol:
+                rows[y].append(b)
+                found = True
+                break
+        if not found:
+            rows[b.y0].append(b)
+    header_boxes = []
+    for row in rows.values():
+        # Step 2: sort by x0 and group horizontally close words into lines
+        row = sorted(row, key=lambda b: b.x0)
+        line = []
+        lines = []
+        x_gap_tol = 20.0  # max gap between words in a line (points)
+        for b in row:
+            if not line:
+                line.append(b)
+            else:
+                prev = line[-1]
+                if b.x0 - prev.x1 < x_gap_tol:
+                    line.append(b)
+                else:
+                    lines.append(line)
+                    line = [b]
+        if line:
+            lines.append(line)
+        # Step 3: apply header regex to each line
+        for line_words in lines:
+            line_text = " ".join(b.text for b in line_words if b.text).strip()
+            line_text_norm = re.sub(r"\s+", " ", line_text).upper()
+            if header_re.match(line_text_norm):
+                for b in line_words:
+                    b.origin = "header_candidate"
+                header_boxes.extend(line_words)
+    return header_boxes
+
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import argparse
 import json
 import shutil
@@ -14,6 +69,7 @@ from plancheck import (
     estimate_skew_degrees,
     group_blocks,
     group_rows,
+    mark_notes,
     mark_tables,
     nms_prune,
     rotate_boxes,
@@ -108,9 +164,39 @@ def process_page(
     rows = group_rows(boxes, cfg)
     blocks = group_blocks(rows, cfg)
     mark_tables(blocks, cfg)
+    # Block-level header detection and debug output
+    from plancheck.grouping import mark_headers
+
+    debug_path = str(run_dir / "artifacts" / "debug_headers.txt")
+    mark_headers(blocks, debug_path=debug_path)
+    # Notes detection, will skip header blocks
+    mark_notes(blocks, debug_path=debug_path)
 
     boxes_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_boxes.json"
     save_boxes_json(boxes, boxes_path)
+
+    # Save block-level clusters with tags
+    blocks_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_blocks.json"
+
+    def serialize_block(blk):
+        x0, y0, x1, y1 = blk.bbox()
+        return {
+            "page": blk.page,
+            "bbox": [x0, y0, x1, y1],
+            "rows": [
+                {
+                    "bbox": list(row.bbox()),
+                    "texts": [b.text for b in row.boxes],
+                }
+                for row in blk.rows
+            ],
+            "label": blk.label,
+            "is_table": blk.is_table,
+            "is_notes": blk.is_notes,
+        }
+
+    blocks_serialized = [serialize_block(blk) for blk in blocks]
+    blocks_path.write_text(json.dumps(blocks_serialized, indent=2))
 
     overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
     scale = resolution / 72.0
