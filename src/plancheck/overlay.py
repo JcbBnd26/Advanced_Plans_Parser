@@ -38,18 +38,18 @@ def draw_overlay(
 
     draw = ImageDraw.Draw(img, "RGBA")
 
-    # Glyph boxes in light blue.
+    # Glyph boxes in light gray.
     for b in boxes:
         draw.rectangle(
             [
                 _scale_point(b.x0, b.y0, scale),
                 _scale_point(b.x1, b.y1, scale),
             ],
-            outline=(66, 135, 245, 180),
+            outline=(180, 180, 180, 180),  # light gray
             width=1,
         )
 
-    # Rows in green.
+    # Rows in light gray.
     for r in rows:
         x0, y0, x1, y1 = r.bbox()
         draw.rectangle(
@@ -57,7 +57,7 @@ def draw_overlay(
                 _scale_point(x0, y0, scale),
                 _scale_point(x1, y1, scale),
             ],
-            outline=(46, 204, 113, 200),
+            outline=(180, 180, 180, 180),  # light gray
             width=2,
         )
 
