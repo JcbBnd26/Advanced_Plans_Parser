@@ -20,7 +20,7 @@ class GroupingConfig:
     # Horizontal gap multiplier to split a row when boxes are too far apart (prevents spanning whole page).
     row_split_gap_mult: float = 2.0
     # Gap between columns (in median word widths) to split page into columns before row grouping.
-    column_gap_mult: float = 4.5
+    column_gap_mult: float = 1.2
     # Enable histogram-based gutter detection before gap-based splitting.
     use_hist_gutter: bool = False
     # Minimum gutter width (in median word widths) for histogram-based column detection.
