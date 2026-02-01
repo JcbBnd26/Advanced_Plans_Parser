@@ -1,0 +1,288 @@
+{
+  "page_num": 2,
+  "resolution": 200,
+  "has_anomalies": true,
+  "anomalous_fonts": [
+    "RomanT"
+  ],
+  "font_inflation_factors": {
+    "ArialMT": 1.052,
+    "RomanT": 1.358,
+    "Arial-BoldMT": 0.969
+  },
+  "word_anomalies": [
+    {
+      "text": "weN_TODO_100-61507:scoD",
+      "fontname": "ArialMT",
+      "reported_bbox": [
+        91.2280410000003,
+        1143.3252014999998,
+        103.80014100000031,
+        1311.0118713
+      ],
+      "visual_bbox": [
+        91.8,
+        1143.3252014999998,
+        103.32000000000001,
+        1311.0118713
+      ],
+      "reported_width": 12.57,
+      "visual_width": 11.52,
+      "inflation_factor": 1.091,
+      "overhang_percent": 8.4,
+      "is_anomalous": false
+    },
+    {
+      "text": "weN_100-61507_42ytnuoC",
+      "fontname": "ArialMT",
+      "reported_bbox": [
+        91.2280410000003,
+        826.1059743000005,
+        103.80014100000031,
+        979.1461476
+      ],
+      "visual_bbox": [
+        91.8,
+        826.1059743000005,
+        103.68,
+        979.1461476
+      ],
+      "reported_width": 12.57,
+      "visual_width": 11.88,
+      "inflation_factor": 1.058,
+      "overhang_percent": 5.5,
+      "is_anomalous": false
+    },
+    {
+      "text": "nialCcM_ycnediseR",
+      "fontname": "ArialMT",
+      "reported_bbox": [
+        91.2280410000003,
+        665.4219642000004,
+        103.80014100000031,
+        776.4964677000005
+      ],
+      "visual_bbox": [
+        91.8,
+        665.4219642000004,
+        103.68,
+        776.4964677000005
+      ],
+      "reported_width": 12.57,
+      "visual_width": 11.88,
+      "inflation_factor": 1.058,
+      "overhang_percent": 5.5,
+      "is_anomalous": false
+    },
+    {
+      "text": "nialCcM_ycnediseR",
+      "fontname": "ArialMT",
+      "reported_bbox": [
+        91.2280410000003,
+        982.6411913999999,
+        103.80014100000031,
+        1093.7156949
+      ],
+      "visual_bbox": [
+        91.8,
+        982.6411913999999,
+        103.68,
+        1093.7156949
+      ],
+      "reported_width": 12.57,
+      "visual_width": 11.88,
+      "inflation_factor": 1.058,
+      "overhang_percent": 5.5,
+      "is_anomalous": false
+    },
+    {
+      "text": "SURFACINGMILLINGS",
+      "fontname": "ArialMT",
+      "reported_bbox": [
+        1931.9192973,
+        833.188041,
+        2064.642957,
+        845.760141
+      ],
+      "visual_bbox": [
+        1932.48,
+        833.188041,
+        2066.04,
+        845.760141
+      ],
+      "reported_width": 132.72,
+      "visual_width": 133.56,
+      "inflation_factor": 0.994,
+      "overhang_percent": -0.6,
+      "is_anomalous": false
+    },
+    {
+      "text": "TRANSPORTATION",
+      "fontname": "RomanT",
+      "reported_bbox": [
+        2364.8816791518275,
+        67.9098312000001,
+        2474.1745180521757,
+        80.47959120000019
+      ],
+      "visual_bbox": [
+        2363.04,
+        67.9098312000001,
+        2414.52,
+        80.47959120000019
+      ],
+      "reported_width": 109.29,
+      "visual_width": 51.48,
+      "inflation_factor": 2.123,
+      "overhang_percent": 52.9,
+      "is_anomalous": true
+    },
+    {
+      "text": "DEPARTMENT",
+      "fontname": "RomanT",
+      "reported_bbox": [
+        2251.103498025747,
+        67.9098312000001,
+        2333.2279783016584,
+        80.47959120000019
+      ],
+      "visual_bbox": [
+        2249.28,
+        67.9098312000001,
+        2334.6,
+        80.47959120000019
+      ],
+      "reported_width": 82.12,
+      "visual_width": 85.32,
+      "inflation_factor": 0.963,
+      "overhang_percent": -3.9,
+      "is_anomalous": false
+    },
+    {
+      "text": "OKLAHOMA",
+      "fontname": "RomanT",
+      "reported_bbox": [
+        2177.64,
+        67.9098312000001,
+        2243.1900728132046,
+        80.47959120000019
+      ],
+      "visual_bbox": [
+        2178.36,
+        67.9098312000001,
+        2244.6,
+        80.47959120000019
+      ],
+      "reported_width": 65.55,
+      "visual_width": 66.24,
+      "inflation_factor": 0.99,
+      "overhang_percent": -1.1,
+      "is_anomalous": false
+    },
+    {
+      "text": "SIDEWALKCURB",
+      "fontname": "Arial-BoldMT",
+      "reported_bbox": [
+        953.6400000000001,
+        1006.888041,
+        1056.9952341,
+        1019.460141
+      ],
+      "visual_bbox": [
+        953.2800000000001,
+        1006.888041,
+        1058.4,
+        1019.460141
+      ],
+      "reported_width": 103.36,
+      "visual_width": 105.12,
+      "inflation_factor": 0.983,
+      "overhang_percent": -1.7,
+      "is_anomalous": false
+    },
+    {
+      "text": "CONCRETE",
+      "fontname": "Arial-BoldMT",
+      "reported_bbox": [
+        1053.3453345,
+        186.62804099999994,
+        1123.8873876,
+        199.20014100000003
+      ],
+      "visual_bbox": [
+        1051.2,
+        186.62804099999994,
+        1125.0,
+        199.20014100000003
+      ],
+      "reported_width": 70.54,
+      "visual_width": 73.8,
+      "inflation_factor": 0.956,
+      "overhang_percent": -4.6,
+      "is_anomalous": false
+    },
+    {
+      "text": "GENERAL:",
+      "fontname": "Arial-BoldMT",
+      "reported_bbox": [
+        1135.0639845,
+        186.62804099999994,
+        1200.7154907,
+        199.20014100000003
+      ],
+      "visual_bbox": [
+        1132.92,
+        186.62804099999994,
+        1200.96,
+        199.20014100000003
+      ],
+      "reported_width": 65.65,
+      "visual_width": 68.04,
+      "inflation_factor": 0.965,
+      "overhang_percent": -3.6,
+      "is_anomalous": false
+    },
+    {
+      "text": "GENERAL:",
+      "fontname": "Arial-BoldMT",
+      "reported_bbox": [
+        1134.7165566,
+        728.428041,
+        1200.3680628,
+        741.000141
+      ],
+      "visual_bbox": [
+        1132.56,
+        728.428041,
+        1200.6000000000001,
+        741.000141
+      ],
+      "reported_width": 65.65,
+      "visual_width": 68.04,
+      "inflation_factor": 0.965,
+      "overhang_percent": -3.6,
+      "is_anomalous": false
+    },
+    {
+      "text": "GENERAL",
+      "fontname": "Arial-BoldMT",
+      "reported_bbox": [
+        197.46000000000004,
+        62.42164920000005,
+        271.21799628,
+        77.50816920000011
+      ],
+      "visual_bbox": [
+        196.92000000000002,
+        62.42164920000005,
+        272.52,
+        77.50816920000011
+      ],
+      "reported_width": 73.76,
+      "visual_width": 75.6,
+      "inflation_factor": 0.976,
+      "overhang_percent": -2.5,
+      "is_anomalous": false
+    }
+  ]
+}

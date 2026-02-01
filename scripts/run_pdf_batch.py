@@ -97,9 +97,21 @@ from plancheck.models import (
 
 def make_run_dir(base: Path, name: str) -> Path:
     run_dir = base / name
-    for sub in ["inputs", "artifacts", "overlays", "exports", "logs"]:
+    for sub in ["artifacts", "overlays", "exports", "logs"]:
         (run_dir / sub).mkdir(parents=True, exist_ok=True)
     return run_dir
+
+
+def cleanup_old_runs(run_root: Path, keep: int = 50) -> None:
+    """Delete old run folders, keeping only the most recent `keep` runs."""
+    run_dirs = sorted(
+        [d for d in run_root.iterdir() if d.is_dir() and d.name.startswith("run_")],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for old_dir in run_dirs[keep:]:
+        shutil.rmtree(old_dir, ignore_errors=True)
+        print(f"Cleaned up old run: {old_dir.name}")
 
 
 def page_boxes(pdf_path: Path, page_num: int) -> tuple[list[GlyphBox], float, float]:
@@ -161,16 +173,8 @@ def summarize(blocks: list[BlockCluster]) -> str:
     return "\n".join(lines)
 
 
-def process_page(
-    pdf: Path, page_num: int, run_root: Path, run_prefix: str, resolution: int
-) -> None:
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"run_{stamp}_{run_prefix}_p{page_num}"
-    run_dir = make_run_dir(run_root, run_name)
-
-    copied_pdf = run_dir / "inputs" / pdf.name
-    shutil.copy2(pdf, copied_pdf)
-
+def process_page(pdf: Path, page_num: int, run_dir: Path, resolution: int) -> dict:
+    """Process a single page and return page results for manifest."""
     pdf_stem = pdf.stem.replace(" ", "_")
 
     boxes, page_w, page_h = page_boxes(pdf, page_num)
@@ -406,17 +410,11 @@ def process_page(
         misc_title_regions=misc_title_regions,
     )
 
-    manifest = {
-        "run_id": run_dir.name,
-        "created_at": datetime.now().isoformat(),
-        "pdf_original": str(pdf),
-        "pdf_copied": str(copied_pdf),
+    # Return page results for manifest (don't write manifest here)
+    page_result = {
         "page": page_num,
         "page_width": page_w,
         "page_height": page_h,
-        "render_resolution_dpi": resolution,
-        "overlay_scale": scale,
-        "settings": vars(cfg),
         "skew_degrees": skew,
         "counts": {
             "boxes": len(boxes),
@@ -442,10 +440,56 @@ def process_page(
             "revisions_json": str(revisions_path),
         },
     }
-    (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
-    print(f"page {page_num}: {run_dir}", flush=True)
+    print(f"  page {page_num}: done", flush=True)
     print(summarize(blocks), flush=True)
+    return page_result
+
+
+def run_pdf(
+    pdf: Path,
+    start: int,
+    end: int | None,
+    resolution: int,
+    run_root: Path,
+    run_prefix: str,
+) -> Path:
+    """Process pages of a single PDF and create one run folder with all results."""
+    with pdfplumber.open(pdf) as pdf_doc:
+        total_pages = len(pdf_doc.pages)
+    end_page = end if end is not None else total_pages
+
+    # Create single run folder for this PDF
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"run_{stamp}_{run_prefix}"
+    run_dir = make_run_dir(run_root, run_name)
+
+    print(f"Processing {pdf.name} -> {run_dir}", flush=True)
+
+    page_results = []
+    for page_num in range(start, end_page):
+        try:
+            result = process_page(pdf, page_num, run_dir, resolution)
+            page_results.append(result)
+        except Exception as exc:  # pragma: no cover
+            print(f"  page {page_num}: ERROR {exc}", flush=True)
+            page_results.append({"page": page_num, "error": str(exc)})
+
+    # Write single manifest for entire run
+    manifest = {
+        "run_id": run_dir.name,
+        "created_at": datetime.now().isoformat(),
+        "source_pdf": str(pdf.resolve()),
+        "pdf_name": pdf.name,
+        "render_resolution_dpi": resolution,
+        "overlay_scale": resolution / 72.0,
+        "settings": vars(GroupingConfig()),
+        "pages_processed": list(range(start, end_page)),
+        "pages": page_results,
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    print(f"Run complete: {run_dir}", flush=True)
+    return run_dir
 
 
 def main() -> None:
@@ -461,25 +505,34 @@ def main() -> None:
     parser.add_argument(
         "--run-prefix",
         type=str,
-        default="batch",
-        help="Suffix used in run folder names",
+        default=None,
+        help="Prefix for run folder name (default: derived from PDF name)",
     )
     parser.add_argument(
         "--run-root", type=Path, default=Path("runs"), help="Root directory for runs"
     )
+    parser.add_argument(
+        "--keep-runs",
+        type=int,
+        default=50,
+        help="Number of runs to keep (oldest deleted)",
+    )
     args = parser.parse_args()
 
-    with pdfplumber.open(args.pdf) as pdf:
-        total_pages = len(pdf.pages)
-    end_page = args.end if args.end is not None else total_pages
+    # Derive run prefix from PDF name if not provided
+    run_prefix = args.run_prefix or args.pdf.stem.replace(" ", "_")[:20]
 
-    for page_num in range(args.start, end_page):
-        try:
-            process_page(
-                args.pdf, page_num, args.run_root, args.run_prefix, args.resolution
-            )
-        except Exception as exc:  # pragma: no cover
-            print(f"page {page_num}: ERROR {exc}", flush=True)
+    run_pdf(
+        pdf=args.pdf,
+        start=args.start,
+        end=args.end,
+        resolution=args.resolution,
+        run_root=args.run_root,
+        run_prefix=run_prefix,
+    )
+
+    # Cleanup old runs
+    cleanup_old_runs(args.run_root, args.keep_runs)
 
 
 if __name__ == "__main__":
