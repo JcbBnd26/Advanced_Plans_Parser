@@ -32,21 +32,25 @@ def make_run_dir(name: str | None = None) -> Path:
 def page_boxes(pdf_path: Path, page_num: int) -> tuple[list[GlyphBox], float, float]:
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[page_num]
+        page_w, page_h = float(page.width), float(page.height)
         words = page.extract_words()
         boxes: list[GlyphBox] = []
         for w in words:
-            x0 = float(w.get("x0", 0.0))
-            x1 = float(w.get("x1", 0.0))
-            y0 = float(w.get("top", 0.0))
-            y1 = float(w.get("bottom", 0.0))
+            # Clip coordinates to page bounds (PDF content can extend past page edge)
+            x0 = max(0.0, min(page_w, float(w.get("x0", 0.0))))
+            x1 = max(0.0, min(page_w, float(w.get("x1", 0.0))))
+            y0 = max(0.0, min(page_h, float(w.get("top", 0.0))))
+            y1 = max(0.0, min(page_h, float(w.get("bottom", 0.0))))
             text = w.get("text", "")
+            # Skip degenerate boxes (fully clipped)
+            if x1 <= x0 or y1 <= y0:
+                continue
             boxes.append(
                 GlyphBox(
                     page=page_num, x0=x0, y0=y0, x1=x1, y1=y1, text=text, origin="text"
                 )
             )
-        w, h = float(page.width), float(page.height)
-    return boxes, w, h
+    return boxes, page_w, page_h
 
 
 def render_page_image(pdf_path: Path, page_num: int, resolution: int = 200):
