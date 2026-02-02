@@ -18,7 +18,7 @@ class GroupingConfig:
     # Maximum block height relative to median row height; beyond this, start a new block.
     max_block_height_mult: float = 60.0
     # Horizontal gap multiplier to split a row when boxes are too far apart (prevents spanning whole page).
-    row_split_gap_mult: float = 2.0
+    row_split_gap_mult: float = 3.0
     # Gap between columns (in median word widths) to split page into columns before row grouping.
     column_gap_mult: float = 1.2
     # Enable histogram-based gutter detection before gap-based splitting.
