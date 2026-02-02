@@ -23,7 +23,7 @@ class PlanParserGUI:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Plan Parser")
+        self.root.title("Advanced Plans Parser")
         self.root.geometry("550x480")
         self.root.resizable(True, True)
 
