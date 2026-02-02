@@ -14,6 +14,7 @@ from .models import (
     NotesColumn,
     RevisionRegion,
     RowBand,
+    StandardDetailRegion,
 )
 
 
@@ -35,6 +36,7 @@ def draw_overlay(
     abbreviation_regions: Iterable[AbbreviationRegion] | None = None,
     revision_regions: Iterable[RevisionRegion] | None = None,
     misc_title_regions: Iterable[MiscTitleRegion] | None = None,
+    standard_detail_regions: Iterable[StandardDetailRegion] | None = None,
 ) -> None:
     """Render grouping stages as an overlay PNG for quick visual QA.
 
@@ -388,5 +390,59 @@ def draw_overlay(
                 outline=(255, 105, 180, 220),  # PINK - misc_title box
                 width=3,
             )
+
+    # Standard detail regions in dark cyan
+    if standard_detail_regions:
+        for detail in standard_detail_regions:
+            # Draw outer region box
+            x0, y0, x1, y1 = detail.bbox()
+            if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
+                continue
+            draw.rectangle(
+                [
+                    _scale_point(x0, y0, scale),
+                    _scale_point(x1, y1, scale),
+                ],
+                outline=(0, 139, 139, 220),  # DARK CYAN - standard detail regions
+                width=4,
+            )
+
+            # Draw header in darker cyan
+            if detail.header:
+                hx0, hy0, hx1, hy1 = detail.header.bbox()
+                draw.rectangle(
+                    [
+                        _scale_point(hx0, hy0, scale),
+                        _scale_point(hx1, hy1, scale),
+                    ],
+                    outline=(0, 100, 100, 255),  # darker cyan
+                    width=3,
+                )
+
+            # Draw each entry - sheet number in teal, description in light teal
+            for entry in detail.entries:
+                # Draw sheet number box
+                if entry.sheet_bbox:
+                    sx0, sy0, sx1, sy1 = entry.sheet_bbox
+                    draw.rectangle(
+                        [
+                            _scale_point(sx0, sy0, scale),
+                            _scale_point(sx1, sy1, scale),
+                        ],
+                        outline=(0, 180, 180, 220),  # teal
+                        width=2,
+                    )
+
+                # Draw description box
+                if entry.description_bbox:
+                    dx0, dy0, dx1, dy1 = entry.description_bbox
+                    draw.rectangle(
+                        [
+                            _scale_point(dx0, dy0, scale),
+                            _scale_point(dx1, dy1, scale),
+                        ],
+                        outline=(100, 200, 200, 180),  # light teal
+                        width=2,
+                    )
 
     img.save(out_path)

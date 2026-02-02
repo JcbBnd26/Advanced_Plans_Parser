@@ -240,6 +240,75 @@ class RevisionRegion:
 
 
 @dataclass
+class StandardDetailEntry:
+    """A standard detail entry: sheet number + description."""
+
+    page: int
+    sheet_number: str = ""  # Sheet/detail number (e.g., "SS-1", "621-1")
+    description: str = ""  # Description of the detail sheet
+    sheet_bbox: Optional[Tuple[float, float, float, float]] = None
+    description_bbox: Optional[Tuple[float, float, float, float]] = None
+
+    def bbox(self) -> Tuple[float, float, float, float]:
+        """Combined bounding box of sheet number and description."""
+        xs0, ys0, xs1, ys1 = [], [], [], []
+        if self.sheet_bbox:
+            xs0.append(self.sheet_bbox[0])
+            ys0.append(self.sheet_bbox[1])
+            xs1.append(self.sheet_bbox[2])
+            ys1.append(self.sheet_bbox[3])
+        if self.description_bbox:
+            xs0.append(self.description_bbox[0])
+            ys0.append(self.description_bbox[1])
+            xs1.append(self.description_bbox[2])
+            ys1.append(self.description_bbox[3])
+        if not xs0:
+            return (0, 0, 0, 0)
+        return (min(xs0), min(ys0), max(xs1), max(ys1))
+
+
+@dataclass
+class StandardDetailRegion:
+    """A standard details region: header + entries (sheet numbers and descriptions)."""
+
+    page: int
+    header: Optional[BlockCluster] = None
+    subheader: Optional[str] = (
+        None  # e.g., "THE FOLLOWING ODOT STANDARD DETAILS SHALL BE USED ON THIS PROJECT:"
+    )
+    subheader_bbox: Optional[Tuple[float, float, float, float]] = None
+    entries: List[StandardDetailEntry] = field(default_factory=list)
+    is_boxed: bool = False
+    box_bbox: Optional[Tuple[float, float, float, float]] = None
+
+    def header_text(self) -> str:
+        if not self.header or not self.header.rows:
+            return ""
+        texts = [b.text for b in self.header.rows[0].boxes if b.text]
+        return " ".join(texts).strip()
+
+    def bbox(self) -> Tuple[float, float, float, float]:
+        if self.box_bbox:
+            return self.box_bbox
+        xs0, ys0, xs1, ys1 = [], [], [], []
+        if self.header:
+            x0, y0, x1, y1 = self.header.bbox()
+            xs0.append(x0)
+            ys0.append(y0)
+            xs1.append(x1)
+            ys1.append(y1)
+        for entry in self.entries:
+            x0, y0, x1, y1 = entry.bbox()
+            xs0.append(x0)
+            ys0.append(y0)
+            xs1.append(x1)
+            ys1.append(y1)
+        if not xs0:
+            return (0, 0, 0, 0)
+        return (min(xs0), min(ys0), max(xs1), max(ys1))
+
+
+@dataclass
 class GlyphBox:
     """Smallest unit: typically a word box from text extraction or OCR."""
 

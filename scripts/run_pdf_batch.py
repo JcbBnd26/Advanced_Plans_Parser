@@ -80,6 +80,7 @@ from plancheck.legends import (
     detect_legend_regions,
     detect_misc_title_regions,
     detect_revision_regions,
+    detect_standard_detail_regions,
     extract_graphics,
     filter_graphics_outside_regions,
 )
@@ -92,6 +93,8 @@ from plancheck.models import (
     MiscTitleRegion,
     RevisionEntry,
     RevisionRegion,
+    StandardDetailEntry,
+    StandardDetailRegion,
 )
 
 
@@ -299,6 +302,17 @@ def process_page(pdf: Path, page_num: int, run_dir: Path, resolution: int) -> di
         debug_path=debug_path,
         exclusion_zones=exclusion_zones,
     )
+
+    # Detect standard detail regions (similar to abbreviations - two-column text)
+    standard_detail_regions = detect_standard_detail_regions(
+        blocks=blocks,
+        graphics=graphics,
+        page_width=page_w,
+        page_height=page_h,
+        debug_path=debug_path,
+        exclusion_zones=exclusion_zones,
+    )
+
     # Save abbreviation regions
     abbrev_path = (
         run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_abbreviations.json"
@@ -392,6 +406,38 @@ def process_page(pdf: Path, page_num: int, run_dir: Path, resolution: int) -> di
     misc_titles_serialized = [serialize_misc_title(mt) for mt in misc_title_regions]
     misc_titles_path.write_text(json.dumps(misc_titles_serialized, indent=2))
 
+    # Save standard detail regions
+    std_details_path = (
+        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_standard_details.json"
+    )
+
+    def serialize_standard_detail(sd):
+        return {
+            "header_text": sd.header_text(),
+            "subheader": sd.subheader,
+            "subheader_bbox": list(sd.subheader_bbox) if sd.subheader_bbox else None,
+            "is_boxed": sd.is_boxed,
+            "box_bbox": list(sd.box_bbox) if sd.box_bbox else None,
+            "bbox": list(sd.bbox()),
+            "entries_count": len(sd.entries),
+            "entries": [
+                {
+                    "sheet_number": e.sheet_number,
+                    "description": e.description,
+                    "sheet_bbox": list(e.sheet_bbox) if e.sheet_bbox else None,
+                    "description_bbox": (
+                        list(e.description_bbox) if e.description_bbox else None
+                    ),
+                }
+                for e in sd.entries
+            ],
+        }
+
+    std_details_serialized = [
+        serialize_standard_detail(sd) for sd in standard_detail_regions
+    ]
+    std_details_path.write_text(json.dumps(std_details_serialized, indent=2))
+
     overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
     scale = resolution / 72.0
     draw_overlay(
@@ -408,6 +454,7 @@ def process_page(pdf: Path, page_num: int, run_dir: Path, resolution: int) -> di
         abbreviation_regions=abbreviation_regions,
         revision_regions=revision_regions,
         misc_title_regions=misc_title_regions,
+        standard_detail_regions=standard_detail_regions,
     )
 
     # Return page results for manifest (don't write manifest here)
@@ -431,6 +478,10 @@ def process_page(pdf: Path, page_num: int, run_dir: Path, resolution: int) -> di
             "revision_regions": len(revision_regions),
             "revision_entries": sum(len(r.entries) for r in revision_regions),
             "misc_title_regions": len(misc_title_regions),
+            "standard_detail_regions": len(standard_detail_regions),
+            "standard_detail_entries": sum(
+                len(sd.entries) for sd in standard_detail_regions
+            ),
         },
         "artifacts": {
             "boxes_json": str(boxes_path),
@@ -438,6 +489,7 @@ def process_page(pdf: Path, page_num: int, run_dir: Path, resolution: int) -> di
             "legends_json": str(legends_path),
             "abbreviations_json": str(abbrev_path),
             "revisions_json": str(revisions_path),
+            "standard_details_json": str(std_details_path),
         },
     }
 
