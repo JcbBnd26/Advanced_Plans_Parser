@@ -87,6 +87,32 @@ def draw_overlay(
                 return True
         return False
 
+    # Build set of abbreviation bboxes to exclude blocks from
+    abbreviation_bboxes = []
+    if abbreviation_regions:
+        for ab in abbreviation_regions:
+            abbreviation_bboxes.append(ab.bbox())
+
+    def _overlaps_abbreviation(bx0, by0, bx1, by1):
+        """Check if a box overlaps any abbreviation region."""
+        for ax0, ay0, ax1, ay1 in abbreviation_bboxes:
+            if not (bx1 < ax0 or bx0 > ax1 or by1 < ay0 or by0 > ay1):
+                return True
+        return False
+
+    # Build set of legend bboxes to exclude overlays inside legend regions
+    legend_bboxes = []
+    if legend_regions:
+        for lg in legend_regions:
+            legend_bboxes.append(lg.bbox())
+
+    def _overlaps_legend(bx0, by0, bx1, by1):
+        """Check if a box overlaps any legend region."""
+        for lx0, ly0, lx1, ly1 in legend_bboxes:
+            if not (bx1 < lx0 or bx0 > lx1 or by1 < ly0 or by0 > ly1):
+                return True
+        return False
+
     def _same_line_as_misc_title(bx0, by0, bx1, by1):
         """Check if a box is on the same line (y-band) as any misc_title region.
 
@@ -117,6 +143,10 @@ def draw_overlay(
             continue  # Don't draw individually
         if _overlaps_standard_detail(b.x0, b.y0, b.x1, b.y1):
             continue  # Skip glyph boxes inside standard detail regions
+        if _overlaps_abbreviation(b.x0, b.y0, b.x1, b.y1):
+            continue  # Skip glyph boxes inside abbreviation regions
+        if _overlaps_legend(b.x0, b.y0, b.x1, b.y1):
+            continue  # Skip glyph boxes inside legend regions
         draw.rectangle(
             [
                 _scale_point(b.x0, b.y0, scale),
@@ -177,7 +207,7 @@ def draw_overlay(
         )
 
     # Blocks: headers in purple, tables in yellow, others in red.
-    # Skip blocks that overlap with misc_title or standard_detail regions.
+    # Skip blocks that overlap with misc_title, standard_detail, abbreviation, or legend regions.
     for blk in blocks:
         x0, y0, x1, y1 = blk.bbox()
         if _overlaps_misc_title(x0, y0, x1, y1) or _same_line_as_misc_title(
@@ -185,6 +215,10 @@ def draw_overlay(
         ):
             continue
         if _overlaps_standard_detail(x0, y0, x1, y1):
+            continue
+        if _overlaps_abbreviation(x0, y0, x1, y1):
+            continue
+        if _overlaps_legend(x0, y0, x1, y1):
             continue
         if getattr(blk, "label", None) == "note_column_header":
             # Outline header blocks in indigo
@@ -262,52 +296,10 @@ def draw_overlay(
                     width=3,
                 )
 
-            # Draw each legend entry
-            for entry in legend.entries:
-                # Draw symbol box in tomato
-                if entry.symbol_bbox:
-                    sx0, sy0, sx1, sy1 = entry.symbol_bbox
-                    draw.rectangle(
-                        [
-                            _scale_point(sx0, sy0, scale),
-                            _scale_point(sx1, sy1, scale),
-                        ],
-                        outline=(255, 99, 71, 255),  # TOMATO
-                        width=2,
-                    )
-
-                # Draw description box in salmon
-                if entry.description_bbox:
-                    dx0, dy0, dx1, dy1 = entry.description_bbox
-                    draw.rectangle(
-                        [
-                            _scale_point(dx0, dy0, scale),
-                            _scale_point(dx1, dy1, scale),
-                        ],
-                        outline=(250, 128, 114, 200),  # SALMON
-                        width=2,
-                    )
-
-                # Draw connecting line between symbol and description
-                if entry.symbol_bbox and entry.description_bbox:
-                    sx0, sy0, sx1, sy1 = entry.symbol_bbox
-                    dx0, dy0, dx1, dy1 = entry.description_bbox
-                    # Line from right-center of symbol to left-center of description
-                    sym_right = (sx1, (sy0 + sy1) / 2)
-                    desc_left = (dx0, (dy0 + dy1) / 2)
-                    draw.line(
-                        [
-                            _scale_point(*sym_right, scale),
-                            _scale_point(*desc_left, scale),
-                        ],
-                        fill=(255, 99, 71, 150),  # semi-transparent tomato
-                        width=1,
-                    )
-
-    # Abbreviation regions in magenta (these are exclusion zones - no graphics)
+    # Abbreviation regions in orange (these are exclusion zones - no graphics)
     if abbreviation_regions:
         for abbrev in abbreviation_regions:
-            # Draw outer abbreviation region box in magenta
+            # Draw outer abbreviation region box in orange
             x0, y0, x1, y1 = abbrev.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
@@ -316,11 +308,11 @@ def draw_overlay(
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                outline=(218, 112, 214, 200),  # ORCHID - abbreviation regions
+                outline=(255, 165, 0, 200),  # ORANGE - abbreviation regions
                 width=4,
             )
 
-            # Draw abbreviation header in medium orchid
+            # Draw abbreviation header in blue
             if abbrev.header:
                 hx0, hy0, hx1, hy1 = abbrev.header.bbox()
                 draw.rectangle(
@@ -328,13 +320,13 @@ def draw_overlay(
                         _scale_point(hx0, hy0, scale),
                         _scale_point(hx1, hy1, scale),
                     ],
-                    outline=(186, 85, 211, 255),  # MEDIUM ORCHID
+                    outline=(0, 0, 255, 255),  # BLUE
                     width=3,
                 )
 
-            # Draw each abbreviation entry - code in hot pink, meaning in plum
+            # Draw each abbreviation entry - code in green, meaning in yellow
             for entry in abbrev.entries:
-                # Draw code box in hot pink
+                # Draw code box in green
                 if entry.code_bbox:
                     cx0, cy0, cx1, cy1 = entry.code_bbox
                     draw.rectangle(
@@ -342,11 +334,11 @@ def draw_overlay(
                             _scale_point(cx0, cy0, scale),
                             _scale_point(cx1, cy1, scale),
                         ],
-                        outline=(255, 105, 180, 220),  # HOT PINK
+                        outline=(0, 255, 0, 220),  # GREEN
                         width=2,
                     )
 
-                # Draw meaning box in plum
+                # Draw meaning box in yellow
                 if entry.meaning_bbox:
                     mx0, my0, mx1, my1 = entry.meaning_bbox
                     draw.rectangle(
@@ -354,7 +346,23 @@ def draw_overlay(
                             _scale_point(mx0, my0, scale),
                             _scale_point(mx1, my1, scale),
                         ],
-                        outline=(221, 160, 221, 180),  # PLUM
+                        outline=(255, 255, 0, 180),  # YELLOW
+                        width=2,
+                    )
+
+                # Draw connecting line between code and meaning in light purple
+                if entry.code_bbox and entry.meaning_bbox:
+                    cx0, cy0, cx1, cy1 = entry.code_bbox
+                    mx0, my0, mx1, my1 = entry.meaning_bbox
+                    # Line from right-center of code to left-center of meaning
+                    code_right = (cx1, (cy0 + cy1) / 2)
+                    meaning_left = (mx0, (my0 + my1) / 2)
+                    draw.line(
+                        [
+                            _scale_point(*code_right, scale),
+                            _scale_point(*meaning_left, scale),
+                        ],
+                        fill=(200, 150, 255, 200),  # LIGHT PURPLE
                         width=2,
                     )
 
