@@ -12,6 +12,7 @@ from pathlib import Path
 # Add src to path for plancheck imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import subprocess
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -263,70 +264,39 @@ class PlanParserGUI:
             self.end_entry.config(state="disabled")
 
     def _run_processing(self) -> None:
-        """Run batch processing on all selected PDFs."""
+        """Launch a new PowerShell window to run batch processing with selected options."""
         if not self.pdf_files:
             messagebox.showwarning("No Files", "Please add at least one PDF file.")
             return
-
         try:
             start, end = self._parse_page_range()
         except ValueError:
             messagebox.showerror("Invalid Input", "Page numbers must be integers.")
             return
-
         try:
             resolution = int(self.resolution_var.get())
         except ValueError:
             resolution = 200
-
-        # Ensure runs directory exists
-        self.runs_root.mkdir(parents=True, exist_ok=True)
-
-        # Disable UI during processing
-        self._set_ui_enabled(False)
-        self.root.update()
-
-        processed_runs = []
-        total = len(self.pdf_files)
-
-        try:
-            for i, pdf_path in enumerate(self.pdf_files, start=1):
-                self.status_var.set(f"Processing {i}/{total}: {pdf_path.name}...")
-                self.root.update()
-
-                run_prefix = pdf_path.stem.replace(" ", "_")[:20]
-                print(
-                    f"DEBUG: pdf={pdf_path}, start={start}, end={end}, resolution={resolution}",
-                    flush=True,
-                )
-                run_dir = run_pdf(
-                    pdf=pdf_path,
-                    start=start,
-                    end=end,
-                    resolution=resolution,
-                    run_root=self.runs_root,
-                    run_prefix=run_prefix,
-                )
-                processed_runs.append(run_dir)
-
-            # Cleanup old runs
-            cleanup_old_runs(self.runs_root, keep=50)
-
-            self.status_var.set(f"Complete! Processed {total} file(s).")
-            messagebox.showinfo(
-                "Processing Complete",
-                f"Processed {total} PDF file(s).\n\nOutput saved to:\n{self.runs_root}",
-            )
-
-            # Auto-open the runs folder
-            os.startfile(self.runs_root)
-
-        except Exception as e:
-            self.status_var.set(f"Error: {e}")
-            messagebox.showerror("Processing Error", str(e))
-
-        finally:
-            self._set_ui_enabled(True)
+        mode = self.page_mode_var.get()
+        pdf_args = " ".join(f'"{str(p)}"' for p in self.pdf_files)
+        args = [
+            f"--pdfs {pdf_args}",
+            f"--mode {mode}",
+            f"--resolution {resolution}",
+            f'--run-root "{str(self.runs_root)}"',
+        ]
+        if mode == "single":
+            args.append(f"--single {start+1}")
+        elif mode == "range":
+            args.append(f"--start {start+1}")
+            if end is not None:
+                args.append(f"--end {end}")
+        cmd = f'python scripts/run_from_args.py {" ".join(args)}'
+        subprocess.Popen(
+            ["powershell.exe", "-NoExit", "-Command", cmd],
+            cwd=str(Path(__file__).parent.parent),
+        )
+        # GUI stays open for more jobs
 
 
 def main() -> None:

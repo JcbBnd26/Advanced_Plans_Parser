@@ -421,6 +421,11 @@ def mark_tables(blocks: List[BlockCluster], settings: GroupingConfig) -> None:
 def mark_headers(blocks: List[BlockCluster], debug_path: str = None) -> None:
     """Identify and label header blocks before notes grouping."""
     header_re = re.compile(r"^[A-Z0-9\s\-\(\)\'\.]+: *$", re.ASCII)
+    # Phrases that look like headers but are actually subheader fragments
+    # (e.g., "BE USED ON THIS PROJECT:" is part of the Standard Details subheader)
+    excluded_phrases = {
+        "BE USED ON THIS PROJECT:",
+    }
     debug_path = debug_path or "debug_headers.txt"
     with open(debug_path, "a", encoding="utf-8") as dbg:
         for i, blk in enumerate(blocks):
@@ -439,7 +444,10 @@ def mark_headers(blocks: List[BlockCluster], debug_path: str = None) -> None:
                         getattr(b, "fontname", "").lower().find("bold") >= 0
                         for b in first_row.boxes
                     )
-                    if header_re.match(row_text_norm):
+                    if (
+                        header_re.match(row_text_norm)
+                        and row_text_norm not in excluded_phrases
+                    ):
                         blk.is_header = True
                         blk.label = "note_column_header"
                         dbg.write(f"[DEBUG] Header block {i}: '{row_text_norm}'\n")

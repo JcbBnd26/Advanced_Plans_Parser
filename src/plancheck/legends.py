@@ -959,6 +959,80 @@ def _is_standard_detail_header(block: BlockCluster) -> bool:
     return False
 
 
+def _merge_same_line_rows(
+    header: BlockCluster,
+    blocks: List[BlockCluster],
+    dbg,
+) -> Tuple[str, Tuple[float, float, float, float]]:
+    """
+    Find blocks on the same line as the header's rows and merge their text.
+
+    This handles cases where column partitioning splits a single line of text
+    into multiple blocks (e.g., "THE FOLLOWING ... SHALL" in one block and
+    "BE USED ON THIS PROJECT:" in another).
+
+    Returns merged subheader text and bbox.
+    """
+    if len(header.rows) < 2:
+        return None, None
+
+    # Get header row 1 (the potential subheader row)
+    row1 = header.rows[1]
+    if not row1.boxes:
+        return None, None
+
+    row1_bbox = row1.bbox()
+    row1_x0, row1_y0, row1_x1, row1_y1 = row1_bbox
+    row1_y_center = (row1_y0 + row1_y1) / 2
+    row1_height = row1_y1 - row1_y0
+
+    # Get header x-range to constrain merging
+    hx0, _, hx1, _ = header.bbox()
+
+    # Collect all text boxes on the same line (from header and other blocks)
+    line_boxes = list(row1.boxes)
+    merged_blocks = []
+
+    for blk in blocks:
+        if blk is header:
+            continue
+        bx0, by0, bx1, by1 = blk.bbox()
+        blk_y_center = (by0 + by1) / 2
+
+        # Check if block is on the same line (y-center within half row height)
+        # AND is to the right of header row (continuation, not unrelated content)
+        # AND is within reasonable horizontal distance (within 300 pts of row end)
+        if (
+            abs(blk_y_center - row1_y_center) < row1_height * 0.6
+            and bx0 >= row1_x1 - 20  # Block starts at or after row1 ends
+            and bx0 <= row1_x1 + 300
+        ):  # But not too far away
+            # Add all glyph boxes from this block's rows that overlap the line
+            for row in blk.rows:
+                ry0, ry1 = row.bbox()[1], row.bbox()[3]
+                ry_center = (ry0 + ry1) / 2
+                if abs(ry_center - row1_y_center) < row1_height * 0.6:
+                    line_boxes.extend(row.boxes)
+                    merged_blocks.append(blk)
+                    dbg.write(f"[DEBUG]   Merging same-line block at x={bx0:.1f}\n")
+
+    if not line_boxes:
+        return None, None
+
+    # Sort by x-position and build merged text
+    line_boxes.sort(key=lambda b: b.x0)
+    merged_text = " ".join(b.text for b in line_boxes if b.text).strip()
+
+    # Calculate merged bbox
+    merged_x0 = min(b.x0 for b in line_boxes)
+    merged_y0 = min(b.y0 for b in line_boxes)
+    merged_x1 = max(b.x1 for b in line_boxes)
+    merged_y1 = max(b.y1 for b in line_boxes)
+    merged_bbox = (merged_x0, merged_y0, merged_x1, merged_y1)
+
+    return merged_text, merged_bbox
+
+
 def detect_standard_detail_regions(
     blocks: List[BlockCluster],
     graphics: List[GraphicElement],
@@ -1037,50 +1111,11 @@ def detect_standard_detail_regions(
                 subheader_bbox = None
             else:
                 # Header may have subtitle row, entries are in separate blocks below
-                subheader = None
-                subheader_bbox = None
+                # Use the new merge function to handle split rows
+                subheader, subheader_bbox = _merge_same_line_rows(header, blocks, dbg)
 
-                # Check if row 1 is a subheader (not a sheet number entry)
-                if len(header.rows) > 1:
-                    row1 = header.rows[1]
-                    if row1.boxes:
-                        subheader = " ".join(
-                            b.text for b in row1.boxes if b.text
-                        ).strip()
-                        row1_bbox = row1.bbox()
-                        subheader_bbox = row1_bbox
-
-                        # Look for continuation blocks on same line (to the right)
-                        row1_y0, row1_y1 = row1_bbox[1], row1_bbox[3]
-                        row1_x1 = row1_bbox[2]
-                        for blk in blocks:
-                            if blk is header:
-                                continue
-                            bx0, by0, bx1, by1 = blk.bbox()
-                            # Block is to the right and overlaps y-range
-                            if (
-                                bx0 > row1_x1 - 10
-                                and by0 < row1_y1 + 5
-                                and by1 > row1_y0 - 5
-                            ):
-                                # Single row block on same line = continuation
-                                if len(blk.rows) == 1:
-                                    cont_text = " ".join(
-                                        b.text for b in blk.rows[0].boxes if b.text
-                                    ).strip()
-                                    subheader = subheader + " " + cont_text
-                                    # Expand subheader bbox
-                                    subheader_bbox = (
-                                        row1_bbox[0],
-                                        min(row1_bbox[1], by0),
-                                        bx1,
-                                        max(row1_bbox[3], by1),
-                                    )
-                                    dbg.write(
-                                        f"[DEBUG]   Subheader continuation: '{cont_text}'\n"
-                                    )
-
-                        dbg.write(f"[DEBUG]   Subheader detected: '{subheader}'\n")
+                if subheader:
+                    dbg.write(f"[DEBUG]   Subheader detected: '{subheader}'\n")
 
                 # For unboxed standard details with separate blocks,
                 # find sheet number blocks and description blocks
@@ -1216,7 +1251,7 @@ def detect_standard_detail_regions(
                 # Parse entries - use inline if we have inline blocks, else use two-column
                 if inline_entry_blocks:
                     entries = _parse_standard_detail_entries_from_inline_blocks(
-                        inline_entry_blocks, page, dbg
+                        inline_entry_blocks, page, dbg, all_blocks=blocks
                     )
                 else:
                     entries = _parse_standard_detail_entries_two_column(
@@ -1299,12 +1334,16 @@ def _parse_standard_detail_entries_from_inline_blocks(
     inline_blocks: List[BlockCluster],
     page: int,
     dbg,
+    all_blocks: List[BlockCluster] = None,
 ) -> List[StandardDetailEntry]:
     """
     Parse standard detail entries from inline entry blocks.
 
     Each row in the block has format: "SHEET-NUM DESCRIPTION WORDS"
     (e.g., "BMPR-0 BEST MANAGEMENT PRACTICE REFERENCE MATRIX")
+
+    Also looks for continuation blocks on the same y-line to capture
+    full descriptions that span multiple blocks.
     """
     entries = []
 
@@ -1345,9 +1384,73 @@ def _parse_standard_detail_entries_from_inline_blocks(
                     desc_y0 = min(b.y0 for b in desc_boxes)
                     desc_x1 = max(b.x1 for b in desc_boxes)
                     desc_y1 = max(b.y1 for b in desc_boxes)
-                    desc_bbox_val = (desc_x0, desc_y0, desc_x1, desc_y1)
                 else:
-                    desc_bbox_val = sheet_bbox_val
+                    desc_x0 = desc_y0 = desc_x1 = desc_y1 = 0
+                    if sheet_bbox_val:
+                        desc_x0, desc_y0, desc_x1, desc_y1 = sheet_bbox_val
+
+                # Look for continuation blocks on the same y-line
+                if all_blocks:
+                    row_y0, row_y1 = row.bbox()[1], row.bbox()[3]
+                    row_x1 = row.bbox()[2]
+                    # Get the rightmost box's x0 to help find overlapping blocks
+                    rightmost_box_x0 = max(b.x0 for b in boxes) if boxes else row_x1
+
+                    for other_blk in all_blocks:
+                        if other_blk is blk or other_blk in inline_blocks:
+                            continue
+                        ox0, oy0, ox1, oy1 = other_blk.bbox()
+
+                        # Block must have content extending past our current row's end
+                        # and must start somewhere in the description area (not too far left)
+                        # Allow blocks that start anywhere from mid-description to beyond row end
+                        if (
+                            ox1 > row_x1
+                            and ox0 >= rightmost_box_x0 - 100
+                            and ox0 < row_x1 + 300
+                        ):
+                            # Check y-overlap at block level first
+                            y_overlap = min(row_y1, oy1) - max(row_y0, oy0)
+                            row_height = row_y1 - row_y0
+                            if row_height > 0 and y_overlap / row_height > 0.5:
+                                # Found potential continuation - look for matching row
+                                for other_row in other_blk.rows:
+                                    ory0, ory1 = (
+                                        other_row.bbox()[1],
+                                        other_row.bbox()[3],
+                                    )
+                                    # Check this row overlaps with our row's y
+                                    if min(row_y1, ory1) - max(row_y0, ory0) > 0:
+                                        # Only include boxes that are to the right of our current content
+                                        other_boxes = [
+                                            b
+                                            for b in other_row.boxes
+                                            if b.x0 >= row_x1 - 20
+                                        ]
+                                        other_boxes = sorted(
+                                            other_boxes, key=lambda b: b.x0
+                                        )
+                                        other_text = " ".join(
+                                            b.text for b in other_boxes if b.text
+                                        ).strip()
+                                        if other_text:
+                                            description = description + " " + other_text
+                                            # Extend description bbox
+                                            for b in other_boxes:
+                                                desc_x1 = max(desc_x1, b.x1)
+                                                desc_y0 = (
+                                                    min(desc_y0, b.y0)
+                                                    if desc_y0 > 0
+                                                    else b.y0
+                                                )
+                                                desc_y1 = max(desc_y1, b.y1)
+                                        break
+
+                desc_bbox_val = (
+                    (desc_x0, desc_y0, desc_x1, desc_y1)
+                    if desc_x0 > 0
+                    else sheet_bbox_val
+                )
 
                 entries.append(
                     StandardDetailEntry(

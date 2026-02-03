@@ -60,6 +60,12 @@ def draw_overlay(
         for mt in misc_title_regions:
             misc_title_bboxes.append(mt.bbox())
 
+    # Build set of standard_detail bboxes to exclude blocks from
+    standard_detail_bboxes = []
+    if standard_detail_regions:
+        for sd in standard_detail_regions:
+            standard_detail_bboxes.append(sd.bbox())
+
     def _inside_misc_title(bx0, by0, bx1, by1):
         """Check if a box is inside any misc_title region."""
         for mx0, my0, mx1, my1 in misc_title_bboxes:
@@ -71,6 +77,13 @@ def draw_overlay(
         """Check if a box overlaps any misc_title region."""
         for mx0, my0, mx1, my1 in misc_title_bboxes:
             if not (bx1 < mx0 or bx0 > mx1 or by1 < my0 or by0 > my1):
+                return True
+        return False
+
+    def _overlaps_standard_detail(bx0, by0, bx1, by1):
+        """Check if a box overlaps any standard_detail region."""
+        for sx0, sy0, sx1, sy1 in standard_detail_bboxes:
+            if not (bx1 < sx0 or bx0 > sx1 or by1 < sy0 or by0 > sy1):
                 return True
         return False
 
@@ -94,6 +107,7 @@ def draw_overlay(
     # Glyph boxes in light gray.
     # For misc_title regions, collect overlapping boxes and draw ONE combined box.
     # Also include boxes on the same line that are part of the same title.
+    # Skip glyph boxes inside standard_detail regions.
     misc_title_glyph_boxes = []  # Collect boxes that overlap with misc_title
     for b in boxes:
         if _overlaps_misc_title(b.x0, b.y0, b.x1, b.y1) or _same_line_as_misc_title(
@@ -101,12 +115,14 @@ def draw_overlay(
         ):
             misc_title_glyph_boxes.append(b)
             continue  # Don't draw individually
+        if _overlaps_standard_detail(b.x0, b.y0, b.x1, b.y1):
+            continue  # Skip glyph boxes inside standard detail regions
         draw.rectangle(
             [
                 _scale_point(b.x0, b.y0, scale),
                 _scale_point(b.x1, b.y1, scale),
             ],
-            outline=(0, 255, 0, 200),  # LIME - glyph boxes
+            outline=(255, 127, 80, 200),  # CORAL - glyph boxes
             width=1,
         )
 
@@ -138,42 +154,46 @@ def draw_overlay(
                     _scale_point(combined_x0, combined_y0, scale),
                     _scale_point(combined_x1, combined_y1, scale),
                 ],
-                outline=(255, 255, 0, 255),  # YELLOW - misc_title combined text
+                outline=(218, 165, 32, 255),  # GOLDENROD - misc_title combined text
                 width=2,
             )
 
-    # Rows in light gray - skip those that overlap with or are on the same line as misc_title regions.
+    # Rows in light gray - skip those that overlap with misc_title or standard_detail regions.
     for r in rows:
         x0, y0, x1, y1 = r.bbox()
         if _overlaps_misc_title(x0, y0, x1, y1) or _same_line_as_misc_title(
             x0, y0, x1, y1
         ):
             continue
+        if _overlaps_standard_detail(x0, y0, x1, y1):
+            continue
         draw.rectangle(
             [
                 _scale_point(x0, y0, scale),
                 _scale_point(x1, y1, scale),
             ],
-            outline=(0, 0, 255, 200),  # BLUE - rows
+            outline=(106, 90, 205, 200),  # SLATE BLUE - rows
             width=2,
         )
 
     # Blocks: headers in purple, tables in yellow, others in red.
-    # Skip blocks that overlap with or are on the same line as misc_title regions.
+    # Skip blocks that overlap with misc_title or standard_detail regions.
     for blk in blocks:
         x0, y0, x1, y1 = blk.bbox()
         if _overlaps_misc_title(x0, y0, x1, y1) or _same_line_as_misc_title(
             x0, y0, x1, y1
         ):
             continue
+        if _overlaps_standard_detail(x0, y0, x1, y1):
+            continue
         if getattr(blk, "label", None) == "note_column_header":
-            # Outline header blocks in purple
+            # Outline header blocks in indigo
             draw.rectangle(
                 [
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                outline=(128, 0, 128, 220),  # PURPLE - header blocks
+                outline=(75, 0, 130, 220),  # INDIGO - header blocks
                 width=3,
             )
         elif blk.is_table:
@@ -182,8 +202,8 @@ def draw_overlay(
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                fill=(255, 214, 102, 60),
-                outline=(255, 165, 0, 220),  # ORANGE - table blocks
+                fill=(255, 191, 0, 60),
+                outline=(255, 191, 0, 220),  # AMBER - table blocks
                 width=3,
             )
         else:
@@ -192,22 +212,25 @@ def draw_overlay(
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                outline=(255, 0, 0, 220),  # RED - regular blocks
+                outline=(220, 20, 60, 220),  # CRIMSON - regular blocks
                 width=3,
             )
 
     # Notes columns in green (outer bounding box around header + all notes blocks)
+    # Skip notes columns that overlap with standard detail regions
     if notes_columns:
         for col in notes_columns:
             x0, y0, x1, y1 = col.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue  # Skip empty columns
+            if _overlaps_standard_detail(x0, y0, x1, y1):
+                continue  # Skip notes columns inside standard detail regions
             draw.rectangle(
                 [
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                outline=(0, 128, 0, 220),  # DARK GREEN - notes columns
+                outline=(34, 139, 34, 220),  # FOREST GREEN - notes columns
                 width=4,
             )
 
@@ -223,11 +246,11 @@ def draw_overlay(
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                outline=(0, 255, 255, 220),  # CYAN - legend regions
+                outline=(0, 191, 255, 220),  # DEEP SKY BLUE - legend regions
                 width=4,
             )
 
-            # Draw legend header in darker cyan
+            # Draw legend header in steel blue
             if legend.header:
                 hx0, hy0, hx1, hy1 = legend.header.bbox()
                 draw.rectangle(
@@ -235,13 +258,13 @@ def draw_overlay(
                         _scale_point(hx0, hy0, scale),
                         _scale_point(hx1, hy1, scale),
                     ],
-                    outline=(0, 150, 180, 255),  # darker cyan
+                    outline=(70, 130, 180, 255),  # STEEL BLUE
                     width=3,
                 )
 
             # Draw each legend entry
             for entry in legend.entries:
-                # Draw symbol box in orange
+                # Draw symbol box in tomato
                 if entry.symbol_bbox:
                     sx0, sy0, sx1, sy1 = entry.symbol_bbox
                     draw.rectangle(
@@ -249,11 +272,11 @@ def draw_overlay(
                             _scale_point(sx0, sy0, scale),
                             _scale_point(sx1, sy1, scale),
                         ],
-                        outline=(255, 152, 0, 255),  # orange
+                        outline=(255, 99, 71, 255),  # TOMATO
                         width=2,
                     )
 
-                # Draw description box in light orange
+                # Draw description box in salmon
                 if entry.description_bbox:
                     dx0, dy0, dx1, dy1 = entry.description_bbox
                     draw.rectangle(
@@ -261,7 +284,7 @@ def draw_overlay(
                             _scale_point(dx0, dy0, scale),
                             _scale_point(dx1, dy1, scale),
                         ],
-                        outline=(255, 193, 100, 200),  # light orange
+                        outline=(250, 128, 114, 200),  # SALMON
                         width=2,
                     )
 
@@ -277,7 +300,7 @@ def draw_overlay(
                             _scale_point(*sym_right, scale),
                             _scale_point(*desc_left, scale),
                         ],
-                        fill=(255, 152, 0, 150),  # semi-transparent orange
+                        fill=(255, 99, 71, 150),  # semi-transparent tomato
                         width=1,
                     )
 
@@ -293,11 +316,11 @@ def draw_overlay(
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                outline=(255, 0, 255, 200),  # MAGENTA - abbreviation regions
+                outline=(218, 112, 214, 200),  # ORCHID - abbreviation regions
                 width=4,
             )
 
-            # Draw abbreviation header in darker magenta
+            # Draw abbreviation header in medium orchid
             if abbrev.header:
                 hx0, hy0, hx1, hy1 = abbrev.header.bbox()
                 draw.rectangle(
@@ -305,13 +328,13 @@ def draw_overlay(
                         _scale_point(hx0, hy0, scale),
                         _scale_point(hx1, hy1, scale),
                     ],
-                    outline=(180, 0, 180, 255),  # darker magenta
+                    outline=(186, 85, 211, 255),  # MEDIUM ORCHID
                     width=3,
                 )
 
-            # Draw each abbreviation entry - code in pink, meaning in light pink
+            # Draw each abbreviation entry - code in hot pink, meaning in plum
             for entry in abbrev.entries:
-                # Draw code box in pink
+                # Draw code box in hot pink
                 if entry.code_bbox:
                     cx0, cy0, cx1, cy1 = entry.code_bbox
                     draw.rectangle(
@@ -319,11 +342,11 @@ def draw_overlay(
                             _scale_point(cx0, cy0, scale),
                             _scale_point(cx1, cy1, scale),
                         ],
-                        outline=(255, 100, 150, 220),  # pink
+                        outline=(255, 105, 180, 220),  # HOT PINK
                         width=2,
                     )
 
-                # Draw meaning box in light pink
+                # Draw meaning box in plum
                 if entry.meaning_bbox:
                     mx0, my0, mx1, my1 = entry.meaning_bbox
                     draw.rectangle(
@@ -331,7 +354,7 @@ def draw_overlay(
                             _scale_point(mx0, my0, scale),
                             _scale_point(mx1, my1, scale),
                         ],
-                        outline=(255, 180, 200, 180),  # light pink
+                        outline=(221, 160, 221, 180),  # PLUM
                         width=2,
                     )
 
@@ -347,11 +370,11 @@ def draw_overlay(
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                outline=(0, 128, 128, 220),  # TEAL - revision regions
+                outline=(95, 158, 160, 220),  # CADET BLUE - revision regions
                 width=4,
             )
 
-            # Draw revision header in darker teal
+            # Draw revision header in dark slate gray
             if revision.header:
                 hx0, hy0, hx1, hy1 = revision.header.bbox()
                 draw.rectangle(
@@ -359,7 +382,7 @@ def draw_overlay(
                         _scale_point(hx0, hy0, scale),
                         _scale_point(hx1, hy1, scale),
                     ],
-                    outline=(0, 100, 100, 255),  # darker teal
+                    outline=(47, 79, 79, 255),  # DARK SLATE GRAY
                     width=3,
                 )
 
@@ -372,7 +395,7 @@ def draw_overlay(
                             _scale_point(rx0, ry0, scale),
                             _scale_point(rx1, ry1, scale),
                         ],
-                        outline=(100, 180, 180, 180),  # light teal
+                        outline=(176, 224, 230, 180),  # POWDER BLUE
                         width=2,
                     )
 
@@ -387,7 +410,7 @@ def draw_overlay(
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                outline=(255, 105, 180, 220),  # PINK - misc_title box
+                outline=(255, 20, 147, 220),  # DEEP PINK - misc_title box
                 width=3,
             )
 
@@ -403,23 +426,36 @@ def draw_overlay(
                     _scale_point(x0, y0, scale),
                     _scale_point(x1, y1, scale),
                 ],
-                outline=(0, 139, 139, 220),  # DARK CYAN - standard detail regions
+                outline=(128, 0, 128, 220),  # PURPLE - standard detail regions
                 width=4,
             )
 
-            # Draw header in darker cyan
-            if detail.header:
-                hx0, hy0, hx1, hy1 = detail.header.bbox()
+            # Draw header in royal blue (just the first row - the actual header text)
+            if detail.header and detail.header.rows:
+                first_row = detail.header.rows[0]
+                hx0, hy0, hx1, hy1 = first_row.bbox()
                 draw.rectangle(
                     [
                         _scale_point(hx0, hy0, scale),
                         _scale_point(hx1, hy1, scale),
                     ],
-                    outline=(0, 100, 100, 255),  # darker cyan
+                    outline=(65, 105, 225, 255),  # ROYAL BLUE
                     width=3,
                 )
 
-            # Draw each entry - sheet number in teal, description in light teal
+            # Draw subheader in orange (if present)
+            if detail.subheader_bbox:
+                sx0, sy0, sx1, sy1 = detail.subheader_bbox
+                draw.rectangle(
+                    [
+                        _scale_point(sx0, sy0, scale),
+                        _scale_point(sx1, sy1, scale),
+                    ],
+                    outline=(255, 165, 0, 220),  # ORANGE - subheader
+                    width=2,
+                )
+
+            # Draw each entry - sheet number in cornflower blue, description in light steel blue
             for entry in detail.entries:
                 # Draw sheet number box
                 if entry.sheet_bbox:
@@ -429,7 +465,7 @@ def draw_overlay(
                             _scale_point(sx0, sy0, scale),
                             _scale_point(sx1, sy1, scale),
                         ],
-                        outline=(0, 180, 180, 220),  # teal
+                        outline=(100, 149, 237, 220),  # CORNFLOWER BLUE
                         width=2,
                     )
 
@@ -441,7 +477,7 @@ def draw_overlay(
                             _scale_point(dx0, dy0, scale),
                             _scale_point(dx1, dy1, scale),
                         ],
-                        outline=(100, 200, 200, 180),  # light teal
+                        outline=(184, 134, 11, 220),  # DARK GOLDENROD
                         width=2,
                     )
 
