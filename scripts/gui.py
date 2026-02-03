@@ -17,6 +17,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from run_pdf_batch import cleanup_old_runs, run_pdf
+from tag_list import TAG_DESCRIPTIONS, TAG_LIST
 
 
 class PlanParserGUI:
@@ -25,7 +26,7 @@ class PlanParserGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Advanced Plans Parser")
-        self.root.geometry("550x480")
+        self.root.geometry("650x650")
         self.root.resizable(True, True)
 
         # Configure grid weights for resizing
@@ -178,6 +179,71 @@ class PlanParserGUI:
         )
         self.run_button.grid(row=0, column=0, pady=(0, 10))
 
+        # --- Tag Selection & Color Debugger Section ---
+        tag_frame = ttk.LabelFrame(self.root, text="Tag Visual Debugger", padding=10)
+        tag_frame.grid(row=5, column=0, sticky="nsew", padx=10, pady=5)
+        tag_frame.columnconfigure(1, weight=1)
+        tag_frame.rowconfigure(1, weight=1)
+
+        # Tag dropdown
+        self.tag_var = tk.StringVar(value=TAG_LIST[0])
+        tag_dropdown = ttk.Combobox(
+            tag_frame,
+            textvariable=self.tag_var,
+            values=TAG_LIST,
+            state="readonly",
+            width=24,
+        )
+        tag_dropdown.grid(row=0, column=0, sticky="w")
+        ttk.Button(tag_frame, text="Add Tag", command=self._add_tag_to_list).grid(
+            row=0, column=1, sticky="w", padx=(5, 0)
+        )
+
+        # Scrollable frame for tag checkboxes
+        tag_canvas = tk.Canvas(tag_frame, height=120, highlightthickness=0)
+        tag_scrollbar = ttk.Scrollbar(
+            tag_frame, orient="vertical", command=tag_canvas.yview
+        )
+        self.tag_inner_frame = ttk.Frame(tag_canvas)
+        self.tag_inner_frame.bind(
+            "<Configure>",
+            lambda e: tag_canvas.configure(scrollregion=tag_canvas.bbox("all")),
+        )
+        tag_canvas.create_window((0, 0), window=self.tag_inner_frame, anchor="nw")
+        tag_canvas.configure(yscrollcommand=tag_scrollbar.set)
+        tag_canvas.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(5, 0))
+        tag_scrollbar.grid(row=1, column=2, sticky="ns", pady=(5, 0))
+
+        # Tag data: {tag: {"color": hex, "ignored": bool, "selected": BooleanVar, "widgets": {...}}}
+        self.tag_data = {}
+
+        # Mass action buttons
+        action_frame = ttk.Frame(tag_frame)
+        action_frame.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+        ttk.Button(
+            action_frame, text="Set Color", command=self._set_color_selected
+        ).grid(row=0, column=0, padx=2)
+        ttk.Button(action_frame, text="Remove", command=self._clear_selected_tags).grid(
+            row=0, column=1, padx=2
+        )
+        ttk.Button(
+            action_frame, text="Ignore", command=self._ignore_selected_tags
+        ).grid(row=0, column=2, padx=2)
+        ttk.Button(
+            action_frame, text="Unignore", command=self._unignore_selected_tags
+        ).grid(row=0, column=3, padx=2)
+        ttk.Button(action_frame, text="Select All", command=self._select_all_tags).grid(
+            row=0, column=4, padx=2
+        )
+        ttk.Button(
+            action_frame, text="Deselect All", command=self._deselect_all_tags
+        ).grid(row=0, column=5, padx=2)
+
+        # Tooltip state
+        self._tag_tooltip = None
+        self._tooltip_after_id = None
+        self._tooltip_tag = None
+
     def _add_files(self) -> None:
         """Open file dialog to add PDF files."""
         files = filedialog.askopenfilenames(
@@ -279,12 +345,27 @@ class PlanParserGUI:
             resolution = 200
         mode = self.page_mode_var.get()
         pdf_args = " ".join(f'"{str(p)}"' for p in self.pdf_files)
+
+        # Build color overrides from non-ignored tags and write to temp file
+        import json
+        import tempfile
+
+        color_dict = {}
+        for tag, data in self.tag_data.items():
+            if not data["ignored"]:
+                color_dict[tag] = data["color"]  # hex string like "#D3D3D3"
+
         args = [
             f"--pdfs {pdf_args}",
             f"--mode {mode}",
             f"--resolution {resolution}",
             f'--run-root "{str(self.runs_root)}"',
         ]
+        if color_dict:
+            # Write colors to temp file to avoid PowerShell escaping issues
+            color_file = Path(tempfile.gettempdir()) / "planparser_colors.json"
+            color_file.write_text(json.dumps(color_dict))
+            args.append(f'--colors-file "{str(color_file)}"')
         if mode == "single":
             args.append(f"--single {start+1}")
         elif mode == "range":
@@ -295,8 +376,138 @@ class PlanParserGUI:
         subprocess.Popen(
             ["powershell.exe", "-NoExit", "-Command", cmd],
             cwd=str(Path(__file__).parent.parent),
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
         )
         # GUI stays open for more jobs
+
+    def _add_tag_to_list(self):
+        tag = self.tag_var.get()
+        if tag in self.tag_data:
+            return  # Already added
+        # Create checkbox row
+        row_frame = ttk.Frame(self.tag_inner_frame)
+        row_frame.pack(fill="x", pady=1)
+
+        selected_var = tk.BooleanVar(value=False)
+        chk = ttk.Checkbutton(row_frame, variable=selected_var)
+        chk.pack(side="left")
+
+        color_btn = tk.Button(
+            row_frame,
+            text="  ",
+            bg="#D3D3D3",
+            width=2,
+            command=lambda t=tag: self._pick_tag_color(t),
+        )
+        color_btn.pack(side="left", padx=(0, 5))
+
+        label = ttk.Label(row_frame, text=tag)
+        label.pack(side="left")
+
+        status_label = ttk.Label(row_frame, text="", foreground="gray")
+        status_label.pack(side="left", padx=(5, 0))
+
+        self.tag_data[tag] = {
+            "color": "#D3D3D3",
+            "ignored": False,
+            "selected": selected_var,
+            "widgets": {
+                "row": row_frame,
+                "color_btn": color_btn,
+                "label": label,
+                "status": status_label,
+            },
+        }
+
+        # Bind tooltip events
+        label.bind("<Enter>", lambda e, t=tag: self._schedule_tooltip(t, e))
+        label.bind("<Leave>", lambda e: self._cancel_tooltip())
+
+    def _pick_tag_color(self, tag):
+        from tkinter import colorchooser
+
+        color = colorchooser.askcolor(
+            title=f"Choose color for {tag}", initialcolor=self.tag_data[tag]["color"]
+        )[1]
+        if color:
+            self.tag_data[tag]["color"] = color
+            self.tag_data[tag]["widgets"]["color_btn"].configure(bg=color)
+
+    def _set_color_selected(self):
+        from tkinter import colorchooser
+
+        selected_tags = [t for t, d in self.tag_data.items() if d["selected"].get()]
+        if not selected_tags:
+            messagebox.showinfo("No Selection", "Please check one or more tags first.")
+            return
+        color = colorchooser.askcolor(title="Choose color for selected tags")[1]
+        if color:
+            for tag in selected_tags:
+                self.tag_data[tag]["color"] = color
+                self.tag_data[tag]["widgets"]["color_btn"].configure(bg=color)
+
+    def _clear_selected_tags(self):
+        selected_tags = [t for t, d in self.tag_data.items() if d["selected"].get()]
+        for tag in selected_tags:
+            self.tag_data[tag]["widgets"]["row"].destroy()
+            del self.tag_data[tag]
+
+    def _ignore_selected_tags(self):
+        for tag, data in self.tag_data.items():
+            if data["selected"].get():
+                data["ignored"] = True
+                data["widgets"]["status"].configure(text="[IGNORED]")
+
+    def _unignore_selected_tags(self):
+        for tag, data in self.tag_data.items():
+            if data["selected"].get():
+                data["ignored"] = False
+                data["widgets"]["status"].configure(text="")
+
+    def _select_all_tags(self):
+        for data in self.tag_data.values():
+            data["selected"].set(True)
+
+    def _deselect_all_tags(self):
+        for data in self.tag_data.values():
+            data["selected"].set(False)
+
+    def _schedule_tooltip(self, tag, event):
+        self._cancel_tooltip()
+        self._tooltip_tag = tag
+        self._tooltip_after_id = self.root.after(
+            500, lambda: self._show_tag_tooltip(tag, event)
+        )
+
+    def _cancel_tooltip(self):
+        if self._tooltip_after_id:
+            self.root.after_cancel(self._tooltip_after_id)
+            self._tooltip_after_id = None
+        self._hide_tag_tooltip()
+        self._tooltip_tag = None
+
+    def _show_tag_tooltip(self, tag, event):
+        desc = TAG_DESCRIPTIONS.get(tag, "No description available.")
+        x = event.widget.winfo_rootx() + 20
+        y = event.widget.winfo_rooty() + event.widget.winfo_height() + 5
+        self._hide_tag_tooltip()
+        self._tag_tooltip = tk.Toplevel(self.root)
+        self._tag_tooltip.wm_overrideredirect(True)
+        self._tag_tooltip.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            self._tag_tooltip,
+            text=desc,
+            background="#ffffe0",
+            relief="solid",
+            borderwidth=1,
+            font=(None, 10),
+        )
+        label.pack(ipadx=4, ipady=2)
+
+    def _hide_tag_tooltip(self):
+        if self._tag_tooltip:
+            self._tag_tooltip.destroy()
+            self._tag_tooltip = None
 
 
 def main() -> None:

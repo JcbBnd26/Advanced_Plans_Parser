@@ -1,14 +1,25 @@
 """
 Batch PDF processing entry point for GUI/CLI use.
 Usage:
-    python scripts/run_from_args.py --pdfs file1.pdf file2.pdf --mode all|single|range --single 3 --start 1 --end 5 --resolution 200
+    python scripts/run_from_args.py --pdfs file1.pdf file2.pdf --mode all|single|range --single 3 --start 1 --end 5 --resolution 200 --colors-file path/to/colors.json
 """
 
 import argparse
+import json
 import os
 from pathlib import Path
 
 from run_pdf_batch import cleanup_old_runs, run_pdf
+
+
+def hex_to_rgba(hex_color: str, alpha: int = 200) -> tuple:
+    """Convert hex color (#RRGGBB) to RGBA tuple."""
+    hex_color = hex_color.lstrip("#")
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return (r, g, b, alpha)
+
 
 parser = argparse.ArgumentParser(
     description="Batch PDF processing for Advanced Plans Parser"
@@ -30,7 +41,30 @@ parser.add_argument(
     "--run-root", type=Path, default=Path("runs"), help="Root directory for runs"
 )
 parser.add_argument("--keep-runs", type=int, default=50, help="Number of runs to keep")
+parser.add_argument(
+    "--colors-file",
+    type=Path,
+    default=None,
+    help="Path to JSON file with color overrides",
+)
 args = parser.parse_args()
+
+# Parse color overrides from file
+color_overrides = None
+if args.colors_file and args.colors_file.exists():
+    try:
+        raw_colors = json.loads(args.colors_file.read_text())
+        color_overrides = {}
+        for key, val in raw_colors.items():
+            if isinstance(val, str):
+                # Hex string like "#FF0000"
+                color_overrides[key] = hex_to_rgba(val)
+            elif isinstance(val, (list, tuple)) and len(val) >= 3:
+                # RGBA tuple like [255, 0, 0, 200]
+                color_overrides[key] = tuple(val)
+        print(f"Loaded {len(color_overrides)} color overrides from {args.colors_file}")
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"Warning: Could not parse colors file: {e}")
 
 for pdf_path in args.pdfs:
     if not pdf_path.exists():
@@ -59,6 +93,7 @@ for pdf_path in args.pdfs:
         resolution=args.resolution,
         run_root=args.run_root,
         run_prefix=run_prefix,
+        color_overrides=color_overrides,
     )
 cleanup_old_runs(args.run_root, keep=args.keep_runs)
 os.startfile(args.run_root)

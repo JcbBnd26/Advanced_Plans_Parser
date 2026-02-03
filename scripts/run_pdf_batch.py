@@ -176,7 +176,13 @@ def summarize(blocks: list[BlockCluster]) -> str:
     return "\n".join(lines)
 
 
-def process_page(pdf: Path, page_num: int, run_dir: Path, resolution: int) -> dict:
+def process_page(
+    pdf: Path,
+    page_num: int,
+    run_dir: Path,
+    resolution: int,
+    color_overrides: dict | None = None,
+) -> dict:
     """Process a single page and return page results for manifest."""
     pdf_stem = pdf.stem.replace(" ", "_")
 
@@ -455,6 +461,7 @@ def process_page(pdf: Path, page_num: int, run_dir: Path, resolution: int) -> di
         revision_regions=revision_regions,
         misc_title_regions=misc_title_regions,
         standard_detail_regions=standard_detail_regions,
+        color_overrides=color_overrides,
     )
 
     # Return page results for manifest (don't write manifest here)
@@ -505,6 +512,7 @@ def run_pdf(
     resolution: int,
     run_root: Path,
     run_prefix: str,
+    color_overrides: dict | None = None,
 ) -> Path:
     """Process pages of a single PDF and create one run folder with all results."""
     with pdfplumber.open(pdf) as pdf_doc:
@@ -521,7 +529,7 @@ def run_pdf(
     page_results = []
     for page_num in range(start, end_page):
         try:
-            result = process_page(pdf, page_num, run_dir, resolution)
+            result = process_page(pdf, page_num, run_dir, resolution, color_overrides)
             page_results.append(result)
         except Exception as exc:  # pragma: no cover
             print(f"  page {page_num}: ERROR {exc}", flush=True)
