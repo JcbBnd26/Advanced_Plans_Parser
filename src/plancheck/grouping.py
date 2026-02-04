@@ -172,6 +172,49 @@ def _partition_columns(
     return refined if refined else segments
 
 
+def _is_note_number_column(boxes: List[GlyphBox]) -> bool:
+    """Check if a column consists primarily of note numbers (short labels like '1.', '10.', 'A.')."""
+    import re
+
+    if not boxes:
+        return False
+    note_pattern = re.compile(r"^[\(\[]?[0-9A-Za-z]{1,3}[\.\)\]]?$")
+    note_count = sum(1 for b in boxes if note_pattern.match(b.text.strip()))
+    # If most boxes in this column are note numbers, it's a note number column
+    return note_count >= len(boxes) * 0.5 and len(boxes) <= 50
+
+
+def _merge_note_number_columns(
+    segments: List[tuple[List[GlyphBox], float, float]],
+) -> List[tuple[List[GlyphBox], float, float]]:
+    """Merge note-number-only columns with their adjacent text column."""
+    if len(segments) <= 1:
+        return segments
+
+    # Sort segments by x position
+    sorted_segs = sorted(segments, key=lambda s: s[1])  # sort by seg_min
+
+    merged: List[tuple[List[GlyphBox], float, float]] = []
+    i = 0
+    while i < len(sorted_segs):
+        seg_boxes, seg_min, seg_max = sorted_segs[i]
+
+        # Check if this is a note number column
+        if _is_note_number_column(seg_boxes) and i + 1 < len(sorted_segs):
+            # Merge with the next column (the text column to the right)
+            next_boxes, next_min, next_max = sorted_segs[i + 1]
+            combined_boxes = seg_boxes + next_boxes
+            combined_min = min(seg_min, next_min)
+            combined_max = max(seg_max, next_max)
+            merged.append((combined_boxes, combined_min, combined_max))
+            i += 2  # Skip both columns
+        else:
+            merged.append((seg_boxes, seg_min, seg_max))
+            i += 1
+
+    return merged
+
+
 def _split_row_by_width(
     row: RowBand, median_w: float, max_width: float
 ) -> List[RowBand]:
@@ -214,6 +257,18 @@ def _split_row_by_width(
     return final if final else [row]
 
 
+def _is_note_number(box: GlyphBox) -> bool:
+    """Check if a glyph box looks like a note number (e.g., '1.', '12.', 'A.')."""
+    text = box.text.strip()
+    if not text:
+        return False
+    # Pattern: digit(s) or letter followed by period, optionally with closing paren
+    # Examples: "1.", "12.", "A.", "1)", "(1)"
+    import re
+
+    return bool(re.match(r"^[\(\[]?[0-9A-Za-z]{1,3}[\.\)\]]?$", text))
+
+
 def _split_row_on_gaps(row: RowBand, median_w: float, gap_mult: float) -> List[RowBand]:
     if not row.boxes:
         return []
@@ -226,7 +281,8 @@ def _split_row_on_gaps(row: RowBand, median_w: float, gap_mult: float) -> List[R
     for b in boxes_sorted[1:]:
         prev = current.boxes[-1]
         gap = b.x0 - prev.x1
-        if gap > gap_thresh:
+        # Don't split if the previous box looks like a note number - allow larger gaps
+        if gap > gap_thresh and not _is_note_number(prev):
             rows.append(current)
             current = RowBand(page=row.page, boxes=[b], column_id=row.column_id)
         else:
@@ -244,9 +300,11 @@ def group_rows(boxes: List[GlyphBox], settings: GroupingConfig) -> List[RowBand]
     split_rows: List[RowBand] = []
 
     # Partition into columns to avoid spanning across big horizontal whitespace.
-    for col_idx, (col_boxes, col_min, col_max) in enumerate(
-        _partition_columns(boxes, median_w, settings)
-    ):
+    columns = _partition_columns(boxes, median_w, settings)
+    # Merge note-number-only columns with their adjacent text column
+    columns = _merge_note_number_columns(columns)
+
+    for col_idx, (col_boxes, col_min, col_max) in enumerate(columns):
         col_width = col_max - col_min
         max_row_width = col_width * settings.max_row_width_mult
         # First pass: cluster by y-center proximity within this column.

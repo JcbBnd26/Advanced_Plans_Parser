@@ -17,8 +17,8 @@ from .models import (
     StandardDetailRegion,
 )
 
-# Default color: light gray for all elements
-DEFAULT_COLOR = (211, 211, 211, 200)  # Light gray with alpha
+# Default color: None means don't draw unless explicitly selected
+DEFAULT_COLOR = None
 
 # Color keys for different element types
 COLOR_KEYS = [
@@ -48,8 +48,8 @@ COLOR_KEYS = [
 ]
 
 
-def _get_color(color_overrides: Optional[Dict[str, tuple]], key: str) -> tuple:
-    """Get color for a key, using override if provided, otherwise default light gray."""
+def _get_color(color_overrides: Optional[Dict[str, tuple]], key: str) -> tuple | None:
+    """Get color for a key, using override if provided, otherwise None (don't draw)."""
     if color_overrides and key in color_overrides:
         return color_overrides[key]
     return DEFAULT_COLOR
@@ -170,33 +170,20 @@ def draw_overlay(
                     return True
         return False
 
-    # Glyph boxes in light gray.
-    # For misc_title regions, collect overlapping boxes and draw ONE combined box.
-    # Also include boxes on the same line that are part of the same title.
-    # Skip glyph boxes inside standard_detail regions.
-    misc_title_glyph_boxes = []  # Collect boxes that overlap with misc_title
+    # Glyph boxes - draw ALL boxes when selected (no region skipping)
     for b in boxes:
-        if _overlaps_misc_title(b.x0, b.y0, b.x1, b.y1) or _same_line_as_misc_title(
-            b.x0, b.y0, b.x1, b.y1
-        ):
-            misc_title_glyph_boxes.append(b)
-            continue  # Don't draw individually
-        if _overlaps_standard_detail(b.x0, b.y0, b.x1, b.y1):
-            continue  # Skip glyph boxes inside standard detail regions
-        if _overlaps_abbreviation(b.x0, b.y0, b.x1, b.y1):
-            continue  # Skip glyph boxes inside abbreviation regions
-        if _overlaps_legend(b.x0, b.y0, b.x1, b.y1):
-            continue  # Skip glyph boxes inside legend regions
-        draw.rectangle(
-            [
-                _scale_point(b.x0, b.y0, scale),
-                _scale_point(b.x1, b.y1, scale),
-            ],
-            outline=_get_color(color_overrides, "glyph_boxes"),
-            width=1,
-        )
+        color = _get_color(color_overrides, "glyph_boxes")
+        if color:
+            draw.rectangle(
+                [
+                    _scale_point(b.x0, b.y0, scale),
+                    _scale_point(b.x1, b.y1, scale),
+                ],
+                outline=color,
+                width=1,
+            )
 
-    # Draw ONE combined gray box for all text inside each misc_title region
+    # Draw ONE combined box for all text inside each misc_title region
     for mx0, my0, mx1, my1 in misc_title_bboxes:
         # Find all glyph boxes that overlap with this misc_title OR are on the same line
         def _matches_this_title(b):
@@ -211,7 +198,7 @@ def draw_overlay(
                     return True
             return False
 
-        overlapping = [b for b in misc_title_glyph_boxes if _matches_this_title(b)]
+        overlapping = [b for b in boxes if _matches_this_title(b)]
         if overlapping:
             # Compute combined bounding box for the actual text
             # Clip to page bounds since PDF extraction can extend past page edge
@@ -219,100 +206,89 @@ def draw_overlay(
             combined_y0 = max(0, min(b.y0 for b in overlapping))
             combined_x1 = min(page_width, max(b.x1 for b in overlapping))
             combined_y1 = min(page_height, max(b.y1 for b in overlapping))
+            color = _get_color(color_overrides, "misc_title_text")
+            if color:
+                draw.rectangle(
+                    [
+                        _scale_point(combined_x0, combined_y0, scale),
+                        _scale_point(combined_x1, combined_y1, scale),
+                    ],
+                    outline=color,
+                    width=2,
+                )
+
+    # Rows - draw ALL rows when selected (no region skipping)
+    for r in rows:
+        x0, y0, x1, y1 = r.bbox()
+        color = _get_color(color_overrides, "rows")
+        if color:
             draw.rectangle(
                 [
-                    _scale_point(combined_x0, combined_y0, scale),
-                    _scale_point(combined_x1, combined_y1, scale),
+                    _scale_point(x0, y0, scale),
+                    _scale_point(x1, y1, scale),
                 ],
-                outline=_get_color(color_overrides, "misc_title_text"),
+                outline=color,
                 width=2,
             )
 
-    # Rows in light gray - skip those that overlap with misc_title or standard_detail regions.
-    for r in rows:
-        x0, y0, x1, y1 = r.bbox()
-        if _overlaps_misc_title(x0, y0, x1, y1) or _same_line_as_misc_title(
-            x0, y0, x1, y1
-        ):
-            continue
-        if _overlaps_standard_detail(x0, y0, x1, y1):
-            continue
-        draw.rectangle(
-            [
-                _scale_point(x0, y0, scale),
-                _scale_point(x1, y1, scale),
-            ],
-            outline=_get_color(color_overrides, "rows"),
-            width=2,
-        )
-
-    # Blocks: headers in purple, tables in yellow, others in red.
-    # Skip blocks that overlap with misc_title, standard_detail, abbreviation, or legend regions.
+    # Blocks - draw ALL blocks when selected (no region skipping)
     for blk in blocks:
         x0, y0, x1, y1 = blk.bbox()
-        if _overlaps_misc_title(x0, y0, x1, y1) or _same_line_as_misc_title(
-            x0, y0, x1, y1
-        ):
-            continue
-        if _overlaps_standard_detail(x0, y0, x1, y1):
-            continue
-        if _overlaps_abbreviation(x0, y0, x1, y1):
-            continue
-        if _overlaps_legend(x0, y0, x1, y1):
-            continue
         if getattr(blk, "label", None) == "note_column_header":
             # Outline header blocks
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                outline=_get_color(color_overrides, "header_blocks"),
-                width=3,
-            )
+            color = _get_color(color_overrides, "header_blocks")
+            if color:
+                draw.rectangle(
+                    [
+                        _scale_point(x0, y0, scale),
+                        _scale_point(x1, y1, scale),
+                    ],
+                    outline=color,
+                    width=3,
+                )
         elif blk.is_table:
             color = _get_color(color_overrides, "table_blocks")
-            fill_color = (
-                (color[0], color[1], color[2], 60) if len(color) >= 3 else color
-            )
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                fill=fill_color,
-                outline=color,
-                width=3,
-            )
+            if color:
+                fill_color = (
+                    (color[0], color[1], color[2], 60) if len(color) >= 3 else color
+                )
+                draw.rectangle(
+                    [
+                        _scale_point(x0, y0, scale),
+                        _scale_point(x1, y1, scale),
+                    ],
+                    fill=fill_color,
+                    outline=color,
+                    width=3,
+                )
         else:
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                outline=_get_color(color_overrides, "regular_blocks"),
-                width=3,
-            )
+            color = _get_color(color_overrides, "regular_blocks")
+            if color:
+                draw.rectangle(
+                    [
+                        _scale_point(x0, y0, scale),
+                        _scale_point(x1, y1, scale),
+                    ],
+                    outline=color,
+                    width=3,
+                )
 
-    # Notes columns in green (outer bounding box around header + all notes blocks)
-    # Skip notes columns that overlap with standard detail regions or legend regions
+    # Notes columns - draw ALL when selected (no region skipping)
     if notes_columns:
         for col in notes_columns:
             x0, y0, x1, y1 = col.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue  # Skip empty columns
-            if _overlaps_standard_detail(x0, y0, x1, y1):
-                continue  # Skip notes columns inside standard detail regions
-            if _overlaps_legend(x0, y0, x1, y1):
-                continue  # Skip notes columns that overlap with legend regions
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                outline=_get_color(color_overrides, "notes_columns"),
-                width=4,
-            )
+            color = _get_color(color_overrides, "notes_columns")
+            if color:
+                draw.rectangle(
+                    [
+                        _scale_point(x0, y0, scale),
+                        _scale_point(x1, y1, scale),
+                    ],
+                    outline=color,
+                    width=4,
+                )
 
     # Legend regions
     if legend_regions:
@@ -321,26 +297,30 @@ def draw_overlay(
             x0, y0, x1, y1 = legend.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                outline=_get_color(color_overrides, "legend_region"),
-                width=4,
-            )
+            color = _get_color(color_overrides, "legend_region")
+            if color:
+                draw.rectangle(
+                    [
+                        _scale_point(x0, y0, scale),
+                        _scale_point(x1, y1, scale),
+                    ],
+                    outline=color,
+                    width=4,
+                )
 
             # Draw legend header
             if legend.header:
                 hx0, hy0, hx1, hy1 = legend.header.bbox()
-                draw.rectangle(
-                    [
-                        _scale_point(hx0, hy0, scale),
-                        _scale_point(hx1, hy1, scale),
-                    ],
-                    outline=_get_color(color_overrides, "legend_header"),
-                    width=3,
-                )
+                color = _get_color(color_overrides, "legend_header")
+                if color:
+                    draw.rectangle(
+                        [
+                            _scale_point(hx0, hy0, scale),
+                            _scale_point(hx1, hy1, scale),
+                        ],
+                        outline=color,
+                        width=3,
+                    )
 
     # Abbreviation regions (exclusion zones)
     if abbreviation_regions:
@@ -349,52 +329,60 @@ def draw_overlay(
             x0, y0, x1, y1 = abbrev.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                outline=_get_color(color_overrides, "abbreviation_region"),
-                width=4,
-            )
+            color = _get_color(color_overrides, "abbreviation_region")
+            if color:
+                draw.rectangle(
+                    [
+                        _scale_point(x0, y0, scale),
+                        _scale_point(x1, y1, scale),
+                    ],
+                    outline=color,
+                    width=4,
+                )
 
             # Draw abbreviation header
             if abbrev.header:
                 hx0, hy0, hx1, hy1 = abbrev.header.bbox()
-                draw.rectangle(
-                    [
-                        _scale_point(hx0, hy0, scale),
-                        _scale_point(hx1, hy1, scale),
-                    ],
-                    outline=_get_color(color_overrides, "abbreviation_header"),
-                    width=3,
-                )
+                color = _get_color(color_overrides, "abbreviation_header")
+                if color:
+                    draw.rectangle(
+                        [
+                            _scale_point(hx0, hy0, scale),
+                            _scale_point(hx1, hy1, scale),
+                        ],
+                        outline=color,
+                        width=3,
+                    )
 
             # Draw each abbreviation entry
             for entry in abbrev.entries:
                 # Draw code box
                 if entry.code_bbox:
                     cx0, cy0, cx1, cy1 = entry.code_bbox
-                    draw.rectangle(
-                        [
-                            _scale_point(cx0, cy0, scale),
-                            _scale_point(cx1, cy1, scale),
-                        ],
-                        outline=_get_color(color_overrides, "abbreviation_code"),
-                        width=2,
-                    )
+                    color = _get_color(color_overrides, "abbreviation_code")
+                    if color:
+                        draw.rectangle(
+                            [
+                                _scale_point(cx0, cy0, scale),
+                                _scale_point(cx1, cy1, scale),
+                            ],
+                            outline=color,
+                            width=2,
+                        )
 
                 # Draw meaning box
                 if entry.meaning_bbox:
                     mx0, my0, mx1, my1 = entry.meaning_bbox
-                    draw.rectangle(
-                        [
-                            _scale_point(mx0, my0, scale),
-                            _scale_point(mx1, my1, scale),
-                        ],
-                        outline=_get_color(color_overrides, "abbreviation_meaning"),
-                        width=2,
-                    )
+                    color = _get_color(color_overrides, "abbreviation_meaning")
+                    if color:
+                        draw.rectangle(
+                            [
+                                _scale_point(mx0, my0, scale),
+                                _scale_point(mx1, my1, scale),
+                            ],
+                            outline=color,
+                            width=2,
+                        )
 
                 # Draw connecting line between code and meaning
                 if entry.code_bbox and entry.meaning_bbox:
@@ -403,14 +391,16 @@ def draw_overlay(
                     # Line from right-center of code to left-center of meaning
                     code_right = (cx1, (cy0 + cy1) / 2)
                     meaning_left = (mx0, (my0 + my1) / 2)
-                    draw.line(
-                        [
-                            _scale_point(*code_right, scale),
-                            _scale_point(*meaning_left, scale),
-                        ],
-                        fill=_get_color(color_overrides, "abbreviation_line"),
-                        width=2,
-                    )
+                    color = _get_color(color_overrides, "abbreviation_line")
+                    if color:
+                        draw.line(
+                            [
+                                _scale_point(*code_right, scale),
+                                _scale_point(*meaning_left, scale),
+                            ],
+                            fill=color,
+                            width=2,
+                        )
 
     # Revision regions
     if revision_regions:
@@ -419,39 +409,45 @@ def draw_overlay(
             x0, y0, x1, y1 = revision.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                outline=_get_color(color_overrides, "revision_region"),
-                width=4,
-            )
+            color = _get_color(color_overrides, "revision_region")
+            if color:
+                draw.rectangle(
+                    [
+                        _scale_point(x0, y0, scale),
+                        _scale_point(x1, y1, scale),
+                    ],
+                    outline=color,
+                    width=4,
+                )
 
             # Draw revision header
             if revision.header:
                 hx0, hy0, hx1, hy1 = revision.header.bbox()
-                draw.rectangle(
-                    [
-                        _scale_point(hx0, hy0, scale),
-                        _scale_point(hx1, hy1, scale),
-                    ],
-                    outline=_get_color(color_overrides, "revision_header"),
-                    width=3,
-                )
+                color = _get_color(color_overrides, "revision_header")
+                if color:
+                    draw.rectangle(
+                        [
+                            _scale_point(hx0, hy0, scale),
+                            _scale_point(hx1, hy1, scale),
+                        ],
+                        outline=color,
+                        width=3,
+                    )
 
             # Draw each revision entry row
             for entry in revision.entries:
                 if entry.row_bbox:
                     rx0, ry0, rx1, ry1 = entry.row_bbox
-                    draw.rectangle(
-                        [
-                            _scale_point(rx0, ry0, scale),
-                            _scale_point(rx1, ry1, scale),
-                        ],
-                        outline=_get_color(color_overrides, "revision_entry"),
-                        width=2,
-                    )
+                    color = _get_color(color_overrides, "revision_entry")
+                    if color:
+                        draw.rectangle(
+                            [
+                                _scale_point(rx0, ry0, scale),
+                                _scale_point(rx1, ry1, scale),
+                            ],
+                            outline=color,
+                            width=2,
+                        )
 
     # Misc title regions
     if misc_title_regions:
@@ -459,14 +455,16 @@ def draw_overlay(
             x0, y0, x1, y1 = misc_title.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                outline=_get_color(color_overrides, "misc_title_region"),
-                width=3,
-            )
+            color = _get_color(color_overrides, "misc_title_region")
+            if color:
+                draw.rectangle(
+                    [
+                        _scale_point(x0, y0, scale),
+                        _scale_point(x1, y1, scale),
+                    ],
+                    outline=color,
+                    width=3,
+                )
 
     # Standard detail regions
     if standard_detail_regions:
@@ -475,66 +473,74 @@ def draw_overlay(
             x0, y0, x1, y1 = detail.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                outline=_get_color(color_overrides, "standard_detail_region"),
-                width=4,
-            )
+            color = _get_color(color_overrides, "standard_detail_region")
+            if color:
+                draw.rectangle(
+                    [
+                        _scale_point(x0, y0, scale),
+                        _scale_point(x1, y1, scale),
+                    ],
+                    outline=color,
+                    width=4,
+                )
 
             # Draw header (just the first row - the actual header text)
             if detail.header and detail.header.rows:
                 first_row = detail.header.rows[0]
                 hx0, hy0, hx1, hy1 = first_row.bbox()
-                draw.rectangle(
-                    [
-                        _scale_point(hx0, hy0, scale),
-                        _scale_point(hx1, hy1, scale),
-                    ],
-                    outline=_get_color(color_overrides, "standard_detail_header"),
-                    width=3,
-                )
+                color = _get_color(color_overrides, "standard_detail_header")
+                if color:
+                    draw.rectangle(
+                        [
+                            _scale_point(hx0, hy0, scale),
+                            _scale_point(hx1, hy1, scale),
+                        ],
+                        outline=color,
+                        width=3,
+                    )
 
             # Draw subheader (if present)
             if detail.subheader_bbox:
                 sx0, sy0, sx1, sy1 = detail.subheader_bbox
-                draw.rectangle(
-                    [
-                        _scale_point(sx0, sy0, scale),
-                        _scale_point(sx1, sy1, scale),
-                    ],
-                    outline=_get_color(color_overrides, "standard_detail_subheader"),
-                    width=2,
-                )
+                color = _get_color(color_overrides, "standard_detail_subheader")
+                if color:
+                    draw.rectangle(
+                        [
+                            _scale_point(sx0, sy0, scale),
+                            _scale_point(sx1, sy1, scale),
+                        ],
+                        outline=color,
+                        width=2,
+                    )
 
             # Draw each entry
             for entry in detail.entries:
                 # Draw sheet number box
                 if entry.sheet_bbox:
                     sx0, sy0, sx1, sy1 = entry.sheet_bbox
-                    draw.rectangle(
-                        [
-                            _scale_point(sx0, sy0, scale),
-                            _scale_point(sx1, sy1, scale),
-                        ],
-                        outline=_get_color(color_overrides, "standard_detail_sheet"),
-                        width=2,
-                    )
+                    color = _get_color(color_overrides, "standard_detail_sheet")
+                    if color:
+                        draw.rectangle(
+                            [
+                                _scale_point(sx0, sy0, scale),
+                                _scale_point(sx1, sy1, scale),
+                            ],
+                            outline=color,
+                            width=2,
+                        )
 
                 # Draw description box
                 if entry.description_bbox:
                     dx0, dy0, dx1, dy1 = entry.description_bbox
-                    draw.rectangle(
-                        [
-                            _scale_point(dx0, dy0, scale),
-                            _scale_point(dx1, dy1, scale),
-                        ],
-                        outline=_get_color(
-                            color_overrides, "standard_detail_description"
-                        ),
-                        width=2,
-                    )
+                    color = _get_color(color_overrides, "standard_detail_description")
+                    if color:
+                        draw.rectangle(
+                            [
+                                _scale_point(dx0, dy0, scale),
+                                _scale_point(dx1, dy1, scale),
+                            ],
+                            outline=color,
+                            width=2,
+                        )
 
     img.save(out_path)
