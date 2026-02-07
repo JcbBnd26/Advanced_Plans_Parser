@@ -31,3 +31,9 @@ class GroupingConfig:
     max_row_width_mult: float = 1.1
     # Table regularity tolerance (coefficient of variation threshold).
     table_regular_tol: float = 0.22
+    # Span gap multiplier: split spans when gap > median_space_gap * span_gap_mult.
+    span_gap_mult: float = 12.0
+    # Content band for column detection (exclude headers/footers from gutter analysis).
+    # Values are fractions of page height.
+    content_band_top: float = 0.15  # Exclude top 15%
+    content_band_bottom: float = 0.85  # Exclude bottom 15%

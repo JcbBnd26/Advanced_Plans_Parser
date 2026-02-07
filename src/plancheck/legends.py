@@ -1251,7 +1251,7 @@ def detect_standard_detail_regions(
                 # Parse entries - use inline if we have inline blocks, else use two-column
                 if inline_entry_blocks:
                     entries = _parse_standard_detail_entries_from_inline_blocks(
-                        inline_entry_blocks, page, dbg, all_blocks=blocks
+                        inline_entry_blocks, page, dbg
                     )
                 else:
                     entries = _parse_standard_detail_entries_two_column(
@@ -1334,16 +1334,12 @@ def _parse_standard_detail_entries_from_inline_blocks(
     inline_blocks: List[BlockCluster],
     page: int,
     dbg,
-    all_blocks: List[BlockCluster] = None,
 ) -> List[StandardDetailEntry]:
     """
     Parse standard detail entries from inline entry blocks.
 
     Each row in the block has format: "SHEET-NUM DESCRIPTION WORDS"
     (e.g., "BMPR-0 BEST MANAGEMENT PRACTICE REFERENCE MATRIX")
-
-    Also looks for continuation blocks on the same y-line to capture
-    full descriptions that span multiple blocks.
     """
     entries = []
 
@@ -1384,73 +1380,9 @@ def _parse_standard_detail_entries_from_inline_blocks(
                     desc_y0 = min(b.y0 for b in desc_boxes)
                     desc_x1 = max(b.x1 for b in desc_boxes)
                     desc_y1 = max(b.y1 for b in desc_boxes)
+                    desc_bbox_val = (desc_x0, desc_y0, desc_x1, desc_y1)
                 else:
-                    desc_x0 = desc_y0 = desc_x1 = desc_y1 = 0
-                    if sheet_bbox_val:
-                        desc_x0, desc_y0, desc_x1, desc_y1 = sheet_bbox_val
-
-                # Look for continuation blocks on the same y-line
-                if all_blocks:
-                    row_y0, row_y1 = row.bbox()[1], row.bbox()[3]
-                    row_x1 = row.bbox()[2]
-                    # Get the rightmost box's x0 to help find overlapping blocks
-                    rightmost_box_x0 = max(b.x0 for b in boxes) if boxes else row_x1
-
-                    for other_blk in all_blocks:
-                        if other_blk is blk or other_blk in inline_blocks:
-                            continue
-                        ox0, oy0, ox1, oy1 = other_blk.bbox()
-
-                        # Block must have content extending past our current row's end
-                        # and must start somewhere in the description area (not too far left)
-                        # Allow blocks that start anywhere from mid-description to beyond row end
-                        if (
-                            ox1 > row_x1
-                            and ox0 >= rightmost_box_x0 - 100
-                            and ox0 < row_x1 + 300
-                        ):
-                            # Check y-overlap at block level first
-                            y_overlap = min(row_y1, oy1) - max(row_y0, oy0)
-                            row_height = row_y1 - row_y0
-                            if row_height > 0 and y_overlap / row_height > 0.5:
-                                # Found potential continuation - look for matching row
-                                for other_row in other_blk.rows:
-                                    ory0, ory1 = (
-                                        other_row.bbox()[1],
-                                        other_row.bbox()[3],
-                                    )
-                                    # Check this row overlaps with our row's y
-                                    if min(row_y1, ory1) - max(row_y0, ory0) > 0:
-                                        # Only include boxes that are to the right of our current content
-                                        other_boxes = [
-                                            b
-                                            for b in other_row.boxes
-                                            if b.x0 >= row_x1 - 20
-                                        ]
-                                        other_boxes = sorted(
-                                            other_boxes, key=lambda b: b.x0
-                                        )
-                                        other_text = " ".join(
-                                            b.text for b in other_boxes if b.text
-                                        ).strip()
-                                        if other_text:
-                                            description = description + " " + other_text
-                                            # Extend description bbox
-                                            for b in other_boxes:
-                                                desc_x1 = max(desc_x1, b.x1)
-                                                desc_y0 = (
-                                                    min(desc_y0, b.y0)
-                                                    if desc_y0 > 0
-                                                    else b.y0
-                                                )
-                                                desc_y1 = max(desc_y1, b.y1)
-                                        break
-
-                desc_bbox_val = (
-                    (desc_x0, desc_y0, desc_x1, desc_y1)
-                    if desc_x0 > 0
-                    else sheet_bbox_val
-                )
+                    desc_bbox_val = sheet_bbox_val
 
                 entries.append(
                     StandardDetailEntry(

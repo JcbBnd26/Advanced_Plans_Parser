@@ -334,6 +334,69 @@ class GlyphBox:
 
 
 @dataclass
+class Span:
+    """A contiguous run of tokens within a Line, split by large horizontal gaps.
+
+    Spans preserve column/table structure without breaking line integrity.
+    Each span may be assigned a col_id after column detection.
+    """
+
+    token_indices: List[int] = field(default_factory=list)
+    col_id: Optional[int] = None
+
+    def bbox(self, tokens: List[GlyphBox]) -> Tuple[float, float, float, float]:
+        """Compute bounding box from referenced tokens."""
+        if not self.token_indices:
+            return (0, 0, 0, 0)
+        boxes = [tokens[i] for i in self.token_indices]
+        return (
+            min(b.x0 for b in boxes),
+            min(b.y0 for b in boxes),
+            max(b.x1 for b in boxes),
+            max(b.y1 for b in boxes),
+        )
+
+    def text(self, tokens: List[GlyphBox]) -> str:
+        """Join token text in index order."""
+        return " ".join(tokens[i].text for i in self.token_indices if tokens[i].text)
+
+
+@dataclass
+class Line:
+    """A horizontal line of text: all tokens sharing the same baseline.
+
+    This is the canonical row-truth layer. A Line is never split by column
+    detection - columns only label spans/tokens with col_id.
+    """
+
+    line_id: int
+    page: int
+    token_indices: List[int] = field(default_factory=list)
+    baseline_y: float = 0.0
+    spans: List[Span] = field(default_factory=list)
+
+    def bbox(self, tokens: List[GlyphBox]) -> Tuple[float, float, float, float]:
+        """Compute bounding box from referenced tokens."""
+        if not self.token_indices:
+            return (0, 0, 0, 0)
+        boxes = [tokens[i] for i in self.token_indices]
+        return (
+            min(b.x0 for b in boxes),
+            min(b.y0 for b in boxes),
+            max(b.x1 for b in boxes),
+            max(b.y1 for b in boxes),
+        )
+
+    def text(self, tokens: List[GlyphBox]) -> str:
+        """Join token text in x-sorted order."""
+        if not self.token_indices:
+            return ""
+        # Sort by x0 to ensure correct reading order
+        sorted_indices = sorted(self.token_indices, key=lambda i: tokens[i].x0)
+        return " ".join(tokens[i].text for i in sorted_indices if tokens[i].text)
+
+
+@dataclass
 class RowBand:
     """Boxes grouped into a single text row or horizontal band."""
 
@@ -351,10 +414,19 @@ class RowBand:
 
 @dataclass
 class BlockCluster:
-    """Row bands merged into a logical block (note/legend entry/table region)."""
+    """Row bands merged into a logical block (note/legend entry/table region).
+
+    Supports both old (rows-based) and new (lines-based) grouping pipelines.
+    When using the new pipeline, `lines` is populated and `rows` may be empty.
+    Use `get_all_boxes()` for a unified way to access glyph boxes from either.
+    """
 
     page: int
     rows: List[RowBand] = field(default_factory=list)
+    lines: List[Line] = field(default_factory=list)  # New: line-based grouping
+    _tokens: Optional[List[GlyphBox]] = field(
+        default=None, repr=False
+    )  # Token reference for line-based access
     label: Optional[str] = None
     is_table: bool = False
     is_notes: bool = False
@@ -365,13 +437,72 @@ class BlockCluster:
         ys0: List[float] = []
         xs1: List[float] = []
         ys1: List[float] = []
-        for row in self.rows:
-            x0, y0, x1, y1 = row.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
+
+        # Prefer lines if available
+        if self.lines and self._tokens:
+            for line in self.lines:
+                x0, y0, x1, y1 = line.bbox(self._tokens)
+                xs0.append(x0)
+                ys0.append(y0)
+                xs1.append(x1)
+                ys1.append(y1)
+        else:
+            for row in self.rows:
+                x0, y0, x1, y1 = row.bbox()
+                xs0.append(x0)
+                ys0.append(y0)
+                xs1.append(x1)
+                ys1.append(y1)
+
+        if not xs0:
+            return (0, 0, 0, 0)
         return (min(xs0), min(ys0), max(xs1), max(ys1))
+
+    def get_all_boxes(self, tokens: Optional[List[GlyphBox]] = None) -> List[GlyphBox]:
+        """Get all glyph boxes from this block (supports both old and new pipelines).
+
+        Args:
+            tokens: Token list (required for line-based blocks, optional for row-based)
+
+        Returns:
+            List of GlyphBox in reading order (y then x)
+        """
+        tokens = tokens or self._tokens
+
+        if self.lines and tokens:
+            # New pipeline: collect from lines
+            boxes = []
+            for line in self.lines:
+                boxes.extend(tokens[i] for i in line.token_indices)
+            return sorted(boxes, key=lambda b: (b.y0, b.x0))
+        else:
+            # Old pipeline: collect from rows
+            boxes = []
+            for row in self.rows:
+                boxes.extend(row.boxes)
+            return sorted(boxes, key=lambda b: (b.y0, b.x0))
+
+    def populate_rows_from_lines(self) -> None:
+        """Populate .rows from .lines for backward compatibility.
+
+        Converts each Line into a RowBand so all existing code that reads
+        .rows[0].boxes etc. continues to work without modification.
+        Requires self._tokens to be set.
+        """
+        if not self.lines or not self._tokens:
+            return
+
+        self.rows = []
+        for line in self.lines:
+            boxes = [
+                self._tokens[i]
+                for i in sorted(line.token_indices, key=lambda i: self._tokens[i].x0)
+            ]
+            row = RowBand(page=line.page, boxes=boxes, column_id=None)
+            # Set column_id from the leftmost span if available
+            if line.spans:
+                row.column_id = line.spans[0].col_id
+            self.rows.append(row)
 
 
 @dataclass

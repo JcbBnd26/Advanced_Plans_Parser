@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 from statistics import mean, median, pstdev
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from .config import GroupingConfig
-from .models import BlockCluster, GlyphBox, NotesColumn, RowBand
+from .models import BlockCluster, GlyphBox, Line, NotesColumn, RowBand, Span
 
 
 def _histogram_gutters(
@@ -63,6 +63,292 @@ def _median_size(boxes: Iterable[GlyphBox]) -> Tuple[float, float]:
     if not widths or not heights:
         return (1.0, 1.0)
     return (float(median(widths)), float(median(heights)))
+
+
+# =============================================================================
+# Row-Truth Layer: build_lines, compute_median_space_gap, split_line_spans
+# =============================================================================
+
+
+def build_lines(tokens: List[GlyphBox], settings: GroupingConfig) -> List[Line]:
+    """Build canonical lines from tokens by clustering on baseline y-position.
+
+    This is the row-truth layer. Each token belongs to exactly one Line.
+    Lines are never split by subsequent column detection.
+
+    Args:
+        tokens: List of GlyphBox tokens from PDF extraction
+        settings: GroupingConfig with vertical_tol_mult
+
+    Returns:
+        List of Line objects sorted by (baseline_y, min_x)
+    """
+    if not tokens:
+        return []
+
+    _, median_h = _median_size(tokens)
+    vert_tol = median_h * settings.vertical_tol_mult
+
+    # Build index mapping: we need to track which original token index goes where
+    # Sort tokens by (y_center, x0) for stable clustering
+    indexed_tokens = [(i, t, (t.y0 + t.y1) * 0.5) for i, t in enumerate(tokens)]
+    indexed_tokens.sort(key=lambda x: (x[2], tokens[x[0]].x0))
+
+    # Cluster by y-center proximity
+    lines: List[Line] = []
+    line_id = 0
+
+    for idx, token, y_center in indexed_tokens:
+        placed = False
+
+        # Try to place in existing line
+        for line in lines:
+            # Compute current line's y-center from its tokens
+            line_boxes = [tokens[i] for i in line.token_indices]
+            line_y_centers = [(b.y0 + b.y1) * 0.5 for b in line_boxes]
+            line_center = mean(line_y_centers)
+
+            # Check overlap ratio for better accuracy
+            line_y0 = min(b.y0 for b in line_boxes)
+            line_y1 = max(b.y1 for b in line_boxes)
+            overlap = min(token.y1, line_y1) - max(token.y0, line_y0)
+            min_h = min(token.y1 - token.y0, line_y1 - line_y0)
+            overlap_ratio = overlap / (min_h + 1e-6)
+
+            if abs(y_center - line_center) <= vert_tol and overlap_ratio > 0.3:
+                line.token_indices.append(idx)
+                placed = True
+                break
+
+        if not placed:
+            # Create new line
+            new_line = Line(
+                line_id=line_id,
+                page=token.page,
+                token_indices=[idx],
+                baseline_y=y_center,
+                spans=[],
+            )
+            lines.append(new_line)
+            line_id += 1
+
+    # Finalize: sort token_indices by x0, compute final baseline_y
+    for line in lines:
+        line.token_indices.sort(key=lambda i: tokens[i].x0)
+        y_centers = [(tokens[i].y0 + tokens[i].y1) * 0.5 for i in line.token_indices]
+        line.baseline_y = median(y_centers) if y_centers else 0.0
+
+    # Sort lines by (baseline_y, min_x) for reading order
+    def line_sort_key(line: Line) -> Tuple[float, float]:
+        if not line.token_indices:
+            return (0.0, 0.0)
+        min_x = min(tokens[i].x0 for i in line.token_indices)
+        return (line.baseline_y, min_x)
+
+    lines.sort(key=line_sort_key)
+
+    # Re-assign line_ids after sorting
+    for i, line in enumerate(lines):
+        line.line_id = i
+
+    return lines
+
+
+def compute_median_space_gap(lines: List[Line], tokens: List[GlyphBox]) -> float:
+    """Compute the median inter-word space gap from actual token spacing.
+
+    This gives a robust estimate of the typical space width on the page,
+    which is consistent across fonts (unlike median token width).
+
+    Args:
+        lines: List of Line objects
+        tokens: Original token list
+
+    Returns:
+        Median space gap in points. Returns 5.0 as fallback if insufficient data.
+    """
+    if not lines or not tokens:
+        return 5.0
+
+    all_gaps: List[float] = []
+
+    for line in lines:
+        if len(line.token_indices) < 2:
+            continue
+
+        # Walk tokens in x-order (they should already be sorted)
+        sorted_indices = sorted(line.token_indices, key=lambda i: tokens[i].x0)
+
+        for i in range(len(sorted_indices) - 1):
+            curr_token = tokens[sorted_indices[i]]
+            next_token = tokens[sorted_indices[i + 1]]
+            gap = next_token.x0 - curr_token.x1
+            if gap > 0:  # Only positive gaps (no overlaps)
+                all_gaps.append(gap)
+
+    if not all_gaps:
+        return 5.0
+
+    # Filter to "small" gaps: exclude huge gaps (gutters) to get true space width
+    # Use 90th percentile as cutoff to remove column gutters
+    sorted_gaps = sorted(all_gaps)
+    cutoff_idx = int(len(sorted_gaps) * 0.9)
+    small_gaps = sorted_gaps[:cutoff_idx] if cutoff_idx > 0 else sorted_gaps
+
+    return median(small_gaps) if small_gaps else 5.0
+
+
+def split_line_spans(
+    line: Line,
+    tokens: List[GlyphBox],
+    median_space_gap: float,
+    span_gap_mult: float,
+) -> None:
+    """Split a line into spans based on large horizontal gaps.
+
+    Spans preserve column/table structure without breaking line integrity.
+    Modifies line.spans in place.
+
+    Args:
+        line: Line object to split
+        tokens: Original token list
+        median_space_gap: Typical inter-word space from compute_median_space_gap()
+        span_gap_mult: Multiplier for gap threshold (default ~8)
+    """
+    if not line.token_indices:
+        line.spans = []
+        return
+
+    gap_thresh = median_space_gap * span_gap_mult
+
+    # Sort by x0 (should already be sorted, but ensure)
+    sorted_indices = sorted(line.token_indices, key=lambda i: tokens[i].x0)
+
+    # Build spans by detecting large gaps
+    spans: List[Span] = []
+    current_span_indices: List[int] = [sorted_indices[0]]
+
+    for i in range(1, len(sorted_indices)):
+        prev_token = tokens[sorted_indices[i - 1]]
+        curr_token = tokens[sorted_indices[i]]
+        gap = curr_token.x0 - prev_token.x1
+
+        if gap > gap_thresh:
+            # Large gap: finalize current span and start new one
+            spans.append(Span(token_indices=current_span_indices, col_id=None))
+            current_span_indices = [sorted_indices[i]]
+        else:
+            current_span_indices.append(sorted_indices[i])
+
+    # Finalize last span
+    if current_span_indices:
+        spans.append(Span(token_indices=current_span_indices, col_id=None))
+
+    line.spans = spans
+
+
+def detect_column_boundaries(
+    tokens: List[GlyphBox],
+    page_height: float,
+    settings: GroupingConfig,
+) -> List[float]:
+    """Detect column boundary x-positions using only the main content band.
+
+    This avoids pollution from headers, footers, and legends which often
+    have different column structures than the main content area.
+
+    Args:
+        tokens: All tokens on the page
+        page_height: Page height in points
+        settings: GroupingConfig with content_band_top/bottom
+
+    Returns:
+        List of column boundary x-positions (sorted). Empty list means single column.
+    """
+    if not tokens or page_height <= 0:
+        return []
+
+    # Filter to main content band (middle 70% by default)
+    y_min = page_height * settings.content_band_top
+    y_max = page_height * settings.content_band_bottom
+
+    content_tokens = [t for t in tokens if y_min < (t.y0 + t.y1) * 0.5 < y_max]
+
+    if len(content_tokens) < 4:
+        # Not enough tokens in content band, fall back to all tokens
+        content_tokens = tokens
+
+    median_w, _ = _median_size(content_tokens)
+    if median_w <= 0:
+        return []
+
+    # Use histogram-based gutter detection
+    if settings.use_hist_gutter:
+        gutter_width = median_w * settings.gutter_width_mult
+        gutters = _histogram_gutters(content_tokens, bins=80, gutter_width=gutter_width)
+        if gutters:
+            return sorted(gutters)
+
+    # Fallback: gap-based detection
+    centers = sorted([(t.x0 + t.x1) * 0.5 for t in content_tokens])
+    if len(centers) < 2:
+        return []
+
+    # Find significant gaps
+    gap_thresh = median_w * settings.column_gap_mult
+    boundaries: List[float] = []
+
+    for a, b in zip(centers[:-1], centers[1:]):
+        if b - a > gap_thresh:
+            boundaries.append((a + b) * 0.5)
+
+    return sorted(boundaries)
+
+
+def assign_column_ids(
+    lines: List[Line],
+    tokens: List[GlyphBox],
+    col_boundaries: List[float],
+) -> None:
+    """Assign column IDs to spans based on column boundary positions.
+
+    This is non-destructive: it only labels spans with col_id, never splits lines.
+
+    Args:
+        lines: List of Line objects with populated spans
+        tokens: Original token list
+        col_boundaries: Column boundary x-positions from detect_column_boundaries()
+    """
+    if not col_boundaries:
+        # Single column: all spans get col_id=0
+        for line in lines:
+            for span in line.spans:
+                span.col_id = 0
+        return
+
+    # Boundaries define regions: (-inf, b0), [b0, b1), [b1, b2), ..., [bn, +inf)
+    # So n boundaries create n+1 columns
+    for line in lines:
+        for span in line.spans:
+            if not span.token_indices:
+                span.col_id = 0
+                continue
+
+            # Use span's x-center to determine column
+            span_boxes = [tokens[i] for i in span.token_indices]
+            span_x_center = (
+                min(b.x0 for b in span_boxes) + max(b.x1 for b in span_boxes)
+            ) / 2
+
+            # Find which column this span belongs to
+            col_id = 0
+            for boundary in col_boundaries:
+                if span_x_center >= boundary:
+                    col_id += 1
+                else:
+                    break
+
+            span.col_id = col_id
 
 
 def _partition_columns(
@@ -441,6 +727,176 @@ def group_blocks(rows: List[RowBand], settings: GroupingConfig) -> List[BlockClu
         if not merge_done:
             merged.append(blk)
         i += 1
+    return merged
+
+
+def group_blocks_from_lines(
+    lines: List[Line],
+    tokens: List[GlyphBox],
+    settings: GroupingConfig,
+) -> List[BlockCluster]:
+    """Group Lines into BlockClusters using the new row-truth pipeline.
+
+    Unlike the old group_blocks() which uses RowBands, this function:
+    - Takes Lines as input (never splits them)
+    - Uses span col_id for horizontal banding
+    - Uses baseline_y for vertical gap detection
+    - Populates BlockCluster.lines instead of .rows
+
+    Args:
+        lines: Lines from build_lines() with spans populated
+        tokens: Original token list
+        settings: GroupingConfig
+
+    Returns:
+        List of BlockCluster with lines populated (rows will be empty)
+    """
+    if not lines:
+        return []
+
+    # Compute median line height for gap detection
+    line_heights = []
+    line_widths = []
+    for line in lines:
+        bbox = line.bbox(tokens)
+        line_heights.append(bbox[3] - bbox[1])
+        line_widths.append(bbox[2] - bbox[0])
+
+    median_line_h = float(median(line_heights)) if line_heights else 1.0
+    median_line_w = float(median(line_widths)) if line_widths else 1.0
+    block_gap = median_line_h * settings.block_gap_mult
+    max_block_height = median_line_h * settings.max_block_height_mult
+    note_re = re.compile(r"^\d+\.")
+
+    # Determine column index for each line based on its leftmost span's col_id
+    def get_line_col_id(line: Line) -> int:
+        if line.spans:
+            # Use the leftmost span's col_id
+            leftmost_span = min(
+                line.spans,
+                key=lambda s: (
+                    tokens[s.token_indices[0]].x0 if s.token_indices else float("inf")
+                ),
+            )
+            return leftmost_span.col_id if leftmost_span.col_id is not None else 0
+        return 0
+
+    col_index = [get_line_col_id(line) for line in lines]
+
+    # If no col_ids are set, infer from horizontal positions
+    if all(c == 0 for c in col_index):
+        col_gap = median_line_w * 0.6
+        centers = [
+            ((line.bbox(tokens)[0] + line.bbox(tokens)[2]) * 0.5, idx)
+            for idx, line in enumerate(lines)
+        ]
+        centers.sort(key=lambda t: t[0])
+        if centers:
+            col_index[centers[0][1]] = 0
+            prev_c = centers[0][0]
+            band = 0
+            for c, idx in centers[1:]:
+                if c - prev_c > col_gap:
+                    band += 1
+                col_index[idx] = band
+                prev_c = c
+
+    def _group_band(band_lines: List[Line]) -> List[BlockCluster]:
+        if not band_lines:
+            return []
+        # Sort by baseline_y
+        band_lines = sorted(band_lines, key=lambda ln: ln.baseline_y)
+        band_blocks: List[BlockCluster] = []
+
+        current = BlockCluster(
+            page=band_lines[0].page,
+            rows=[],  # Empty for new pipeline
+            lines=[band_lines[0]],
+            _tokens=tokens,
+        )
+
+        for ln in band_lines[1:]:
+            # Get previous line's bbox
+            prev_bbox = current.lines[-1].bbox(tokens)
+            prev_y1 = prev_bbox[3]
+
+            # Get current line's bbox
+            cur_bbox = ln.bbox(tokens)
+            cur_y0 = cur_bbox[1]
+
+            # Calculate block height
+            first_bbox = current.lines[0].bbox(tokens)
+            cur_block_height = prev_y1 - first_bbox[1]
+
+            # Check if line starts with note number
+            line_text = ln.text(tokens).strip()
+            starts_note = bool(note_re.match(line_text))
+            note_starts_block = starts_note and len(current.lines) >= 1
+
+            # Decide whether to split
+            should_split = (
+                (cur_y0 - prev_y1) > block_gap
+                or (cur_block_height > max_block_height)
+                or note_starts_block
+            )
+
+            if should_split:
+                band_blocks.append(current)
+                current = BlockCluster(
+                    page=ln.page,
+                    rows=[],
+                    lines=[ln],
+                    _tokens=tokens,
+                )
+            else:
+                current.lines.append(ln)
+
+        band_blocks.append(current)
+        return band_blocks
+
+    # Group by column band
+    blocks: List[BlockCluster] = []
+    max_band = max(col_index) if col_index else 0
+    for band in range(max_band + 1):
+        band_lines = [ln for idx, ln in enumerate(lines) if col_index[idx] == band]
+        blocks.extend(_group_band(band_lines))
+
+    # Post-process: merge standalone note-number lines into following block
+    merged: List[BlockCluster] = []
+    sorted_blocks = sorted(blocks, key=lambda b: b.bbox()[1])
+    i = 0
+    while i < len(sorted_blocks):
+        blk = sorted_blocks[i]
+        merge_done = False
+
+        if len(blk.lines) == 1:
+            line = blk.lines[0]
+            line_text = line.text(tokens).strip()
+
+            # Check if it's a note number line
+            if (
+                note_re.match(line_text)
+                and len(line.token_indices) <= 2
+                and (i + 1) < len(sorted_blocks)
+            ):
+                x0_b, y0, x1_b, y1 = blk.bbox()
+                nxt = sorted_blocks[i + 1]
+                nx0, ny0, nx1, ny1 = nxt.bbox()
+                gap = ny0 - y1
+
+                if gap <= block_gap * 1.5:
+                    nxt.lines = blk.lines + nxt.lines
+                    merge_done = True
+
+        if not merge_done:
+            merged.append(blk)
+        i += 1
+
+    # Populate .rows from .lines for backward compatibility with all
+    # downstream code (mark_headers, mark_notes, legends, overlay, etc.)
+    for blk in merged:
+        blk.populate_rows_from_lines()
+
     return merged
 
 
@@ -1102,9 +1558,134 @@ def link_continued_columns(
 def build_clusters(
     boxes: List[GlyphBox], settings: GroupingConfig
 ) -> List[BlockCluster]:
+    """Build clusters using the legacy RowBand-based pipeline.
+
+    For the new row-truth pipeline, use build_clusters_v2().
+    """
     rows = group_rows(boxes, settings)
     blocks = group_blocks(rows, settings)
     mark_tables(blocks, settings)
     mark_headers(blocks, debug_path=None)
     mark_notes(blocks, debug_path=None)
     return blocks
+
+
+def build_clusters_v2(
+    tokens: List[GlyphBox],
+    page_height: float,
+    settings: GroupingConfig,
+) -> List[BlockCluster]:
+    """Build clusters using the new row-truth pipeline.
+
+    This pipeline guarantees that all words on the same baseline stay together.
+    Lines are never split by column detection - columns only label spans.
+
+    Pipeline:
+    1. build_lines(tokens) → Lines (row truth)
+    2. compute_median_space_gap() → true space width
+    3. split_line_spans() → populate spans using space-based gap detection
+    4. detect_column_boundaries() → zone-aware column detection (content band only)
+    5. assign_column_ids() → label spans with col_id (non-destructive)
+    6. group_blocks_from_lines() → BlockClusters with lines (not rows)
+    7. mark_tables/headers/notes → semantic labeling
+
+    Args:
+        tokens: GlyphBox tokens from PDF extraction
+        page_height: Page height in points (for zone-aware column detection)
+        settings: GroupingConfig
+
+    Returns:
+        List of BlockCluster with lines populated
+    """
+    if not tokens:
+        return []
+
+    # Step 1: Build canonical lines (row truth)
+    lines = build_lines(tokens, settings)
+
+    # Step 2: Compute median space gap for span splitting
+    median_space_gap = compute_median_space_gap(lines, tokens)
+
+    # Step 3: Split lines into spans based on large gaps
+    for line in lines:
+        split_line_spans(line, tokens, median_space_gap, settings.span_gap_mult)
+
+    # Step 4: Detect column boundaries from content band
+    col_boundaries = detect_column_boundaries(tokens, page_height, settings)
+
+    # Step 5: Assign column IDs to spans (non-destructive)
+    assign_column_ids(lines, tokens, col_boundaries)
+
+    # Step 6: Group lines into blocks (also populates .rows for compat)
+    blocks = group_blocks_from_lines(lines, tokens, settings)
+
+    # Step 7: Semantic labeling (uses .rows via compat shim)
+    mark_tables(blocks, settings)
+    mark_headers(blocks, debug_path=None)
+    mark_notes(blocks, debug_path=None)
+
+    return blocks
+
+
+def mark_tables_v2(
+    blocks: List[BlockCluster],
+    tokens: List[GlyphBox],
+    settings: GroupingConfig,
+) -> None:
+    """Mark blocks as tables (for line-based BlockClusters).
+
+    Works with the new pipeline where blocks have lines instead of rows.
+    """
+    for blk in blocks:
+        # Handle both old (rows) and new (lines) pipelines
+        if blk.lines:
+            if len(blk.lines) < 2:
+                blk.is_table = False
+                continue
+
+            col_counts: List[int] = []
+            gaps_sets: List[List[float]] = []
+
+            for line in blk.lines:
+                # Count tokens per line
+                col_counts.append(len(line.token_indices))
+
+                # Compute gaps between adjacent tokens
+                sorted_indices = sorted(line.token_indices, key=lambda i: tokens[i].x0)
+                xs = []
+                for idx in sorted_indices:
+                    xs.append(tokens[idx].x0)
+                    xs.append(tokens[idx].x1)
+                xs_sorted = sorted(xs)
+                gaps = [
+                    xs_sorted[i + 1] - xs_sorted[i] for i in range(len(xs_sorted) - 1)
+                ]
+                if gaps:
+                    gaps_sets.append(gaps)
+
+            if not gaps_sets:
+                blk.is_table = False
+                continue
+
+            flat_gaps = [g for gaps in gaps_sets for g in gaps if g > 0]
+            if not flat_gaps:
+                blk.is_table = False
+                continue
+
+            gap_mean = mean(flat_gaps)
+            gap_cv = (
+                (pstdev(flat_gaps) / (gap_mean + 1e-6)) if len(flat_gaps) > 1 else 0.0
+            )
+            col_mean = mean(col_counts) if col_counts else 0.0
+            col_cv = (
+                (pstdev(col_counts) / (col_mean + 1e-6)) if len(col_counts) > 1 else 0.0
+            )
+
+            is_regular = (
+                gap_cv < settings.table_regular_tol
+                and col_cv < settings.table_regular_tol
+            )
+            blk.is_table = is_regular and col_mean >= 2
+        else:
+            # Fall back to rows-based logic
+            mark_tables([blk], settings)

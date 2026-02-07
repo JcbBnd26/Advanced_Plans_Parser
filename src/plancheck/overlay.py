@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from .models import (
     AbbreviationRegion,
     BlockCluster,
     GlyphBox,
     LegendRegion,
+    Line,
     MiscTitleRegion,
     NotesColumn,
     RevisionRegion,
     RowBand,
+    Span,
     StandardDetailRegion,
 )
 
@@ -24,6 +26,8 @@ DEFAULT_COLOR = None
 COLOR_KEYS = [
     "glyph_boxes",
     "rows",
+    "lines",  # New: line-based grouping
+    "spans",  # New: span visualization (colored by col_id)
     "regular_blocks",
     "table_blocks",
     "header_blocks",
@@ -57,6 +61,155 @@ def _get_color(color_overrides: Optional[Dict[str, tuple]], key: str) -> tuple |
 
 def _scale_point(x: float, y: float, scale: float) -> Tuple[float, float]:
     return (x * scale, y * scale)
+
+
+# Label prefixes for each element type
+LABEL_PREFIXES = {
+    "glyph_boxes": "G",
+    "rows": "R",
+    "lines": "L",  # New: line-based grouping
+    "spans": "S",  # New: spans within lines
+    "regular_blocks": "B",
+    "table_blocks": "T",
+    "header_blocks": "H",
+    "notes_columns": "NC",
+    "legend_region": "LR",
+    "legend_header": "LH",
+    "abbreviation_region": "AR",
+    "abbreviation_header": "AH",
+    "revision_region": "RV",
+    "standard_detail_region": "SD",
+    "misc_title_text": "MT",
+}
+
+# Palette for column-id colored spans
+COLUMN_COLORS = [
+    (255, 0, 0, 180),  # Red
+    (0, 0, 255, 180),  # Blue
+    (0, 180, 0, 180),  # Green
+    (255, 165, 0, 180),  # Orange
+    (128, 0, 128, 180),  # Purple
+    (0, 200, 200, 180),  # Cyan
+    (255, 105, 180, 180),  # Pink
+    (139, 69, 19, 180),  # Brown
+]
+
+
+def _draw_label(
+    draw: ImageDraw.ImageDraw,
+    x: float,
+    y: float,
+    element_type: str,
+    index: int,
+    color: tuple,
+    scale: float,
+) -> None:
+    """Draw a small label at the top-left corner of an element.
+
+    Args:
+        draw: PIL ImageDraw object
+        x: Scaled x position (top-left corner)
+        y: Scaled y position (top-left corner)
+        element_type: Key from LABEL_PREFIXES
+        index: 1-based index matching internal list position
+        color: RGBA tuple for the label color
+        scale: Current scale factor
+    """
+    prefix = LABEL_PREFIXES.get(element_type, "?")
+    label = f"{prefix}{index}"
+
+    # Use a small font size scaled appropriately
+    font_size = max(8, int(10 * scale))
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except (OSError, IOError):
+        font = ImageFont.load_default()
+
+    # Draw background rectangle for readability
+    bbox = draw.textbbox((x, y - font_size - 2), label, font=font)
+    # Expand bbox slightly for padding
+    bg_bbox = (bbox[0] - 1, bbox[1] - 1, bbox[2] + 1, bbox[3] + 1)
+    draw.rectangle(bg_bbox, fill=(255, 255, 255, 200))
+
+    # Draw the label text
+    text_color = (color[0], color[1], color[2]) if len(color) >= 3 else (0, 0, 0)
+    draw.text((x, y - font_size - 2), label, fill=text_color, font=font)
+
+
+def draw_lines_overlay(
+    page_width: float,
+    page_height: float,
+    lines: Iterable[Line],
+    tokens: List[GlyphBox],
+    out_path: Path,
+    scale: float = 1.0,
+    background: Image.Image | None = None,
+    span_color: tuple = (0, 0, 255, 200),  # Blue outlines for spans
+) -> None:
+    """Render Span outlines as an overlay PNG for debugging the row-truth layer.
+
+    Args:
+        page_width: Page width in points
+        page_height: Page height in points
+        lines: Lines from build_lines()
+        tokens: Original token list
+        out_path: Output path for PNG
+        scale: Scale factor for rendering
+        background: Optional background image
+        span_color: RGBA color for span outlines
+    """
+    img_w = int(page_width * scale)
+    img_h = int(page_height * scale)
+
+    if background is not None:
+        img = background.convert("RGBA")
+        if img.size != (img_w, img_h):
+            img = img.resize((img_w, img_h))
+    else:
+        img = Image.new("RGBA", (img_w, img_h), (255, 255, 255, 255))
+
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    for line in lines:
+        if not line.token_indices:
+            continue
+
+        # Draw span outlines labeled L{line_id}.S{span_pos}
+        if line.spans:
+            for span_pos, span in enumerate(line.spans):
+                if not span.token_indices:
+                    continue
+
+                sb = span.bbox(tokens)
+                ssx0, ssy0 = _scale_point(sb[0], sb[1], scale)
+                ssx1, ssy1 = _scale_point(sb[2], sb[3], scale)
+                draw.rectangle(
+                    [(ssx0, ssy0), (ssx1, ssy1)], outline=span_color, width=2
+                )
+
+                # Label as L{line_id}.S{span_pos} so it maps to the data
+                label = f"L{line.line_id}.S{span_pos}"
+                font_size = max(8, int(10 * scale))
+                try:
+                    font = ImageFont.truetype("arial.ttf", font_size)
+                except (OSError, IOError):
+                    font = ImageFont.load_default()
+                bbox_txt = draw.textbbox((ssx0, ssy0 - font_size - 2), label, font=font)
+                bg = (
+                    bbox_txt[0] - 1,
+                    bbox_txt[1] - 1,
+                    bbox_txt[2] + 1,
+                    bbox_txt[3] + 1,
+                )
+                draw.rectangle(bg, fill=(255, 255, 255, 200))
+                draw.text(
+                    (ssx0, ssy0 - font_size - 2),
+                    label,
+                    fill=(span_color[0], span_color[1], span_color[2]),
+                    font=font,
+                )
+
+    img.save(out_path, format="PNG")
 
 
 def draw_overlay(
@@ -171,17 +324,14 @@ def draw_overlay(
         return False
 
     # Glyph boxes - draw ALL boxes when selected (no region skipping)
-    for b in boxes:
+    # Use enumerate so label matches internal list index (G1 = boxes[0])
+    for glyph_idx, b in enumerate(boxes, start=1):
         color = _get_color(color_overrides, "glyph_boxes")
         if color:
-            draw.rectangle(
-                [
-                    _scale_point(b.x0, b.y0, scale),
-                    _scale_point(b.x1, b.y1, scale),
-                ],
-                outline=color,
-                width=1,
-            )
+            sx0, sy0 = _scale_point(b.x0, b.y0, scale)
+            sx1, sy1 = _scale_point(b.x1, b.y1, scale)
+            draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=1)
+            _draw_label(draw, sx0, sy0, "glyph_boxes", glyph_idx, color, scale)
 
     # Draw ONE combined box for all text inside each misc_title region
     for mx0, my0, mx1, my1 in misc_title_bboxes:
@@ -218,34 +368,29 @@ def draw_overlay(
                 )
 
     # Rows - draw ALL rows when selected (no region skipping)
-    for r in rows:
+    # Use enumerate so label matches internal list index (R1 = rows[0])
+    for row_idx, r in enumerate(rows, start=1):
         x0, y0, x1, y1 = r.bbox()
         color = _get_color(color_overrides, "rows")
         if color:
-            draw.rectangle(
-                [
-                    _scale_point(x0, y0, scale),
-                    _scale_point(x1, y1, scale),
-                ],
-                outline=color,
-                width=2,
-            )
+            sx0, sy0 = _scale_point(x0, y0, scale)
+            sx1, sy1 = _scale_point(x1, y1, scale)
+            draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=2)
+            _draw_label(draw, sx0, sy0, "rows", row_idx, color, scale)
 
     # Blocks - draw ALL blocks when selected (no region skipping)
-    for blk in blocks:
+    # Use enumerate so label matches internal list index (B1 = blocks[0])
+    # All block types use global index for consistent debugging
+    for block_idx, blk in enumerate(blocks, start=1):
         x0, y0, x1, y1 = blk.bbox()
+        sx0, sy0 = _scale_point(x0, y0, scale)
+        sx1, sy1 = _scale_point(x1, y1, scale)
         if getattr(blk, "label", None) == "note_column_header":
             # Outline header blocks
             color = _get_color(color_overrides, "header_blocks")
             if color:
-                draw.rectangle(
-                    [
-                        _scale_point(x0, y0, scale),
-                        _scale_point(x1, y1, scale),
-                    ],
-                    outline=color,
-                    width=3,
-                )
+                draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=3)
+                _draw_label(draw, sx0, sy0, "header_blocks", block_idx, color, scale)
         elif blk.is_table:
             color = _get_color(color_overrides, "table_blocks")
             if color:
@@ -253,91 +398,71 @@ def draw_overlay(
                     (color[0], color[1], color[2], 60) if len(color) >= 3 else color
                 )
                 draw.rectangle(
-                    [
-                        _scale_point(x0, y0, scale),
-                        _scale_point(x1, y1, scale),
-                    ],
-                    fill=fill_color,
-                    outline=color,
-                    width=3,
+                    [(sx0, sy0), (sx1, sy1)], fill=fill_color, outline=color, width=3
                 )
+                _draw_label(draw, sx0, sy0, "table_blocks", block_idx, color, scale)
         else:
             color = _get_color(color_overrides, "regular_blocks")
             if color:
-                draw.rectangle(
-                    [
-                        _scale_point(x0, y0, scale),
-                        _scale_point(x1, y1, scale),
-                    ],
-                    outline=color,
-                    width=3,
-                )
+                draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=3)
+                _draw_label(draw, sx0, sy0, "regular_blocks", block_idx, color, scale)
 
     # Notes columns - draw ALL when selected (no region skipping)
+    # Use enumerate so label matches internal list index (NC1 = notes_columns[0])
     if notes_columns:
-        for col in notes_columns:
+        for col_idx, col in enumerate(notes_columns, start=1):
             x0, y0, x1, y1 = col.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
-                continue  # Skip empty columns
+                continue  # Skip empty columns (index still increments)
             color = _get_color(color_overrides, "notes_columns")
             if color:
-                draw.rectangle(
-                    [
-                        _scale_point(x0, y0, scale),
-                        _scale_point(x1, y1, scale),
-                    ],
-                    outline=color,
-                    width=4,
-                )
+                sx0, sy0 = _scale_point(x0, y0, scale)
+                sx1, sy1 = _scale_point(x1, y1, scale)
+                draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=4)
+                _draw_label(draw, sx0, sy0, "notes_columns", col_idx, color, scale)
 
     # Legend regions
+    # Use enumerate so label matches internal list index (LR1 = legend_regions[0])
     if legend_regions:
-        for legend in legend_regions:
+        for legend_idx, legend in enumerate(legend_regions, start=1):
             # Draw outer legend region box
             x0, y0, x1, y1 = legend.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
             color = _get_color(color_overrides, "legend_region")
             if color:
-                draw.rectangle(
-                    [
-                        _scale_point(x0, y0, scale),
-                        _scale_point(x1, y1, scale),
-                    ],
-                    outline=color,
-                    width=4,
-                )
+                sx0, sy0 = _scale_point(x0, y0, scale)
+                sx1, sy1 = _scale_point(x1, y1, scale)
+                draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=4)
+                _draw_label(draw, sx0, sy0, "legend_region", legend_idx, color, scale)
 
             # Draw legend header
             if legend.header:
                 hx0, hy0, hx1, hy1 = legend.header.bbox()
                 color = _get_color(color_overrides, "legend_header")
                 if color:
-                    draw.rectangle(
-                        [
-                            _scale_point(hx0, hy0, scale),
-                            _scale_point(hx1, hy1, scale),
-                        ],
-                        outline=color,
-                        width=3,
+                    sx0, sy0 = _scale_point(hx0, hy0, scale)
+                    sx1, sy1 = _scale_point(hx1, hy1, scale)
+                    draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=3)
+                    _draw_label(
+                        draw, sx0, sy0, "legend_header", legend_idx, color, scale
                     )
 
     # Abbreviation regions (exclusion zones)
+    # Use enumerate so label matches internal list index (AR1 = abbreviation_regions[0])
     if abbreviation_regions:
-        for abbrev in abbreviation_regions:
+        for abbrev_idx, abbrev in enumerate(abbreviation_regions, start=1):
             # Draw outer abbreviation region box
             x0, y0, x1, y1 = abbrev.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
             color = _get_color(color_overrides, "abbreviation_region")
             if color:
-                draw.rectangle(
-                    [
-                        _scale_point(x0, y0, scale),
-                        _scale_point(x1, y1, scale),
-                    ],
-                    outline=color,
-                    width=4,
+                sx0, sy0 = _scale_point(x0, y0, scale)
+                sx1, sy1 = _scale_point(x1, y1, scale)
+                draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=4)
+                _draw_label(
+                    draw, sx0, sy0, "abbreviation_region", abbrev_idx, color, scale
                 )
 
             # Draw abbreviation header
@@ -345,13 +470,11 @@ def draw_overlay(
                 hx0, hy0, hx1, hy1 = abbrev.header.bbox()
                 color = _get_color(color_overrides, "abbreviation_header")
                 if color:
-                    draw.rectangle(
-                        [
-                            _scale_point(hx0, hy0, scale),
-                            _scale_point(hx1, hy1, scale),
-                        ],
-                        outline=color,
-                        width=3,
+                    sx0, sy0 = _scale_point(hx0, hy0, scale)
+                    sx1, sy1 = _scale_point(hx1, hy1, scale)
+                    draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=3)
+                    _draw_label(
+                        draw, sx0, sy0, "abbreviation_header", abbrev_idx, color, scale
                     )
 
             # Draw each abbreviation entry
@@ -403,36 +526,28 @@ def draw_overlay(
                         )
 
     # Revision regions
+    # Use enumerate so label matches internal list index (RV1 = revision_regions[0])
     if revision_regions:
-        for revision in revision_regions:
+        for rev_idx, revision in enumerate(revision_regions, start=1):
             # Draw outer revision region box
             x0, y0, x1, y1 = revision.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
             color = _get_color(color_overrides, "revision_region")
             if color:
-                draw.rectangle(
-                    [
-                        _scale_point(x0, y0, scale),
-                        _scale_point(x1, y1, scale),
-                    ],
-                    outline=color,
-                    width=4,
-                )
+                sx0, sy0 = _scale_point(x0, y0, scale)
+                sx1, sy1 = _scale_point(x1, y1, scale)
+                draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=4)
+                _draw_label(draw, sx0, sy0, "revision_region", rev_idx, color, scale)
 
             # Draw revision header
             if revision.header:
                 hx0, hy0, hx1, hy1 = revision.header.bbox()
                 color = _get_color(color_overrides, "revision_header")
                 if color:
-                    draw.rectangle(
-                        [
-                            _scale_point(hx0, hy0, scale),
-                            _scale_point(hx1, hy1, scale),
-                        ],
-                        outline=color,
-                        width=3,
-                    )
+                    sx0, sy0 = _scale_point(hx0, hy0, scale)
+                    sx1, sy1 = _scale_point(hx1, hy1, scale)
+                    draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=3)
 
             # Draw each revision entry row
             for entry in revision.entries:
@@ -467,21 +582,20 @@ def draw_overlay(
                 )
 
     # Standard detail regions
+    # Use enumerate so label matches internal list index (SD1 = standard_detail_regions[0])
     if standard_detail_regions:
-        for detail in standard_detail_regions:
+        for detail_idx, detail in enumerate(standard_detail_regions, start=1):
             # Draw outer region box
             x0, y0, x1, y1 = detail.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue
             color = _get_color(color_overrides, "standard_detail_region")
             if color:
-                draw.rectangle(
-                    [
-                        _scale_point(x0, y0, scale),
-                        _scale_point(x1, y1, scale),
-                    ],
-                    outline=color,
-                    width=4,
+                sx0, sy0 = _scale_point(x0, y0, scale)
+                sx1, sy1 = _scale_point(x1, y1, scale)
+                draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=4)
+                _draw_label(
+                    draw, sx0, sy0, "standard_detail_region", detail_idx, color, scale
                 )
 
             # Draw header (just the first row - the actual header text)
@@ -490,14 +604,9 @@ def draw_overlay(
                 hx0, hy0, hx1, hy1 = first_row.bbox()
                 color = _get_color(color_overrides, "standard_detail_header")
                 if color:
-                    draw.rectangle(
-                        [
-                            _scale_point(hx0, hy0, scale),
-                            _scale_point(hx1, hy1, scale),
-                        ],
-                        outline=color,
-                        width=3,
-                    )
+                    sx0, sy0 = _scale_point(hx0, hy0, scale)
+                    sx1, sy1 = _scale_point(hx1, hy1, scale)
+                    draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=3)
 
             # Draw subheader (if present)
             if detail.subheader_bbox:

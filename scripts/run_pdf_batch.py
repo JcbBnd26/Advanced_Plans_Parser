@@ -65,6 +65,8 @@ from plancheck import (
     BlockCluster,
     GlyphBox,
     GroupingConfig,
+    Line,
+    build_clusters_v2,
     draw_overlay,
     estimate_skew_degrees,
     group_blocks,
@@ -96,6 +98,7 @@ from plancheck.models import (
     StandardDetailEntry,
     StandardDetailRegion,
 )
+from plancheck.overlay import draw_lines_overlay
 
 
 def make_run_dir(base: Path, name: str) -> Path:
@@ -165,15 +168,17 @@ def save_boxes_json(boxes: list[GlyphBox], out_path: Path) -> None:
 
 
 def summarize(blocks: list[BlockCluster]) -> str:
-    lines = [f"Blocks: {len(blocks)}"]
+    summary = [f"Blocks: {len(blocks)}"]
     table_count = sum(1 for b in blocks if b.is_table)
-    lines.append(f"Marked tables: {table_count}")
+    summary.append(f"Marked tables: {table_count}")
     for i, blk in enumerate(blocks, start=1):
         x0, y0, x1, y1 = blk.bbox()
-        lines.append(
-            f"Block {i}: rows={len(blk.rows)} table={blk.is_table} bbox=({x0:.1f},{y0:.1f},{x1:.1f},{y1:.1f})"
+        num_items = len(blk.lines) if blk.lines else len(blk.rows)
+        item_label = "lines" if blk.lines else "rows"
+        summary.append(
+            f"Block {i}: {item_label}={num_items} table={blk.is_table} bbox=({x0:.1f},{y0:.1f},{x1:.1f},{y1:.1f})"
         )
-    return "\n".join(lines)
+    return "\n".join(summary)
 
 
 def process_page(
@@ -197,9 +202,9 @@ def process_page(
     else:
         skew = 0.0
 
-    rows = group_rows(boxes, cfg)
-    blocks = group_blocks(rows, cfg)
-    mark_tables(blocks, cfg)
+    # v2 pipeline: row-truth first, then non-destructive column detection
+    blocks = build_clusters_v2(boxes, page_h, cfg)
+
     # Block-level header detection and debug output
     debug_path = str(run_dir / "artifacts" / "debug_headers.txt")
     mark_headers(blocks, debug_path=debug_path)
@@ -218,7 +223,7 @@ def process_page(
 
     def serialize_block(blk):
         x0, y0, x1, y1 = blk.bbox()
-        return {
+        result = {
             "page": blk.page,
             "bbox": [x0, y0, x1, y1],
             "rows": [
@@ -232,6 +237,26 @@ def process_page(
             "is_table": blk.is_table,
             "is_notes": blk.is_notes,
         }
+        # Add line-level data if available (v2 pipeline)
+        if blk.lines and blk._tokens:
+            result["lines"] = [
+                {
+                    "line_id": line.line_id,
+                    "baseline_y": line.baseline_y,
+                    "bbox": list(line.bbox(blk._tokens)),
+                    "text": line.text(blk._tokens),
+                    "spans": [
+                        {
+                            "col_id": span.col_id,
+                            "bbox": list(span.bbox(blk._tokens)),
+                            "text": span.text(blk._tokens),
+                        }
+                        for span in line.spans
+                    ],
+                }
+                for line in blk.lines
+            ]
+        return result
 
     blocks_serialized = [serialize_block(blk) for blk in blocks]
     blocks_path.write_text(json.dumps(blocks_serialized, indent=2))
@@ -444,24 +469,18 @@ def process_page(
     ]
     std_details_path.write_text(json.dumps(std_details_serialized, indent=2))
 
+    # Build the lines/spans overlay as the primary overlay (v2 pipeline)
+    all_lines = [ln for blk in blocks for ln in (blk.lines or [])]
     overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
     scale = resolution / 72.0
-    draw_overlay(
+    draw_lines_overlay(
         page_width=page_w,
         page_height=page_h,
-        boxes=boxes,
-        rows=rows,
-        blocks=blocks,
+        lines=all_lines,
+        tokens=boxes,
         out_path=overlay_path,
         scale=scale,
         background=bg_img,
-        notes_columns=notes_columns,
-        legend_regions=legend_regions,
-        abbreviation_regions=abbreviation_regions,
-        revision_regions=revision_regions,
-        misc_title_regions=misc_title_regions,
-        standard_detail_regions=standard_detail_regions,
-        color_overrides=color_overrides,
     )
 
     # Return page results for manifest (don't write manifest here)
@@ -472,7 +491,8 @@ def process_page(
         "skew_degrees": skew,
         "counts": {
             "boxes": len(boxes),
-            "rows": len(rows),
+            "rows": sum(len(blk.rows) for blk in blocks),
+            "lines": sum(len(blk.lines or []) for blk in blocks),
             "blocks": len(blocks),
             "tables": sum(1 for b in blocks if b.is_table),
             "notes_columns": len(notes_columns),
