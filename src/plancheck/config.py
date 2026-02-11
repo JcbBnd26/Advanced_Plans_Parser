@@ -37,3 +37,24 @@ class GroupingConfig:
     # Values are fractions of page height.
     content_band_top: float = 0.15  # Exclude top 15%
     content_band_bottom: float = 0.85  # Exclude bottom 15%
+
+    # ── OCR full-page reconciliation settings ──────────────────────────
+    # Enable dual-source OCR reconciliation (full-page PaddleOCR + spatial
+    # matching against PDF text layer, injecting only missing symbols).
+    enable_ocr_reconcile: bool = False
+    # Characters OCR is allowed to inject (symbol whitelist).
+    ocr_reconcile_allowed_symbols: str = "%/°±"
+    # Render resolution (DPI) for the full-page OCR image.
+    ocr_reconcile_resolution: int = 300
+    # Minimum PaddleOCR confidence (0-1) to consider an OCR token.
+    ocr_reconcile_confidence: float = 0.6
+    # IoU threshold above which an OCR token is considered "matched" to a PDF token.
+    ocr_reconcile_iou_threshold: float = 0.5
+    # Center-to-center proximity tolerance (pts) for a "likely match" fallback.
+    ocr_reconcile_center_tol_x: float = 3.0
+    ocr_reconcile_center_tol_y: float = 2.0
+    # Max horizontal distance (pts) to look for a neighbouring digit token
+    # when accepting an unmatched OCR symbol (Case B contextual check).
+    ocr_reconcile_proximity_pts: float = 10.0
+    # Force OCR reconcile debug overlay even when no tokens are injected.
+    ocr_reconcile_debug: bool = False

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 
 
@@ -68,15 +70,22 @@ from plancheck import (
     Line,
     build_clusters_v2,
     draw_overlay,
+    draw_reconcile_debug,
     estimate_skew_degrees,
     group_blocks,
     group_rows,
     mark_notes,
     mark_tables,
     nms_prune,
+    reconcile_ocr,
     rotate_boxes,
 )
-from plancheck.grouping import group_notes_columns, link_continued_columns, mark_headers
+from plancheck.grouping import (
+    compute_median_space_gap,
+    group_notes_columns,
+    link_continued_columns,
+    mark_headers,
+)
 from plancheck.legends import (
     detect_abbreviation_regions,
     detect_legend_regions,
@@ -187,6 +196,7 @@ def process_page(
     run_dir: Path,
     resolution: int,
     color_overrides: dict | None = None,
+    cfg: GroupingConfig | None = None,
 ) -> dict:
     """Process a single page and return page results for manifest."""
     pdf_stem = pdf.stem.replace(" ", "_")
@@ -194,13 +204,38 @@ def process_page(
     boxes, page_w, page_h = page_boxes(pdf, page_num)
     bg_img = render_page_image(pdf, page_num, resolution=resolution)
 
-    cfg = GroupingConfig()
+    if cfg is None:
+        cfg = GroupingConfig()
     boxes = nms_prune(boxes, cfg.iou_prune)
     if cfg.enable_skew:
         skew = estimate_skew_degrees(boxes, cfg.max_skew_degrees)
         boxes = rotate_boxes(boxes, -skew, page_w, page_h)
     else:
         skew = 0.0
+
+    # ── Optional full-page OCR reconciliation (runs BEFORE grouping) ──
+    reconcile_result = None
+    if cfg.enable_ocr_reconcile:
+        if reconcile_ocr is None:
+            print(
+                "  WARNING: --ocr-full-reconcile requested but paddleocr is "
+                "not installed. Skipping OCR reconciliation.",
+                flush=True,
+            )
+        else:
+            ocr_img = render_page_image(pdf, page_num, resolution=cfg.ocr_reconcile_resolution)
+            reconcile_result = reconcile_ocr(
+                page_image=ocr_img,
+                tokens=boxes,
+                page_num=page_num,
+                page_width=page_w,
+                page_height=page_h,
+                cfg=cfg,
+            )
+            if reconcile_result.added_tokens:
+                boxes.extend(reconcile_result.added_tokens)
+                # Re-run NMS to catch any accidental duplicates
+                boxes = nms_prune(boxes, cfg.iou_prune)
 
     # v2 pipeline: row-truth first, then non-destructive column detection
     blocks = build_clusters_v2(boxes, page_h, cfg)
@@ -234,8 +269,9 @@ def process_page(
                 for row in blk.rows
             ],
             "label": blk.label,
-            "is_table": blk.is_table,
-            "is_notes": blk.is_notes,
+            # Cast to Python bool to avoid numpy.bool_ during JSON dump
+            "is_table": bool(blk.is_table),
+            "is_notes": bool(blk.is_notes),
         }
         # Add line-level data if available (v2 pipeline)
         if blk.lines and blk._tokens:
@@ -483,6 +519,22 @@ def process_page(
         background=bg_img,
     )
 
+    # OCR reconcile debug overlay
+    ocr_reconcile_debug_path = None
+    if reconcile_result is not None and draw_reconcile_debug is not None:
+        if reconcile_result.added_tokens or cfg.ocr_reconcile_debug:
+            ocr_reconcile_debug_path = (
+                run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_ocr_reconcile.png"
+            )
+            draw_reconcile_debug(
+                result=reconcile_result,
+                page_width=page_w,
+                page_height=page_h,
+                out_path=ocr_reconcile_debug_path,
+                scale=scale,
+                background=bg_img,
+            )
+
     # Return page results for manifest (don't write manifest here)
     page_result = {
         "page": page_num,
@@ -509,6 +561,12 @@ def process_page(
             "standard_detail_entries": sum(
                 len(sd.entries) for sd in standard_detail_regions
             ),
+            "ocr_reconcile_accepted": (
+                len(reconcile_result.added_tokens) if reconcile_result else 0
+            ),
+            "ocr_reconcile_total": (
+                reconcile_result.stats.get("ocr_total", 0) if reconcile_result else 0
+            ),
         },
         "artifacts": {
             "boxes_json": str(boxes_path),
@@ -519,6 +577,8 @@ def process_page(
             "standard_details_json": str(std_details_path),
         },
     }
+    if ocr_reconcile_debug_path:
+        page_result["artifacts"]["ocr_reconcile_png"] = str(ocr_reconcile_debug_path)
 
     print(f"  page {page_num}: done", flush=True)
     print(summarize(blocks), flush=True)
@@ -533,8 +593,12 @@ def run_pdf(
     run_root: Path,
     run_prefix: str,
     color_overrides: dict | None = None,
+    cfg: GroupingConfig | None = None,
 ) -> Path:
     """Process pages of a single PDF and create one run folder with all results."""
+    if cfg is None:
+        cfg = GroupingConfig()
+
     with pdfplumber.open(pdf) as pdf_doc:
         total_pages = len(pdf_doc.pages)
     end_page = end if end is not None else total_pages
@@ -549,7 +613,9 @@ def run_pdf(
     page_results = []
     for page_num in range(start, end_page):
         try:
-            result = process_page(pdf, page_num, run_dir, resolution, color_overrides)
+            result = process_page(
+                pdf, page_num, run_dir, resolution, color_overrides, cfg=cfg
+            )
             page_results.append(result)
         except Exception as exc:  # pragma: no cover
             print(f"  page {page_num}: ERROR {exc}", flush=True)
@@ -563,7 +629,7 @@ def run_pdf(
         "pdf_name": pdf.name,
         "render_resolution_dpi": resolution,
         "overlay_scale": resolution / 72.0,
-        "settings": vars(GroupingConfig()),
+        "settings": vars(cfg),
         "pages_processed": list(range(start, end_page)),
         "pages": page_results,
     }
@@ -597,7 +663,31 @@ def main() -> None:
         default=50,
         help="Number of runs to keep (oldest deleted)",
     )
+    parser.add_argument(
+        "--ocr-full-reconcile",
+        action="store_true",
+        default=False,
+        help="Enable full-page OCR reconciliation (inject missing %% / ° ± symbols)",
+    )
+    parser.add_argument(
+        "--ocr-debug",
+        action="store_true",
+        default=False,
+        help="Force OCR reconcile debug overlay even when no tokens are injected",
+    )
+    parser.add_argument(
+        "--ocr-resolution",
+        type=int,
+        default=300,
+        help="DPI for OCR page render (default 300; use 120 to avoid Paddle resize)",
+    )
     args = parser.parse_args()
+
+    cfg = GroupingConfig(
+        enable_ocr_reconcile=args.ocr_full_reconcile,
+        ocr_reconcile_debug=args.ocr_debug,
+        ocr_reconcile_resolution=args.ocr_resolution,
+    )
 
     # Derive run prefix from PDF name if not provided
     run_prefix = args.run_prefix or args.pdf.stem.replace(" ", "_")[:20]
@@ -609,6 +699,7 @@ def main() -> None:
         resolution=args.resolution,
         run_root=args.run_root,
         run_prefix=run_prefix,
+        cfg=cfg,
     )
 
     # Cleanup old runs

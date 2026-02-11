@@ -1,2 +1,4 @@
 Pillow==12.0.0
 pdfplumber==0.11.0
+paddlepaddle>=3.0.0,<3.3;python_version<"3.13"
+paddleocr>=3.0.0;python_version<"3.13"
