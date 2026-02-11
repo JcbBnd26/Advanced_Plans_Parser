@@ -8,6 +8,7 @@ Public API
 ----------
 reconcile_ocr          – run the 4-stage reconciliation pipeline
 draw_reconcile_debug   – render a debug overlay showing OCR results
+draw_symbol_overlay    – render a simple overlay with green boxes around symbols
 """
 
 from __future__ import annotations
@@ -79,8 +80,12 @@ def _center(b: GlyphBox) -> Tuple[float, float]:
     return ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0)
 
 
-def _overlaps_existing(candidate: GlyphBox, tokens: List[GlyphBox],
-                       iou_thresh: float = 0.15, cov_thresh: float = 0.30) -> bool:
+def _overlaps_existing(
+    candidate: GlyphBox,
+    tokens: List[GlyphBox],
+    iou_thresh: float = 0.15,
+    cov_thresh: float = 0.30,
+) -> bool:
     """Return True if *candidate* overlaps any existing token too much."""
     for t in tokens:
         if _iou(candidate, t) > iou_thresh:
@@ -90,7 +95,103 @@ def _overlaps_existing(candidate: GlyphBox, tokens: List[GlyphBox],
     return False
 
 
-# ── Stage 1: Extract OCR tokens from full page ────────────────────────
+# ── Stage 1: Extract OCR tokens from full page (with tiling) ──────────
+
+# PaddleOCR's internal limit: images wider/taller than this get silently
+# downscaled, destroying small CAD text.  We tile the image so each tile
+# stays within this limit.
+_PADDLE_MAX_SIDE = 3800  # leave 200 px headroom below the 4000 internal cap
+_TILE_OVERLAP_FRAC = 0.05  # 5% overlap between adjacent tiles
+
+
+def _ocr_one_tile(
+    ocr,
+    tile_array,
+    offset_x: int,
+    offset_y: int,
+    sx: float,
+    sy: float,
+    page_num: int,
+    min_conf: float,
+) -> Tuple[List[GlyphBox], List[float]]:
+    """Run PaddleOCR on a single tile and return tokens in PDF-point space."""
+    tokens: List[GlyphBox] = []
+    confidences: List[float] = []
+
+    for page_result in ocr.predict(tile_array):
+        # Dict-like OCRResult
+        polys = (
+            page_result.get("dt_polys")
+            if hasattr(page_result, "get")
+            else getattr(page_result, "dt_polys", None)
+        )
+        texts = (
+            page_result.get("rec_texts")
+            if hasattr(page_result, "get")
+            else getattr(page_result, "rec_texts", None)
+        )
+        scores = (
+            page_result.get("rec_scores")
+            if hasattr(page_result, "get")
+            else getattr(page_result, "rec_scores", None)
+        )
+
+        if polys is None or texts is None or scores is None:
+            continue
+
+        for poly, text, conf in zip(polys, texts, scores):
+            if not text or conf < min_conf:
+                continue
+
+            # poly is [[x0,y0],[x1,y1],[x2,y2],[x3,y3]] in tile-local pixels
+            xs = [p[0] + offset_x for p in poly]
+            ys = [p[1] + offset_y for p in poly]
+
+            # Convert image pixels → PDF points
+            tokens.append(
+                GlyphBox(
+                    page=page_num,
+                    x0=min(xs) / sx,
+                    y0=min(ys) / sy,
+                    x1=max(xs) / sx,
+                    y1=max(ys) / sy,
+                    text=text,
+                    origin="ocr_full",
+                )
+            )
+            confidences.append(conf)
+
+    return tokens, confidences
+
+
+def _dedup_tiles(
+    tokens: List[GlyphBox], confs: List[float]
+) -> Tuple[List[GlyphBox], List[float]]:
+    """Remove near-duplicate tokens from overlapping tile regions.
+
+    Keeps the higher-confidence token when two tokens overlap significantly.
+    """
+    if len(tokens) <= 1:
+        return tokens, confs
+
+    keep = [True] * len(tokens)
+    for i in range(len(tokens)):
+        if not keep[i]:
+            continue
+        for j in range(i + 1, len(tokens)):
+            if not keep[j]:
+                continue
+            if _iou(tokens[i], tokens[j]) > 0.5:
+                # Drop the lower-confidence duplicate
+                if confs[i] >= confs[j]:
+                    keep[j] = False
+                else:
+                    keep[i] = False
+                    break  # i is dropped, stop comparing
+
+    out_tokens = [t for t, k in zip(tokens, keep) if k]
+    out_confs = [c for c, k in zip(confs, keep) if k]
+    return out_tokens, out_confs
 
 
 def _extract_ocr_tokens(
@@ -100,7 +201,7 @@ def _extract_ocr_tokens(
     page_height: float,
     cfg: GroupingConfig,
 ) -> Tuple[List[GlyphBox], List[float]]:
-    """Run PaddleOCR on the full page image.
+    """Run PaddleOCR on the full page image, tiling if needed.
 
     Returns
     -------
@@ -109,88 +210,128 @@ def _extract_ocr_tokens(
     confidences : list[float]
         Parallel list of per-token confidence scores.
     """
-    from ._ocr_engine import _get_ocr
+    import time
+
     import numpy as np
+
+    from ._ocr_engine import _get_ocr
 
     ocr = _get_ocr()
 
-    # Convert PIL Image → numpy array for PaddleOCR
-    img_array = np.array(page_image)
+    # Ensure RGB mode (pdfplumber may return RGBA; PaddleOCR needs 3 channels)
+    if page_image.mode != "RGB":
+        page_image = page_image.convert("RGB")
 
     img_w, img_h = page_image.size
-    sx = img_w / page_width   # pixels per PDF point (x)
+    sx = img_w / page_width  # pixels per PDF point (x)
     sy = img_h / page_height  # pixels per PDF point (y)
-
     eff_dpi = img_w / page_width * 72
+
+    # Determine tiling grid
+    need_tile = img_w > _PADDLE_MAX_SIDE or img_h > _PADDLE_MAX_SIDE
+    if need_tile:
+        overlap_x = int(img_w * _TILE_OVERLAP_FRAC)
+        overlap_y = int(img_h * _TILE_OVERLAP_FRAC)
+        step_x = _PADDLE_MAX_SIDE - overlap_x
+        step_y = _PADDLE_MAX_SIDE - overlap_y
+
+        tiles_x = []
+        x = 0
+        while x < img_w:
+            x1 = min(x + _PADDLE_MAX_SIDE, img_w)
+            tiles_x.append((x, x1))
+            if x1 >= img_w:
+                break
+            x += step_x
+
+        tiles_y = []
+        y = 0
+        while y < img_h:
+            y1 = min(y + _PADDLE_MAX_SIDE, img_h)
+            tiles_y.append((y, y1))
+            if y1 >= img_h:
+                break
+            y += step_y
+
+        n_tiles = len(tiles_x) * len(tiles_y)
+    else:
+        n_tiles = 1
+
     print(
         f"  OCR Stage 1: image {img_w}x{img_h} px "
         f"({eff_dpi:.0f} eff. DPI), "
-        f"page {page_width:.0f}x{page_height:.0f} pts",
+        f"{'tiling ' + str(n_tiles) + ' tiles' if need_tile else 'single pass'}",
         flush=True,
     )
 
-    tokens: List[GlyphBox] = []
-    confidences: List[float] = []
+    t0 = time.perf_counter()
+    all_tokens: List[GlyphBox] = []
+    all_confs: List[float] = []
 
-    # PaddleOCR 3.x uses .predict() returning a generator of result objects
-    result_count = 0
-    for page_result in ocr.predict(img_array):
-        result_count += 1
-        # Diagnostic: dump result object structure on first yield
-        if result_count == 1:
-            attrs = [a for a in dir(page_result) if not a.startswith("_")]
-            print(
-                f"  OCR Stage 1: page_result type={type(page_result).__name__}, "
-                f"attrs={attrs}",
-                flush=True,
+    try:
+        if not need_tile:
+            # Single-pass: image fits within Paddle's limit
+            img_array = np.array(page_image)
+            all_tokens, all_confs = _ocr_one_tile(
+                ocr,
+                img_array,
+                0,
+                0,
+                sx,
+                sy,
+                page_num,
+                cfg.ocr_reconcile_confidence,
             )
-        # Each page_result has .dt_polys, .rec_texts, .rec_scores
-        polys = getattr(page_result, "dt_polys", None)
-        texts = getattr(page_result, "rec_texts", None)
-        scores = getattr(page_result, "rec_scores", None)
+        else:
+            # Tile-based OCR
+            img_array = np.array(page_image)
+            tile_idx = 0
+            for y0, y1 in tiles_y:
+                for x0, x1 in tiles_x:
+                    tile_idx += 1
+                    tile = img_array[y0:y1, x0:x1].copy()
+                    t_tokens, t_confs = _ocr_one_tile(
+                        ocr,
+                        tile,
+                        x0,
+                        y0,
+                        sx,
+                        sy,
+                        page_num,
+                        cfg.ocr_reconcile_confidence,
+                    )
+                    print(
+                        f"    tile {tile_idx}/{n_tiles} "
+                        f"({x0},{y0})-({x1},{y1}): "
+                        f"{len(t_tokens)} tokens",
+                        flush=True,
+                    )
+                    all_tokens.extend(t_tokens)
+                    all_confs.extend(t_confs)
 
-        n_polys = len(polys) if polys is not None else -1
-        n_texts = len(texts) if texts is not None else -1
-        n_scores = len(scores) if scores is not None else -1
-        print(
-            f"  OCR Stage 1: result #{result_count}: "
-            f"polys={n_polys}, texts={n_texts}, scores={n_scores}",
-            flush=True,
-        )
+            # Deduplicate tokens from overlapping regions
+            pre_dedup = len(all_tokens)
+            all_tokens, all_confs = _dedup_tiles(all_tokens, all_confs)
+            if pre_dedup != len(all_tokens):
+                print(
+                    f"    tile dedup: {pre_dedup} → {len(all_tokens)} tokens",
+                    flush=True,
+                )
 
-        if polys is None or texts is None or scores is None:
-            continue
+    except Exception as e:
+        import traceback
 
-        for poly, text, conf in zip(polys, texts, scores):
-            if not text or conf < cfg.ocr_reconcile_confidence:
-                continue
+        print(f"  OCR Stage 1: EXCEPTION during predict(): {e}", flush=True)
+        traceback.print_exc()
+        return [], []
 
-            # poly is [[x0,y0],[x1,y1],[x2,y2],[x3,y3]] in image pixels
-            xs = [p[0] for p in poly]
-            ys = [p[1] for p in poly]
+    elapsed = time.perf_counter() - t0
+    print(
+        f"  OCR Stage 1: {len(all_tokens)} tokens extracted " f"in {elapsed:.1f}s",
+        flush=True,
+    )
 
-            # Convert image pixels → PDF points
-            pdf_x0 = min(xs) / sx
-            pdf_y0 = min(ys) / sy
-            pdf_x1 = max(xs) / sx
-            pdf_y1 = max(ys) / sy
-
-            tokens.append(GlyphBox(
-                page=page_num, x0=pdf_x0, y0=pdf_y0, x1=pdf_x1, y1=pdf_y1,
-                text=text, origin="ocr_full",
-            ))
-            confidences.append(conf)
-
-    if result_count == 0:
-        print("  OCR Stage 1: predict() yielded 0 results!", flush=True)
-    else:
-        print(
-            f"  OCR Stage 1: {len(tokens)} tokens extracted "
-            f"(from {result_count} result objects)",
-            flush=True,
-        )
-
-    return tokens, confidences
+    return all_tokens, all_confs
 
 
 # ── Stage 2: Spatial alignment ─────────────────────────────────────────
@@ -251,10 +392,14 @@ def _build_match_index(
     matches: List[MatchRecord] = []
     for ocr_box, conf in zip(ocr_tokens, ocr_confidences):
         pdf_box, match_type = _find_best_match(ocr_box, pdf_tokens, cfg)
-        matches.append(MatchRecord(
-            ocr_box=ocr_box, pdf_box=pdf_box,
-            match_type=match_type, ocr_confidence=conf,
-        ))
+        matches.append(
+            MatchRecord(
+                ocr_box=ocr_box,
+                pdf_box=pdf_box,
+                match_type=match_type,
+                ocr_confidence=conf,
+            )
+        )
     return matches
 
 
@@ -408,14 +553,22 @@ def reconcile_ocr(
 
     # Stage 1 — full-page OCR
     ocr_tokens, ocr_confs = _extract_ocr_tokens(
-        page_image, page_num, page_width, page_height, cfg,
+        page_image,
+        page_num,
+        page_width,
+        page_height,
+        cfg,
     )
     result.all_ocr_tokens = ocr_tokens
 
     if not ocr_tokens:
         result.stats = {
-            "ocr_total": 0, "with_symbol": 0, "matched": 0,
-            "unmatched": 0, "accepted": 0, "symbols": "",
+            "ocr_total": 0,
+            "with_symbol": 0,
+            "matched": 0,
+            "unmatched": 0,
+            "accepted": 0,
+            "symbols": "",
         }
         log.info("OCR reconcile: 0 OCR tokens detected")
         return result
@@ -431,12 +584,12 @@ def reconcile_ocr(
 
     # Stats
     allowed = cfg.ocr_reconcile_allowed_symbols
-    with_symbol = sum(1 for m in matches if _has_allowed_symbol(m.ocr_box.text, allowed))
+    with_symbol = sum(
+        1 for m in matches if _has_allowed_symbol(m.ocr_box.text, allowed)
+    )
     matched = sum(1 for m in matches if m.match_type in ("iou", "center"))
     unmatched = sum(1 for m in matches if m.match_type == "unmatched")
-    symbol_summary = ", ".join(
-        f"{t.text}" for t in added
-    ) if added else "(none)"
+    symbol_summary = ", ".join(f"{t.text}" for t in added) if added else "(none)"
 
     result.stats = {
         "ocr_total": len(ocr_tokens),
@@ -449,7 +602,10 @@ def reconcile_ocr(
 
     log.info(
         "OCR reconcile: %d OCR tokens → %d with symbol → %d accepted (%s)",
-        len(ocr_tokens), with_symbol, len(added), symbol_summary,
+        len(ocr_tokens),
+        with_symbol,
+        len(added),
+        symbol_summary,
     )
     print(
         f"  OCR reconcile: {len(ocr_tokens)} OCR tokens → "
@@ -516,7 +672,10 @@ def draw_reconcile_debug(
 
     # Layer 2: symbol-bearing OCR tokens that were NOT accepted → orange
     for m in result.matches:
-        if _has_allowed_symbol(m.ocr_box.text, allowed) and id(m.ocr_box) not in added_set:
+        if (
+            _has_allowed_symbol(m.ocr_box.text, allowed)
+            and id(m.ocr_box) not in added_set
+        ):
             # Check it wasn't accepted (added tokens have different identity)
             draw.rectangle(_rect(m.ocr_box), outline=(255, 140, 0, 180), width=2)
 
@@ -527,9 +686,12 @@ def draw_reconcile_debug(
             pdf_cx, pdf_cy = _center(m.pdf_box)
             if _has_allowed_symbol(m.ocr_box.text, allowed):
                 draw.line(
-                    [(ocr_cx * scale, ocr_cy * scale),
-                     (pdf_cx * scale, pdf_cy * scale)],
-                    fill=(0, 120, 255, 120), width=1,
+                    [
+                        (ocr_cx * scale, ocr_cy * scale),
+                        (pdf_cx * scale, pdf_cy * scale),
+                    ],
+                    fill=(0, 120, 255, 120),
+                    width=1,
                 )
 
     # Layer 4: accepted/injected tokens → green with label
@@ -542,3 +704,81 @@ def draw_reconcile_debug(
     # Composite and save
     out = Image.alpha_composite(base, overlay)
     out.convert("RGB").save(str(out_path))
+
+
+def draw_symbol_overlay(
+    result: ReconcileResult,
+    page_width: float,
+    page_height: float,
+    out_path: Path | str,
+    scale: float = 1.0,
+    background: Optional[Image.Image] = None,
+    allowed_symbols: str = "%/°±",
+    show_labels: bool = True,
+) -> None:
+    """Render a simple overlay showing symbol-bearing OCR tokens in green boxes.
+
+    Parameters
+    ----------
+    result : ReconcileResult
+        Output from the reconciliation pipeline.
+    page_width, page_height : float
+        PDF page dimensions in points.
+    out_path : Path | str
+        Where to save the PNG.
+    scale : float
+        Render scale factor (1.0 = 72 DPI).
+    background : Image, optional
+        Background image (e.g. page render). If None, uses white.
+    allowed_symbols : str
+        Characters considered symbols. Default: "%/°±".
+    show_labels : bool
+        If True, draw the token text above each box.
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    canvas_w = int(page_width * scale)
+    canvas_h = int(page_height * scale)
+
+    if background is not None:
+        base = background.copy().convert("RGBA")
+        if base.size != (canvas_w, canvas_h):
+            base = base.resize((canvas_w, canvas_h), Image.LANCZOS)
+    else:
+        base = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
+
+    overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    try:
+        font = ImageFont.truetype("arial.ttf", max(12, int(10 * scale)))
+    except OSError:
+        font = ImageFont.load_default()
+
+    def _rect(b: GlyphBox) -> Tuple[float, float, float, float]:
+        return (b.x0 * scale, b.y0 * scale, b.x1 * scale, b.y1 * scale)
+
+    # Find all symbol-bearing tokens
+    symbol_tokens = [
+        t for t in result.all_ocr_tokens if _has_allowed_symbol(t.text, allowed_symbols)
+    ]
+
+    # Draw green boxes around symbol tokens
+    for t in symbol_tokens:
+        r = _rect(t)
+        # Green box outline (RGB: 0, 200, 0)
+        draw.rectangle(r, outline=(0, 200, 0, 255), width=2)
+        if show_labels:
+            label = t.text
+            draw.text(
+                (r[0], r[1] - 14 * scale),
+                label,
+                fill=(0, 200, 0, 255),
+                font=font,
+            )
+
+    # Composite and save
+    out = Image.alpha_composite(base, overlay)
+    out.convert("RGB").save(str(out_path))
+    log.info("Symbol overlay saved: %s (%d symbols)", out_path.name, len(symbol_tokens))

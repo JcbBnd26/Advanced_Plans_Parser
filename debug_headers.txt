@@ -861,3 +861,5 @@
 [DEBUG] Header block 32: 'CO UTILITY LEGEND:'
 [DEBUG] Header block 25: '133.00' PAVEMENT LEGEND:'
 [DEBUG] Header block 20: 'PAVEMENT LEGEND:'
+[DEBUG] Header block 28: 'UTILITY LEGEND:'
+[DEBUG] Header block 38: 'X PAVEMENT LEGEND:'

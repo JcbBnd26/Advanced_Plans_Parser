@@ -71,6 +71,7 @@ from plancheck import (
     build_clusters_v2,
     draw_overlay,
     draw_reconcile_debug,
+    draw_symbol_overlay,
     estimate_skew_degrees,
     group_blocks,
     group_rows,
@@ -223,7 +224,9 @@ def process_page(
                 flush=True,
             )
         else:
-            ocr_img = render_page_image(pdf, page_num, resolution=cfg.ocr_reconcile_resolution)
+            ocr_img = render_page_image(
+                pdf, page_num, resolution=cfg.ocr_reconcile_resolution
+            )
             reconcile_result = reconcile_ocr(
                 page_image=ocr_img,
                 tokens=boxes,
@@ -531,6 +534,22 @@ def process_page(
                 page_width=page_w,
                 page_height=page_h,
                 out_path=ocr_reconcile_debug_path,
+                scale=scale,
+                background=bg_img,
+            )
+
+    # OCR symbol overlay (green boxes around symbol-bearing tokens)
+    ocr_symbol_overlay_path = None
+    if reconcile_result is not None and draw_symbol_overlay is not None:
+        if cfg.ocr_reconcile_debug:
+            ocr_symbol_overlay_path = (
+                run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_symbols.png"
+            )
+            draw_symbol_overlay(
+                result=reconcile_result,
+                page_width=page_w,
+                page_height=page_h,
+                out_path=ocr_symbol_overlay_path,
                 scale=scale,
                 background=bg_img,
             )
