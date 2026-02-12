@@ -1,8 +1,37 @@
+# Virtual environments
 .venv/
+.venv_old/
+
+# Python
 __pycache__/
 *.pyc
+
+# Run output
 runs/
+
+# Logs
 *.log
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Input PDFs (large binaries)
 input/*.pdf
+
+# Generated debug artifacts
+debug_*.py
+debug_*.png
+debug_*.json
+debug_*.txt
+legend_detection_output/
+legend_detection_log.txt
+font_metrics_report.json
+last_ocr_crop.png
+pattern_atlas_page5.png
+
+# Diagnostic packages
+packages/
+
+# Root-level generated images (keep samples/ tracked)
+/*.png
