@@ -586,6 +586,26 @@ def process_page(
             "ocr_reconcile_total": (
                 reconcile_result.stats.get("ocr_total", 0) if reconcile_result else 0
             ),
+            "ocr_reconcile_candidates": (
+                reconcile_result.stats.get("candidates_generated", 0)
+                if reconcile_result
+                else 0
+            ),
+            "ocr_reconcile_candidates_accepted": (
+                reconcile_result.stats.get("candidates_accepted", 0)
+                if reconcile_result
+                else 0
+            ),
+            "ocr_reconcile_candidates_rejected": (
+                reconcile_result.stats.get("candidates_rejected", 0)
+                if reconcile_result
+                else 0
+            ),
+            "ocr_reconcile_filtered_non_numeric": (
+                reconcile_result.stats.get("filtered_non_numeric", 0)
+                if reconcile_result
+                else 0
+            ),
         },
         "artifacts": {
             "boxes_json": str(boxes_path),
@@ -598,6 +618,15 @@ def process_page(
     }
     if ocr_reconcile_debug_path:
         page_result["artifacts"]["ocr_reconcile_png"] = str(ocr_reconcile_debug_path)
+
+    # Include injection_log in manifest when ocr_debug is enabled (truncated)
+    if (
+        reconcile_result is not None
+        and cfg.ocr_reconcile_debug
+        and reconcile_result.stats
+    ):
+        inj_log = reconcile_result.stats.get("injection_log", [])
+        page_result["ocr_injection_log"] = inj_log[:50]
 
     print(f"  page {page_num}: done", flush=True)
     print(summarize(blocks), flush=True)

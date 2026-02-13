@@ -1,0 +1,73 @@
+Processing IFC Operations Facilities McClain County - Drawings 25_0915.pdf -> runs\run_20260212_183054_IFC_Operations_Facil
+[33mConnectivity check to the model hoster has been skipped because `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK` is enabled.[0m
+INFO: Could not find files for the given pattern(s).
+C:\Projects\Advanced_Plan_Parser\.venv\Lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:711: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+[32mCreating model: ('PP-OCRv5_mobile_det', None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Users\jake\.paddlex\official_models\PP-OCRv5_mobile_det`.[0m
+[32mCreating model: ('en_PP-OCRv5_mobile_rec', None)[0m
+[32mModel files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Users\jake\.paddlex\official_models\en_PP-OCRv5_mobile_rec`.[0m
+  OCR Stage 1: image 10200x6601 px (300 eff. DPI), tiling 6 tiles
+    tile 1/6 ... 33s
+    tile 1/6 ... 51s
+    tile 1/6 ... 66s
+    tile 1/6 ... 82s
+    tile 1/6 ... 99s
+    tile 1/6 (0,0)-(3800,3800): 127 tokens
+    tile 2/6 ... 121s
+    tile 2/6 ... 137s
+    tile 2/6 ... 154s
+    tile 2/6 ... 170s
+    tile 2/6 (3290,0)-(7090,3800): 148 tokens
+    tile 3/6 ... 201s
+    tile 3/6 ... 217s
+    tile 3/6 ... 232s
+    tile 3/6 ... 248s
+    tile 3/6 (6580,0)-(10200,3800): 182 tokens
+    tile 4/6 ... 267s
+    tile 4/6 ... 284s
+    tile 4/6 ... 301s
+    tile 4/6 ... 317s
+    tile 4/6 (0,3470)-(3800,6601): 97 tokens
+    tile 5/6 ... 338s
+    tile 5/6 ... 353s
+    tile 5/6 ... 368s
+    tile 5/6 (3290,3470)-(7090,6601): 105 tokens
+    tile 6/6 ... 395s
+    tile 6/6 ... 412s
+    tile 6/6 (6580,3470)-(10200,6601): 88 tokens
+    tile dedup: 747 -> 711 tokens
+  OCR Stage 1: 711 tokens extracted in 422.1s
+  OCR reconcile: 711 OCR tokens -> 15 with symbol -> 4 accepted (//, %, %, /) [candidates: 9 gen, 4 ok, 5 rej, 7 filtered]
+  page 2: done
+Blocks: 28
+Marked tables: 0
+Block 1: lines=1 table=False bbox=(197.5,62.4,2448.0,80.5)
+Block 2: lines=3 table=False bbox=(76.5,65.1,2061.0,150.3)
+Block 3: lines=4 table=False bbox=(196.7,89.2,2371.0,162.3)
+Block 4: lines=14 table=False bbox=(33.8,129.3,2300.8,380.2)
+Block 5: lines=1 table=False bbox=(197.8,186.6,1442.3,205.5)
+Block 6: lines=2 table=False bbox=(224.1,232.2,2282.2,286.3)
+Block 7: lines=20 table=False bbox=(223.9,319.1,2383.9,613.6)
+Block 8: lines=1 table=False bbox=(2149.0,501.8,2269.8,511.9)
+Block 9: lines=10 table=False bbox=(91.2,575.3,2357.4,1366.9)
+Block 10: lines=6 table=False bbox=(197.6,622.9,2325.7,696.2)
+Block 11: lines=1 table=False bbox=(2149.0,659.3,2354.7,669.4)
+Block 12: lines=6 table=False bbox=(197.6,689.2,2290.5,783.1)
+Block 13: lines=5 table=False bbox=(197.5,792.3,2319.7,880.3)
+Block 14: lines=1 table=False bbox=(2149.2,816.6,2358.2,826.7)
+Block 15: lines=11 table=False bbox=(197.6,877.1,2368.9,1058.9)
+Block 16: lines=1 table=False bbox=(2149.4,962.1,2265.1,972.1)
+Block 17: lines=1 table=False bbox=(575.6,1055.8,2310.9,1074.0)
+Block 18: lines=4 table=False bbox=(197.6,1070.4,2296.2,1119.4)
+Block 19: lines=6 table=False bbox=(196.7,1125.0,1888.0,1177.3)
+Block 20: lines=1 table=False bbox=(575.6,1171.0,886.4,1183.6)
+Block 21: lines=4 table=False bbox=(196.7,1179.3,2359.9,1259.4)
+Block 22: lines=1 table=False bbox=(2270.0,1205.8,2346.7,1217.9)
+Block 23: lines=5 table=False bbox=(196.7,1254.5,2357.0,1335.0)
+Block 24: lines=7 table=False bbox=(224.5,1324.6,2276.2,1407.0)
+Block 25: lines=3 table=False bbox=(575.6,1401.3,2140.5,1443.7)
+Block 26: lines=3 table=False bbox=(91.2,1405.4,1992.0,1522.1)
+Block 27: lines=7 table=False bbox=(196.7,1431.5,2121.7,1497.7)
+Block 28: lines=1 table=False bbox=(1946.9,1514.3,2393.4,1524.8)
+Run complete: runs\run_20260212_183054_IFC_Operations_Facil

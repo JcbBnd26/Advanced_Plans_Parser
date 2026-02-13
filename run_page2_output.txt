@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "C:\Projects\Advanced_Plan_Parser\run_page2_test.py", line 32, in <module>
+    exec(open("scripts/run_pdf_batch.py", encoding="utf-8").read())
+  File "<string>", line 66, in <module>
+ModuleNotFoundError: No module named 'plancheck'

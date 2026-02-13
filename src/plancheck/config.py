@@ -56,5 +56,10 @@ class GroupingConfig:
     # Max horizontal distance (pts) to look for a neighbouring digit token
     # when accepting an unmatched OCR symbol (Case B contextual check).
     ocr_reconcile_proximity_pts: float = 10.0
+    # Horizontal search margin (pts) around OCR bbox for finding digit
+    # anchors during composite matching (Case C).
+    ocr_reconcile_anchor_margin: float = 25.0
+    # Horizontal padding (pts) when placing after-digit symbols.
+    ocr_reconcile_symbol_pad: float = 0.5
     # Force OCR reconcile debug overlay even when no tokens are injected.
     ocr_reconcile_debug: bool = False
