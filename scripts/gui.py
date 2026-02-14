@@ -5,7 +5,6 @@ Select one or more PDF plan sets, set page range and resolution,
 then run batch processing. Results go to the runs/ folder.
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -26,7 +25,8 @@ class PlanParserGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Advanced Plans Parser")
-        self.root.geometry("650x650")
+        self.root.geometry("650x760")
+        self.root.minsize(650, 760)
         self.root.resizable(True, True)
 
         # Configure grid weights for resizing
@@ -43,8 +43,58 @@ class PlanParserGUI:
         # Padding for all widgets
         pad = {"padx": 10, "pady": 5}
 
+        # --- Tab Container ---
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.grid(row=0, column=0, sticky="nsew")
+
+        self.tab1_frame = ttk.Frame(self.notebook)
+        self.tab1_frame.columnconfigure(0, weight=1)
+        self.notebook.add(self.tab1_frame, text="Tab 1")
+
+        self.tab2_frame = ttk.Frame(self.notebook)
+        self.tab2_frame.columnconfigure(0, weight=1)
+        self.notebook.add(self.tab2_frame, text="Tab 2")
+
+        # --- Tab 2: Standalone Diagnostics ---
+        diag_frame = ttk.LabelFrame(
+            self.tab2_frame, text="Font Diagnostics", padding=10
+        )
+        diag_frame.grid(row=0, column=0, sticky="ew", **pad)
+        diag_frame.columnconfigure(0, weight=1)
+
+        self.font_metrics_var = tk.BooleanVar(value=False)
+        self.visual_metrics_var = tk.BooleanVar(value=False)
+
+        ttk.Checkbutton(
+            diag_frame,
+            text="FontMetricsAnalyzer (Heuristic font width analysis)",
+            variable=self.font_metrics_var,
+            command=self._toggle_diagnostics_button,
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
+        ttk.Checkbutton(
+            diag_frame,
+            text="VisualMetricsAnalyzer (Pixel-accurate font width analysis)",
+            variable=self.visual_metrics_var,
+            command=self._toggle_diagnostics_button,
+        ).grid(row=1, column=0, sticky="w", pady=2)
+
+        self.run_diagnostics_button = ttk.Button(
+            diag_frame,
+            text="Run Selected Diagnostics...",
+            command=self._run_font_diagnostics,
+            state="disabled",
+        )
+        self.run_diagnostics_button.grid(row=2, column=0, sticky="w", pady=(8, 2))
+
+        ttk.Label(
+            diag_frame,
+            text="Runs as standalone tests and writes JSON reports.",
+            foreground="gray",
+        ).grid(row=3, column=0, sticky="w")
+
         # --- File Selection Section ---
-        file_frame = ttk.LabelFrame(self.root, text="PDF Files", padding=10)
+        file_frame = ttk.LabelFrame(self.tab1_frame, text="PDF Files", padding=10)
         file_frame.grid(row=0, column=0, sticky="ew", **pad)
         file_frame.columnconfigure(0, weight=1)
 
@@ -69,7 +119,7 @@ class PlanParserGUI:
         list_frame.rowconfigure(0, weight=1)
         file_frame.rowconfigure(1, weight=1)
 
-        self.file_listbox = tk.Listbox(list_frame, height=6, selectmode=tk.EXTENDED)
+        self.file_listbox = tk.Listbox(list_frame, height=4, selectmode=tk.EXTENDED)
         self.file_listbox.grid(row=0, column=0, sticky="nsew")
 
         scrollbar = ttk.Scrollbar(
@@ -79,7 +129,7 @@ class PlanParserGUI:
         self.file_listbox.config(yscrollcommand=scrollbar.set)
 
         # --- Page Selection Section ---
-        page_frame = ttk.LabelFrame(self.root, text="Page Selection", padding=10)
+        page_frame = ttk.LabelFrame(self.tab1_frame, text="Page Selection", padding=10)
         page_frame.grid(row=1, column=0, sticky="nsew", **pad)
         page_frame.columnconfigure(2, weight=1)
 
@@ -139,18 +189,33 @@ class PlanParserGUI:
         # Initialize entry states
         self._update_page_mode()
 
-        # --- Settings Section ---
-        settings_frame = ttk.LabelFrame(self.root, text="Settings", padding=10)
-        settings_frame.grid(row=2, column=0, sticky="nsew", **pad)
-        settings_frame.columnconfigure(1, weight=1)
+        # --- Settings Sections ---
+        settings_container = ttk.Frame(self.tab1_frame)
+        settings_container.grid(row=2, column=0, sticky="nsew", **pad)
+        settings_container.columnconfigure(0, weight=1)
 
-        # Resolution
-        ttk.Label(settings_frame, text="Resolution (DPI):").grid(
+        general_frame = ttk.LabelFrame(settings_container, text="General", padding=10)
+        general_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        general_frame.columnconfigure(1, weight=1)
+
+        optical_ocr_frame = ttk.LabelFrame(
+            settings_container, text="Optical OCR", padding=10
+        )
+        optical_ocr_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
+        optical_ocr_frame.columnconfigure(1, weight=1)
+        optical_ocr_frame.columnconfigure(2, weight=1)
+
+        text_ocr_frame = ttk.LabelFrame(settings_container, text="Text OCR", padding=10)
+        text_ocr_frame.grid(row=2, column=0, sticky="ew")
+        text_ocr_frame.columnconfigure(0, weight=1)
+
+        # General settings
+        ttk.Label(general_frame, text="Resolution (DPI):").grid(
             row=0, column=0, sticky="w", pady=2
         )
         self.resolution_var = tk.StringVar(value="200")
         self.resolution_spinbox = ttk.Spinbox(
-            settings_frame,
+            general_frame,
             textvariable=self.resolution_var,
             values=(72, 150, 200, 300),
             width=8,
@@ -158,8 +223,40 @@ class PlanParserGUI:
         )
         self.resolution_spinbox.grid(row=0, column=1, sticky="w", pady=2)
 
+        # Optical OCR settings
+        self.ocr_preprocess_var = tk.BooleanVar(value=False)
+        self.ocr_preprocess_check = ttk.Checkbutton(
+            optical_ocr_frame,
+            text="OCR Preprocessing",
+            variable=self.ocr_preprocess_var,
+            command=self._toggle_preprocess_button,
+        )
+        self.ocr_preprocess_check.grid(row=0, column=0, sticky="w", pady=2)
+
+        ttk.Label(
+            optical_ocr_frame,
+            text="(Grayscale, contrast, denoising for better OCR)",
+            foreground="gray",
+        ).grid(row=0, column=1, sticky="w", padx=(10, 0))
+
+        # Run Preprocessing Only button (disabled until checkbox is ticked)
+        self.preprocess_only_button = ttk.Button(
+            optical_ocr_frame,
+            text="Run Preprocessing Only...",
+            command=self._run_preprocess_only,
+            state="disabled",
+        )
+        self.preprocess_only_button.grid(row=0, column=2, sticky="e", pady=2)
+
+        # Text OCR settings placeholder
+        ttk.Label(
+            text_ocr_frame,
+            text="Text OCR settings will appear here.",
+            foreground="gray",
+        ).grid(row=0, column=0, sticky="w")
+
         # --- Status Section ---
-        status_frame = ttk.Frame(self.root, padding=5)
+        status_frame = ttk.Frame(self.tab1_frame, padding=5)
         status_frame.grid(row=3, column=0, sticky="ew", **pad)
         status_frame.columnconfigure(0, weight=1)
 
@@ -170,7 +267,7 @@ class PlanParserGUI:
         self.status_label.grid(row=0, column=0, sticky="ew")
 
         # --- Run Button ---
-        btn_run_frame = ttk.Frame(self.root)
+        btn_run_frame = ttk.Frame(self.tab1_frame)
         btn_run_frame.grid(row=4, column=0, sticky="ew", **pad)
         btn_run_frame.columnconfigure(0, weight=1)
 
@@ -180,7 +277,9 @@ class PlanParserGUI:
         self.run_button.grid(row=0, column=0, pady=(0, 10))
 
         # --- Tag Selection & Color Debugger Section ---
-        tag_frame = ttk.LabelFrame(self.root, text="Tag Visual Debugger", padding=10)
+        tag_frame = ttk.LabelFrame(
+            self.tab1_frame, text="Tag Visual Debugger", padding=10
+        )
         tag_frame.grid(row=5, column=0, sticky="nsew", padx=10, pady=5)
         tag_frame.columnconfigure(1, weight=1)
         tag_frame.rowconfigure(1, weight=1)
@@ -361,6 +460,9 @@ class PlanParserGUI:
             f"--resolution {resolution}",
             f'--run-root "{str(self.runs_root)}"',
         ]
+        # Add OCR preprocessing flag if enabled
+        if self.ocr_preprocess_var.get():
+            args.append("--ocr-preprocess")
         if color_dict:
             # Write colors to temp file to avoid PowerShell escaping issues
             color_file = Path(tempfile.gettempdir()) / "planparser_colors.json"
@@ -379,6 +481,110 @@ class PlanParserGUI:
             creationflags=subprocess.CREATE_NEW_CONSOLE,
         )
         # GUI stays open for more jobs
+
+    def _toggle_preprocess_button(self) -> None:
+        """Enable/disable the 'Run Preprocessing Only' button based on checkbox."""
+        state = "normal" if self.ocr_preprocess_var.get() else "disabled"
+        self.preprocess_only_button.config(state=state)
+
+    def _toggle_diagnostics_button(self) -> None:
+        """Enable diagnostics run button when at least one analyzer is selected."""
+        enabled = self.font_metrics_var.get() or self.visual_metrics_var.get()
+        self.run_diagnostics_button.config(state=("normal" if enabled else "disabled"))
+
+    def _run_preprocess_only(self) -> None:
+        """Run standalone OCR preprocessing and let the user pick an output folder."""
+        if not self.pdf_files:
+            messagebox.showwarning("No Files", "Please add at least one PDF file.")
+            return
+        try:
+            start, end = self._parse_page_range()
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Page numbers must be integers.")
+            return
+        try:
+            resolution = int(self.resolution_var.get())
+        except ValueError:
+            resolution = 200
+
+        # Ask user to pick output folder
+        out_dir = filedialog.askdirectory(
+            title="Select Output Folder for Processed PDF Files",
+            initialdir=str(self.runs_root),
+        )
+        if not out_dir:
+            return  # User cancelled
+
+        mode = self.page_mode_var.get()
+        for pdf_path in self.pdf_files:
+            output_pdf = Path(out_dir) / f"{pdf_path.stem}_ocr_preprocessed.pdf"
+            args = [
+                f'"{str(pdf_path)}"',
+                f"--render-dpi {resolution}",
+                f"--start {start}",
+                f'--run-root "{out_dir}"',
+                "--pdf-only",
+                f'--output-pdf "{str(output_pdf)}"',
+            ]
+            if mode == "single":
+                args.append(f"--end {start + 1}")
+            elif mode == "range" and end is not None:
+                args.append(f"--end {end}")
+
+            cmd = f'python scripts/run_ocr_preprocess.py {" ".join(args)}'
+            subprocess.Popen(
+                ["powershell.exe", "-NoExit", "-Command", cmd],
+                cwd=str(Path(__file__).parent.parent),
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+
+    def _run_font_diagnostics(self) -> None:
+        """Run selected font diagnostics as standalone tests."""
+        if not self.pdf_files:
+            messagebox.showwarning("No Files", "Please add at least one PDF file.")
+            return
+
+        if not (self.font_metrics_var.get() or self.visual_metrics_var.get()):
+            messagebox.showinfo(
+                "No Diagnostics Selected",
+                "Enable at least one diagnostics tool in Tab 2.",
+            )
+            return
+
+        try:
+            start, end = self._parse_page_range()
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Page numbers must be integers.")
+            return
+
+        out_dir = filedialog.askdirectory(
+            title="Select Output Folder for Font Diagnostics Reports",
+            initialdir=str(self.runs_root),
+        )
+        if not out_dir:
+            return
+
+        for pdf_path in self.pdf_files:
+            args = [
+                f'"{str(pdf_path)}"',
+                f'--out-dir "{out_dir}"',
+                f"--start {start}",
+            ]
+
+            if end is not None:
+                args.append(f"--end {end}")
+
+            if self.font_metrics_var.get():
+                args.append("--heuristic")
+            if self.visual_metrics_var.get():
+                args.append("--visual")
+
+            cmd = f'python scripts/run_font_metrics_diagnostics.py {" ".join(args)}'
+            subprocess.Popen(
+                ["powershell.exe", "-NoExit", "-Command", cmd],
+                cwd=str(Path(__file__).parent.parent),
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
 
     def _add_tag_to_list(self):
         tag = self.tag_var.get()

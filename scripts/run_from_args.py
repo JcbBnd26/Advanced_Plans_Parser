@@ -1,7 +1,7 @@
 """
 Batch PDF processing entry point for GUI/CLI use.
 Usage:
-    python scripts/run_from_args.py --pdfs file1.pdf file2.pdf --mode all|single|range --single 3 --start 1 --end 5 --resolution 200 --colors-file path/to/colors.json
+    python scripts/run_from_args.py --pdfs file1.pdf file2.pdf --mode all|single|range --single 3 --start 1 --end 5 --resolution 200 --colors-file path/to/colors.json --ocr-preprocess
 """
 
 import argparse
@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 
 from run_pdf_batch import cleanup_old_runs, run_pdf
+
+from plancheck.config import GroupingConfig
 
 
 def hex_to_rgba(hex_color: str, alpha: int = 200) -> tuple:
@@ -47,7 +49,36 @@ parser.add_argument(
     default=None,
     help="Path to JSON file with color overrides",
 )
+parser.add_argument(
+    "--ocr-preprocess",
+    action="store_true",
+    help="Preprocess OCR image (grayscale + CLAHE contrast) before PaddleOCR",
+)
+parser.add_argument(
+    "--ocr-full-reconcile",
+    action="store_true",
+    help="Enable full-page OCR reconciliation (inject missing symbols)",
+)
+parser.add_argument(
+    "--ocr-debug",
+    action="store_true",
+    help="Force OCR reconcile debug overlay",
+)
+parser.add_argument(
+    "--ocr-resolution",
+    type=int,
+    default=300,
+    help="DPI for OCR page render (default 300)",
+)
 args = parser.parse_args()
+
+# Build GroupingConfig from OCR-related flags
+ocr_cfg = GroupingConfig(
+    enable_ocr_reconcile=args.ocr_full_reconcile or args.ocr_preprocess,
+    enable_ocr_preprocess=args.ocr_preprocess,
+    ocr_reconcile_debug=args.ocr_debug,
+    ocr_reconcile_resolution=args.ocr_resolution,
+)
 
 # Parse color overrides from file
 color_overrides = None
@@ -86,7 +117,7 @@ for pdf_path in args.pdfs:
     print(
         f"Processing {pdf_path} (start={start}, end={end}, resolution={args.resolution})"
     )
-    run_pdf(
+    run_dir = run_pdf(
         pdf=pdf_path,
         start=start,
         end=end,
@@ -94,6 +125,8 @@ for pdf_path in args.pdfs:
         run_root=args.run_root,
         run_prefix=run_prefix,
         color_overrides=color_overrides,
+        cfg=ocr_cfg,
     )
+
 cleanup_old_runs(args.run_root, keep=args.keep_runs)
 os.startfile(args.run_root)

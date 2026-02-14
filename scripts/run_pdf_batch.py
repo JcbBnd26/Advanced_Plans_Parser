@@ -57,9 +57,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import argparse
 import json
+import re
 import shutil
 from datetime import datetime
-from pathlib import Path
 
 import pdfplumber
 
@@ -69,12 +69,9 @@ from plancheck import (
     GroupingConfig,
     Line,
     build_clusters_v2,
-    draw_overlay,
     draw_reconcile_debug,
     draw_symbol_overlay,
     estimate_skew_degrees,
-    group_blocks,
-    group_rows,
     mark_notes,
     mark_tables,
     nms_prune,
@@ -97,18 +94,23 @@ from plancheck.legends import (
     filter_graphics_outside_regions,
 )
 from plancheck.models import (
-    AbbreviationEntry,
     AbbreviationRegion,
-    GraphicElement,
-    LegendEntry,
     LegendRegion,
-    MiscTitleRegion,
-    RevisionEntry,
     RevisionRegion,
-    StandardDetailEntry,
     StandardDetailRegion,
 )
 from plancheck.overlay import draw_lines_overlay
+
+# OCR image preprocessing (optional – only needed when the flag is on)
+try:
+    from plancheck.ocr_preprocess_pipeline import (
+        OcrPreprocessConfig,
+        preprocess_image_for_ocr,
+    )
+
+    _OCR_PREPROCESS_AVAILABLE = True
+except ImportError:
+    _OCR_PREPROCESS_AVAILABLE = False
 
 
 def make_run_dir(base: Path, name: str) -> Path:
@@ -199,14 +201,63 @@ def process_page(
     color_overrides: dict | None = None,
     cfg: GroupingConfig | None = None,
 ) -> dict:
-    """Process a single page and return page results for manifest."""
-    pdf_stem = pdf.stem.replace(" ", "_")
+    """Process a single page and return page results for manifest.
 
-    boxes, page_w, page_h = page_boxes(pdf, page_num)
-    bg_img = render_page_image(pdf, page_num, resolution=resolution)
+    Text-based extraction (pdfplumber) and OCR image preprocessing run in
+    parallel so the preprocessed image is ready the moment PaddleOCR needs it.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    pdf_stem = pdf.stem.replace(" ", "_")
 
     if cfg is None:
         cfg = GroupingConfig()
+
+    # ── Parallel phase: text extraction ‖ image preprocessing ──────────
+    # Text extraction reads PDF structure directly (no image needed).
+    # Preprocessing renders the page at OCR resolution and applies
+    # grayscale + CLAHE so the cleaned image is ready for PaddleOCR.
+    _preprocess_img = None  # will hold the preprocessed PIL image
+
+    def _text_extract():
+        return page_boxes(pdf, page_num)
+
+    def _preprocess():
+        """Render + preprocess image for PaddleOCR (runs in background)."""
+        if (
+            cfg.enable_ocr_preprocess
+            and cfg.enable_ocr_reconcile
+            and _OCR_PREPROCESS_AVAILABLE
+        ):
+            ocr_res = cfg.ocr_reconcile_resolution
+            raw_img = render_page_image(pdf, page_num, resolution=ocr_res)
+            pp_cfg = OcrPreprocessConfig(
+                enabled=True,
+                grayscale=True,
+                clahe=True,
+                save_intermediate=False,
+            )
+            pp_result = preprocess_image_for_ocr(raw_img, cfg=pp_cfg)
+            # Optionally save for debugging
+            pp_dir = run_dir / "ocr_preprocess"
+            pp_dir.mkdir(parents=True, exist_ok=True)
+            out_path = pp_dir / f"page_{page_num:04d}_ocr_input.png"
+            pp_result.image.save(out_path)
+            print(
+                f"    preprocess page {page_num}: {pp_result.applied_steps}",
+                flush=True,
+            )
+            return pp_result.image
+        return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        text_future = pool.submit(_text_extract)
+        preprocess_future = pool.submit(_preprocess)
+        boxes, page_w, page_h = text_future.result()
+        _preprocess_img = preprocess_future.result()
+
+    bg_img = render_page_image(pdf, page_num, resolution=resolution)
+
     boxes = nms_prune(boxes, cfg.iou_prune)
     if cfg.enable_skew:
         skew = estimate_skew_degrees(boxes, cfg.max_skew_degrees)
@@ -215,6 +266,8 @@ def process_page(
         skew = 0.0
 
     # ── Optional full-page OCR reconciliation (runs BEFORE grouping) ──
+    # Text-based tokens are already available.  If preprocessing ran in
+    # parallel above, _preprocess_img is ready; otherwise render fresh.
     reconcile_result = None
     if cfg.enable_ocr_reconcile:
         if reconcile_ocr is None:
@@ -224,9 +277,16 @@ def process_page(
                 flush=True,
             )
         else:
-            ocr_img = render_page_image(
-                pdf, page_num, resolution=cfg.ocr_reconcile_resolution
-            )
+            if _preprocess_img is not None:
+                ocr_img = _preprocess_img
+                print(
+                    f"    Using preprocessed OCR image for page {page_num}",
+                    flush=True,
+                )
+            else:
+                ocr_img = render_page_image(
+                    pdf, page_num, resolution=cfg.ocr_reconcile_resolution
+                )
             reconcile_result = reconcile_ocr(
                 page_image=ocr_img,
                 tokens=boxes,
@@ -662,7 +722,12 @@ def run_pdf(
     for page_num in range(start, end_page):
         try:
             result = process_page(
-                pdf, page_num, run_dir, resolution, color_overrides, cfg=cfg
+                pdf,
+                page_num,
+                run_dir,
+                resolution,
+                color_overrides,
+                cfg=cfg,
             )
             page_results.append(result)
         except Exception as exc:  # pragma: no cover
@@ -729,12 +794,19 @@ def main() -> None:
         default=300,
         help="DPI for OCR page render (default 300; use 120 to avoid Paddle resize)",
     )
+    parser.add_argument(
+        "--ocr-preprocess",
+        action="store_true",
+        default=False,
+        help="Preprocess OCR image (grayscale + CLAHE contrast) before PaddleOCR",
+    )
     args = parser.parse_args()
 
     cfg = GroupingConfig(
         enable_ocr_reconcile=args.ocr_full_reconcile,
         ocr_reconcile_debug=args.ocr_debug,
         ocr_reconcile_resolution=args.ocr_resolution,
+        enable_ocr_preprocess=args.ocr_preprocess,
     )
 
     # Derive run prefix from PDF name if not provided

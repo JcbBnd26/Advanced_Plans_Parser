@@ -63,3 +63,9 @@ class GroupingConfig:
     ocr_reconcile_symbol_pad: float = 0.5
     # Force OCR reconcile debug overlay even when no tokens are injected.
     ocr_reconcile_debug: bool = False
+
+    # ── OCR image preprocessing (runs BEFORE OCR reconciliation) ────────
+    # When True and OCR reconciliation is also enabled, the rendered OCR
+    # image is preprocessed (grayscale, CLAHE contrast, optional denoise)
+    # before being passed to PaddleOCR.
+    enable_ocr_preprocess: bool = False

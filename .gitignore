@@ -35,3 +35,11 @@ packages/
 
 # Root-level generated images (keep samples/ tracked)
 /*.png
+
+# Generated script output
+run_*_output.txt
+run_*_err.txt
+run_test_output.txt
+
+# Scratch study directories
+_pdf_preproc_study/

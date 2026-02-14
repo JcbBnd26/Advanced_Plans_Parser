@@ -1555,21 +1555,6 @@ def link_continued_columns(
         )
 
 
-def build_clusters(
-    boxes: List[GlyphBox], settings: GroupingConfig
-) -> List[BlockCluster]:
-    """Build clusters using the legacy RowBand-based pipeline.
-
-    For the new row-truth pipeline, use build_clusters_v2().
-    """
-    rows = group_rows(boxes, settings)
-    blocks = group_blocks(rows, settings)
-    mark_tables(blocks, settings)
-    mark_headers(blocks, debug_path=None)
-    mark_notes(blocks, debug_path=None)
-    return blocks
-
-
 def build_clusters_v2(
     tokens: List[GlyphBox],
     page_height: float,
@@ -1625,67 +1610,3 @@ def build_clusters_v2(
     mark_notes(blocks, debug_path=None)
 
     return blocks
-
-
-def mark_tables_v2(
-    blocks: List[BlockCluster],
-    tokens: List[GlyphBox],
-    settings: GroupingConfig,
-) -> None:
-    """Mark blocks as tables (for line-based BlockClusters).
-
-    Works with the new pipeline where blocks have lines instead of rows.
-    """
-    for blk in blocks:
-        # Handle both old (rows) and new (lines) pipelines
-        if blk.lines:
-            if len(blk.lines) < 2:
-                blk.is_table = False
-                continue
-
-            col_counts: List[int] = []
-            gaps_sets: List[List[float]] = []
-
-            for line in blk.lines:
-                # Count tokens per line
-                col_counts.append(len(line.token_indices))
-
-                # Compute gaps between adjacent tokens
-                sorted_indices = sorted(line.token_indices, key=lambda i: tokens[i].x0)
-                xs = []
-                for idx in sorted_indices:
-                    xs.append(tokens[idx].x0)
-                    xs.append(tokens[idx].x1)
-                xs_sorted = sorted(xs)
-                gaps = [
-                    xs_sorted[i + 1] - xs_sorted[i] for i in range(len(xs_sorted) - 1)
-                ]
-                if gaps:
-                    gaps_sets.append(gaps)
-
-            if not gaps_sets:
-                blk.is_table = False
-                continue
-
-            flat_gaps = [g for gaps in gaps_sets for g in gaps if g > 0]
-            if not flat_gaps:
-                blk.is_table = False
-                continue
-
-            gap_mean = mean(flat_gaps)
-            gap_cv = (
-                (pstdev(flat_gaps) / (gap_mean + 1e-6)) if len(flat_gaps) > 1 else 0.0
-            )
-            col_mean = mean(col_counts) if col_counts else 0.0
-            col_cv = (
-                (pstdev(col_counts) / (col_mean + 1e-6)) if len(col_counts) > 1 else 0.0
-            )
-
-            is_regular = (
-                gap_cv < settings.table_regular_tol
-                and col_cv < settings.table_regular_tol
-            )
-            blk.is_table = is_regular and col_mean >= 2
-        else:
-            # Fall back to rows-based logic
-            mark_tables([blk], settings)
