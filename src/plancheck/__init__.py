@@ -13,12 +13,18 @@ from .grouping import (
 from .models import BlockCluster, GlyphBox, Line, RowBand, Span
 
 try:
-    from .ocr_reconcile import draw_reconcile_debug, draw_symbol_overlay, reconcile_ocr
+    from .ocr_reconcile import (
+        draw_reconcile_debug,
+        draw_symbol_overlay,
+        extract_vocr_tokens,
+        reconcile_ocr,
+    )
 except ImportError:
     # PaddleOCR not installed — OCR reconciliation unavailable
     reconcile_ocr = None  # type: ignore[assignment]
     draw_reconcile_debug = None  # type: ignore[assignment]
     draw_symbol_overlay = None  # type: ignore[assignment]
+    extract_vocr_tokens = None  # type: ignore[assignment]
 
 from .ocr_preprocess_pipeline import (
     OcrPreprocessConfig,
@@ -26,6 +32,14 @@ from .ocr_preprocess_pipeline import (
     preprocess_image_for_ocr,
 )
 from .overlay import draw_overlay
+from .pipeline import (
+    STAGE_ORDER,
+    SkipReason,
+    StageResult,
+    gate,
+    input_fingerprint,
+    run_stage,
+)
 from .preprocess import estimate_skew_degrees, nms_prune, rotate_boxes
 
 __all__ = [
@@ -46,9 +60,16 @@ __all__ = [
     "mark_tables",
     "build_clusters_v2",
     "reconcile_ocr",
+    "extract_vocr_tokens",
     "draw_reconcile_debug",
     "draw_symbol_overlay",
     "OcrPreprocessConfig",
     "OcrPreprocessResult",
     "preprocess_image_for_ocr",
+    "STAGE_ORDER",
+    "SkipReason",
+    "StageResult",
+    "gate",
+    "run_stage",
+    "input_fingerprint",
 ]

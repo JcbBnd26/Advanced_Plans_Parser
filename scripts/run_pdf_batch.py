@@ -68,15 +68,19 @@ from plancheck import (
     GlyphBox,
     GroupingConfig,
     Line,
+    StageResult,
     build_clusters_v2,
     draw_reconcile_debug,
     draw_symbol_overlay,
     estimate_skew_degrees,
+    extract_vocr_tokens,
+    gate,
     mark_notes,
     mark_tables,
     nms_prune,
     reconcile_ocr,
     rotate_boxes,
+    run_stage,
 )
 from plancheck.grouping import (
     compute_median_space_gap,
@@ -99,18 +103,13 @@ from plancheck.models import (
     RevisionRegion,
     StandardDetailRegion,
 )
+
+# OCR image preprocessing
+from plancheck.ocr_preprocess_pipeline import (
+    OcrPreprocessConfig,
+    preprocess_image_for_ocr,
+)
 from plancheck.overlay import draw_lines_overlay
-
-# OCR image preprocessing (optional – only needed when the flag is on)
-try:
-    from plancheck.ocr_preprocess_pipeline import (
-        OcrPreprocessConfig,
-        preprocess_image_for_ocr,
-    )
-
-    _OCR_PREPROCESS_AVAILABLE = True
-except ImportError:
-    _OCR_PREPROCESS_AVAILABLE = False
 
 
 def make_run_dir(base: Path, name: str) -> Path:
@@ -132,28 +131,329 @@ def cleanup_old_runs(run_root: Path, keep: int = 50) -> None:
         print(f"Cleaned up old run: {old_dir.name}")
 
 
-def page_boxes(pdf_path: Path, page_num: int) -> tuple[list[GlyphBox], float, float]:
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[page_num]
-        page_w, page_h = float(page.width), float(page.height)
-        words = page.extract_words()
-        boxes: list[GlyphBox] = []
-        for w in words:
-            # Clip coordinates to page bounds (PDF content can extend past page edge)
-            x0 = max(0.0, min(page_w, float(w.get("x0", 0.0))))
-            x1 = max(0.0, min(page_w, float(w.get("x1", 0.0))))
-            y0 = max(0.0, min(page_h, float(w.get("top", 0.0))))
-            y1 = max(0.0, min(page_h, float(w.get("bottom", 0.0))))
-            text = w.get("text", "")
-            # Skip degenerate boxes (fully clipped)
-            if x1 <= x0 or y1 <= y0:
-                continue
-            boxes.append(
-                GlyphBox(
-                    page=page_num, x0=x0, y0=y0, x1=x1, y1=y1, text=text, origin="text"
+def page_boxes(
+    pdf_path: Path, page_num: int, cfg: GroupingConfig | None = None
+) -> tuple[list[GlyphBox], float, float, dict]:
+    """Extract word boxes from PDF text layer with full diagnostics.
+
+    Returns
+    -------
+    (boxes, page_width, page_height, diagnostics)
+        diagnostics dict contains font distribution, token stats, quality
+        signals, and extraction parameters for the manifest.
+    """
+    import logging
+    import re
+    import traceback
+    from collections import Counter
+
+    log = logging.getLogger(__name__)
+
+    if cfg is None:
+        cfg = GroupingConfig()
+
+    diag: dict = {
+        "extraction_params": {
+            "x_tolerance": cfg.tocr_x_tolerance,
+            "y_tolerance": cfg.tocr_y_tolerance,
+            "extra_attrs": cfg.tocr_extra_attrs,
+            "filter_control_chars": cfg.tocr_filter_control_chars,
+            "dedup_iou": cfg.tocr_dedup_iou,
+            "min_word_length": cfg.tocr_min_word_length,
+            "min_font_size": cfg.tocr_min_font_size,
+            "max_font_size": cfg.tocr_max_font_size,
+            "strip_whitespace_tokens": cfg.tocr_strip_whitespace_tokens,
+            "clip_to_page": cfg.tocr_clip_to_page,
+            "margin_pts": cfg.tocr_margin_pts,
+            "keep_rotated": cfg.tocr_keep_rotated,
+            "normalize_unicode": cfg.tocr_normalize_unicode,
+            "case_fold": cfg.tocr_case_fold,
+            "collapse_whitespace": cfg.tocr_collapse_whitespace,
+            "min_token_density": cfg.tocr_min_token_density,
+            "mojibake_threshold": cfg.tocr_mojibake_threshold,
+            "use_text_flow": cfg.tocr_use_text_flow,
+            "keep_blank_chars": cfg.tocr_keep_blank_chars,
+        },
+        "tokens_total": 0,
+        "tokens_raw": 0,
+        "tokens_degenerate_skipped": 0,
+        "tokens_control_char_cleaned": 0,
+        "tokens_empty_after_clean": 0,
+        "tokens_duplicate_removed": 0,
+        "tokens_font_size_filtered": 0,
+        "tokens_rotated_dropped": 0,
+        "tokens_margin_filtered": 0,
+        "tokens_short_filtered": 0,
+        "tokens_whitespace_filtered": 0,
+        "tokens_unicode_normalized": 0,
+        "tokens_case_folded": 0,
+        "tokens_whitespace_collapsed": 0,
+        "font_names": {},
+        "font_sizes": {},
+        "has_rotated_text": False,
+        "upright_count": 0,
+        "non_upright_count": 0,
+        "char_encoding_issues": 0,
+        "mojibake_fraction": 0.0,
+        "below_min_density": False,
+        "page_area_sqin": 0.0,
+        "token_density_per_sqin": 0.0,
+        "error": None,
+    }
+
+    # Control-character regex: U+0000–U+001F (except \t \n \r) plus BOM
+    _RE_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufeff]")
+    # Mojibake detector: replacement char or common encoding artifacts
+    _RE_MOJIBAKE = re.compile(r"[\ufffd\ufffc]|Ã.|â€.")
+
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[page_num]
+            page_w, page_h = float(page.width), float(page.height)
+
+            # Page area in square inches (assuming pts; 72 pts/inch)
+            diag["page_area_sqin"] = round((page_w / 72.0) * (page_h / 72.0), 2)
+
+            # Build extract_words kwargs from config
+            extract_kwargs: dict = {
+                "x_tolerance": cfg.tocr_x_tolerance,
+                "y_tolerance": cfg.tocr_y_tolerance,
+            }
+            if cfg.tocr_use_text_flow:
+                extract_kwargs["use_text_flow"] = True
+            if cfg.tocr_keep_blank_chars:
+                extract_kwargs["keep_blank_chars"] = True
+            if cfg.tocr_extra_attrs:
+                extract_kwargs["extra_attrs"] = ["fontname", "size", "upright"]
+
+            words = page.extract_words(**extract_kwargs)
+            diag["tokens_raw"] = len(words)
+
+            font_name_counter: Counter = Counter()
+            font_size_counter: Counter = Counter()
+            boxes: list[GlyphBox] = []
+
+            for w in words:
+                # Coordinate extraction — optionally clip to page bounds
+                raw_x0 = float(w.get("x0", 0.0))
+                raw_x1 = float(w.get("x1", 0.0))
+                raw_y0 = float(w.get("top", 0.0))
+                raw_y1 = float(w.get("bottom", 0.0))
+                if cfg.tocr_clip_to_page:
+                    x0 = max(0.0, min(page_w, raw_x0))
+                    x1 = max(0.0, min(page_w, raw_x1))
+                    y0 = max(0.0, min(page_h, raw_y0))
+                    y1 = max(0.0, min(page_h, raw_y1))
+                else:
+                    x0, x1, y0, y1 = raw_x0, raw_x1, raw_y0, raw_y1
+                text = w.get("text", "")
+
+                # Skip degenerate boxes (zero-area)
+                if x1 <= x0 or y1 <= y0:
+                    diag["tokens_degenerate_skipped"] += 1
+                    continue
+
+                # Margin filter — drop words whose centre is within margin of edge
+                if cfg.tocr_margin_pts > 0:
+                    cx = (x0 + x1) / 2.0
+                    cy = (y0 + y1) / 2.0
+                    m = cfg.tocr_margin_pts
+                    if cx < m or cx > page_w - m or cy < m or cy > page_h - m:
+                        diag["tokens_margin_filtered"] += 1
+                        continue
+
+                # Track font info if available
+                fsize_val: float | None = None
+                if cfg.tocr_extra_attrs:
+                    fname = w.get("fontname", "unknown")
+                    fsize = w.get("size")
+                    font_name_counter[fname] += 1
+                    if fsize is not None:
+                        fsize_val = float(fsize)
+                        # Round to 1 decimal for grouping
+                        font_size_counter[str(round(fsize_val, 1))] += 1
+                    # Track rotated text
+                    upright = w.get("upright")
+                    if upright is not None:
+                        if upright:
+                            diag["upright_count"] += 1
+                        else:
+                            diag["non_upright_count"] += 1
+                            diag["has_rotated_text"] = True
+
+                # Font-size filter (requires extra_attrs)
+                if fsize_val is not None:
+                    if (
+                        cfg.tocr_min_font_size > 0
+                        and fsize_val < cfg.tocr_min_font_size
+                    ):
+                        diag["tokens_font_size_filtered"] += 1
+                        continue
+                    if (
+                        cfg.tocr_max_font_size > 0
+                        and fsize_val > cfg.tocr_max_font_size
+                    ):
+                        diag["tokens_font_size_filtered"] += 1
+                        continue
+
+                # Drop rotated text if configured
+                if not cfg.tocr_keep_rotated and cfg.tocr_extra_attrs:
+                    upright = w.get("upright")
+                    if upright is not None and not upright:
+                        diag["tokens_rotated_dropped"] += 1
+                        continue
+
+                # Filter control characters
+                if cfg.tocr_filter_control_chars and _RE_CONTROL.search(text):
+                    text = _RE_CONTROL.sub("", text)
+                    diag["tokens_control_char_cleaned"] += 1
+                    if not text.strip():
+                        diag["tokens_empty_after_clean"] += 1
+                        continue
+
+                # Detect encoding issues
+                if _RE_MOJIBAKE.search(text):
+                    diag["char_encoding_issues"] += 1
+
+                # Unicode normalisation (NFKC: ligatures, fullwidth, etc.)
+                if cfg.tocr_normalize_unicode:
+                    import unicodedata
+
+                    normed = unicodedata.normalize("NFKC", text)
+                    if normed != text:
+                        diag["tokens_unicode_normalized"] += 1
+                        text = normed
+
+                # Collapse internal whitespace runs to single space
+                if cfg.tocr_collapse_whitespace:
+                    collapsed = re.sub(r"\s+", " ", text)
+                    if collapsed != text:
+                        diag["tokens_whitespace_collapsed"] += 1
+                        text = collapsed
+
+                # Case folding
+                if cfg.tocr_case_fold:
+                    folded = text.lower()
+                    if folded != text:
+                        diag["tokens_case_folded"] += 1
+                        text = folded
+
+                # Strip whitespace-only tokens
+                if cfg.tocr_strip_whitespace_tokens and not text.strip():
+                    diag["tokens_whitespace_filtered"] += 1
+                    continue
+
+                # Minimum word length
+                if (
+                    cfg.tocr_min_word_length > 0
+                    and len(text.strip()) < cfg.tocr_min_word_length
+                ):
+                    diag["tokens_short_filtered"] += 1
+                    continue
+
+                boxes.append(
+                    GlyphBox(
+                        page=page_num,
+                        x0=x0,
+                        y0=y0,
+                        x1=x1,
+                        y1=y1,
+                        text=text,
+                        origin="text",
+                    )
                 )
-            )
-    return boxes, page_w, page_h
+
+            # Deduplicate overlapping identical-text boxes
+            if cfg.tocr_dedup_iou > 0 and len(boxes) > 1:
+                keep = [True] * len(boxes)
+                for i in range(len(boxes)):
+                    if not keep[i]:
+                        continue
+                    for j in range(i + 1, len(boxes)):
+                        if not keep[j]:
+                            continue
+                        if boxes[i].text != boxes[j].text:
+                            continue
+                        # Compute IoU
+                        ix0 = max(boxes[i].x0, boxes[j].x0)
+                        iy0 = max(boxes[i].y0, boxes[j].y0)
+                        ix1 = min(boxes[i].x1, boxes[j].x1)
+                        iy1 = min(boxes[i].y1, boxes[j].y1)
+                        inter = max(0, ix1 - ix0) * max(0, iy1 - iy0)
+                        a1 = boxes[i].area()
+                        a2 = boxes[j].area()
+                        union = a1 + a2 - inter
+                        if union > 0 and inter / union >= cfg.tocr_dedup_iou:
+                            keep[j] = False
+                            diag["tokens_duplicate_removed"] += 1
+                boxes = [b for b, k in zip(boxes, keep) if k]
+
+            diag["tokens_total"] = len(boxes)
+            diag["font_names"] = dict(font_name_counter.most_common(20))
+            diag["font_sizes"] = dict(font_size_counter.most_common(20))
+
+            # Token density
+            if diag["page_area_sqin"] > 0:
+                diag["token_density_per_sqin"] = round(
+                    len(boxes) / diag["page_area_sqin"], 1
+                )
+
+            # Mojibake fraction
+            if diag["tokens_raw"] > 0:
+                diag["mojibake_fraction"] = round(
+                    diag["char_encoding_issues"] / diag["tokens_raw"], 4
+                )
+
+            # Min-density flag
+            if (
+                cfg.tocr_min_token_density > 0
+                and diag["token_density_per_sqin"] < cfg.tocr_min_token_density
+            ):
+                diag["below_min_density"] = True
+
+            # Quality warnings
+            if len(boxes) == 0:
+                log.warning(
+                    "TOCR page %d: zero tokens extracted (blank or image-only page)",
+                    page_num,
+                )
+            if diag["char_encoding_issues"] > 0:
+                log.warning(
+                    "TOCR page %d: %d tokens with encoding issues (mojibake)",
+                    page_num,
+                    diag["char_encoding_issues"],
+                )
+            if (
+                cfg.tocr_mojibake_threshold > 0
+                and diag["mojibake_fraction"] > cfg.tocr_mojibake_threshold
+            ):
+                log.warning(
+                    "TOCR page %d: mojibake fraction %.1f%% exceeds threshold %.1f%%",
+                    page_num,
+                    diag["mojibake_fraction"] * 100,
+                    cfg.tocr_mojibake_threshold * 100,
+                )
+            if diag["below_min_density"]:
+                log.warning(
+                    "TOCR page %d: token density %.1f/sq-in below minimum %.1f",
+                    page_num,
+                    diag["token_density_per_sqin"],
+                    cfg.tocr_min_token_density,
+                )
+            if diag["has_rotated_text"]:
+                log.info(
+                    "TOCR page %d: %d non-upright (rotated) words detected",
+                    page_num,
+                    diag["non_upright_count"],
+                )
+
+    except Exception as e:
+        log.error("TOCR page %d: extraction failed: %s", page_num, e)
+        traceback.print_exc()
+        diag["error"] = str(e)
+        return [], 0.0, 0.0, diag
+
+    return boxes, page_w, page_h, diag
 
 
 def render_page_image(pdf_path: Path, page_num: int, resolution: int = 200):
@@ -203,9 +503,11 @@ def process_page(
 ) -> dict:
     """Process a single page and return page results for manifest.
 
-    Text-based extraction (pdfplumber) and OCR image preprocessing run in
-    parallel so the preprocessed image is ready the moment PaddleOCR needs it.
+    Runs the 5-stage pipeline:
+        ingest → tocr ‖ vocrpp → vocr → reconcile
+    with per-stage timing, gating, and fallback handling.
     """
+    import time as _time
     from concurrent.futures import ThreadPoolExecutor
 
     pdf_stem = pdf.stem.replace(" ", "_")
@@ -213,92 +515,210 @@ def process_page(
     if cfg is None:
         cfg = GroupingConfig()
 
-    # ── Parallel phase: text extraction ‖ image preprocessing ──────────
-    # Text extraction reads PDF structure directly (no image needed).
-    # Preprocessing renders the page at OCR resolution and applies
-    # grayscale + CLAHE so the cleaned image is ready for PaddleOCR.
-    _preprocess_img = None  # will hold the preprocessed PIL image
+    stage_results: dict[str, StageResult] = {}
 
-    def _text_extract():
-        return page_boxes(pdf, page_num)
+    # ── Stage: ingest ──────────────────────────────────────────────────
+    with run_stage("ingest", cfg) as sr_ingest:
+        bg_img = render_page_image(pdf, page_num, resolution=resolution)
+        sr_ingest.counts = {"render_dpi": resolution}
+        sr_ingest.status = "success"
+    stage_results["ingest"] = sr_ingest
 
-    def _preprocess():
-        """Render + preprocess image for PaddleOCR (runs in background)."""
-        if (
-            cfg.enable_ocr_preprocess
-            and cfg.enable_ocr_reconcile
-            and _OCR_PREPROCESS_AVAILABLE
-        ):
-            ocr_res = cfg.ocr_reconcile_resolution
-            raw_img = render_page_image(pdf, page_num, resolution=ocr_res)
-            pp_cfg = OcrPreprocessConfig(
-                enabled=True,
-                grayscale=True,
-                clahe=True,
-                save_intermediate=False,
-            )
-            pp_result = preprocess_image_for_ocr(raw_img, cfg=pp_cfg)
-            # Optionally save for debugging
-            pp_dir = run_dir / "ocr_preprocess"
-            pp_dir.mkdir(parents=True, exist_ok=True)
-            out_path = pp_dir / f"page_{page_num:04d}_ocr_input.png"
-            pp_result.image.save(out_path)
-            print(
-                f"    preprocess page {page_num}: {pp_result.applied_steps}",
-                flush=True,
-            )
-            return pp_result.image
-        return None
+    # ── Parallel: tocr ‖ vocrpp ────────────────────────────────────────
+    _preprocess_img = None
+    _vocrpp_sr = None
+    boxes = []
+    page_w = page_h = 0.0
+
+    def _run_tocr():
+        nonlocal boxes, page_w, page_h
+        with run_stage("tocr", cfg) as sr:
+            b, pw, ph, tocr_diag = page_boxes(pdf, page_num, cfg=cfg)
+            boxes, page_w, page_h = b, pw, ph
+            sr.counts = {
+                "tokens_total": tocr_diag["tokens_total"],
+                "tokens_raw": tocr_diag["tokens_raw"],
+                "tokens_degenerate_skipped": tocr_diag["tokens_degenerate_skipped"],
+                "tokens_control_char_cleaned": tocr_diag["tokens_control_char_cleaned"],
+                "tokens_empty_after_clean": tocr_diag["tokens_empty_after_clean"],
+                "tokens_duplicate_removed": tocr_diag["tokens_duplicate_removed"],
+                "char_encoding_issues": tocr_diag["char_encoding_issues"],
+                "has_rotated_text": tocr_diag["has_rotated_text"],
+                "upright_count": tocr_diag["upright_count"],
+                "non_upright_count": tocr_diag["non_upright_count"],
+                "page_area_sqin": tocr_diag["page_area_sqin"],
+                "token_density_per_sqin": tocr_diag["token_density_per_sqin"],
+            }
+            sr.outputs = {
+                "font_names": tocr_diag["font_names"],
+                "font_sizes": tocr_diag["font_sizes"],
+                "extraction_params": tocr_diag["extraction_params"],
+            }
+            if tocr_diag.get("error"):
+                sr.status = "failed"
+                sr.error = {"message": tocr_diag["error"]}
+            else:
+                sr.status = "success"
+        return sr
+
+    def _run_vocrpp():
+        nonlocal _preprocess_img
+        with run_stage("vocrpp", cfg) as sr:
+            if sr.ran:
+                ocr_res = (
+                    cfg.vocr_resolution
+                    if cfg.vocr_resolution > 0
+                    else cfg.ocr_reconcile_resolution
+                )
+                raw_img = render_page_image(pdf, page_num, resolution=ocr_res)
+                pp_cfg = OcrPreprocessConfig(
+                    enabled=True,
+                    grayscale=cfg.vocrpp_grayscale,
+                    autocontrast=cfg.vocrpp_autocontrast,
+                    clahe=cfg.vocrpp_clahe,
+                    clahe_clip_limit=cfg.vocrpp_clahe_clip_limit,
+                    clahe_tile_size=cfg.vocrpp_clahe_grid_size,
+                    median_denoise=cfg.vocrpp_median_denoise,
+                    median_kernel_size=cfg.vocrpp_median_kernel,
+                    adaptive_binarize=cfg.vocrpp_adaptive_binarize,
+                    adaptive_block_size=cfg.vocrpp_binarize_block_size,
+                    adaptive_c=cfg.vocrpp_binarize_constant,
+                    sharpen=cfg.vocrpp_sharpen,
+                    sharpen_radius=cfg.vocrpp_sharpen_radius,
+                    sharpen_percent=cfg.vocrpp_sharpen_percent,
+                    save_intermediate=False,
+                )
+                pp_result = preprocess_image_for_ocr(raw_img, cfg=pp_cfg)
+                pp_dir = run_dir / "ocr_preprocess"
+                pp_dir.mkdir(parents=True, exist_ok=True)
+                out_path = pp_dir / f"page_{page_num:04d}_ocr_input.png"
+                pp_result.image.save(out_path)
+                _preprocess_img = pp_result.image
+                sr.counts = {
+                    "images_out": 1,
+                    "applied_steps": pp_result.applied_steps,
+                    "render_dpi": ocr_res,
+                }
+                sr.outputs = {
+                    "image_path": str(out_path),
+                    "metrics": pp_result.metrics,
+                }
+                sr.status = "success"
+                print(
+                    f"    vocrpp page {page_num}: {pp_result.applied_steps}",
+                    flush=True,
+                )
+        return sr
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        text_future = pool.submit(_text_extract)
-        preprocess_future = pool.submit(_preprocess)
-        boxes, page_w, page_h = text_future.result()
-        _preprocess_img = preprocess_future.result()
+        tocr_future = pool.submit(_run_tocr)
+        vocrpp_future = pool.submit(_run_vocrpp)
+        sr_tocr = tocr_future.result()
+        sr_vocrpp = vocrpp_future.result()
 
-    bg_img = render_page_image(pdf, page_num, resolution=resolution)
+    stage_results["tocr"] = sr_tocr
+    stage_results["vocrpp"] = sr_vocrpp
 
     boxes = nms_prune(boxes, cfg.iou_prune)
     if cfg.enable_skew:
         skew = estimate_skew_degrees(boxes, cfg.max_skew_degrees)
-        boxes = rotate_boxes(boxes, -skew, page_w, page_h)
+        boxes = rotate_boxes(
+            boxes, -skew, page_w, page_h, min_rotation=cfg.preprocess_min_rotation
+        )
     else:
         skew = 0.0
 
-    # ── Optional full-page OCR reconciliation (runs BEFORE grouping) ──
-    # Text-based tokens are already available.  If preprocessing ran in
-    # parallel above, _preprocess_img is ready; otherwise render fresh.
-    reconcile_result = None
-    if cfg.enable_ocr_reconcile:
-        if reconcile_ocr is None:
-            print(
-                "  WARNING: --ocr-full-reconcile requested but paddleocr is "
-                "not installed. Skipping OCR reconciliation.",
-                flush=True,
-            )
-        else:
+    # ── Stage: vocr ────────────────────────────────────────────────────
+    ocr_tokens = None
+    ocr_confs = None
+    vocr_inputs = {
+        "source": "preprocessed" if _preprocess_img is not None else "raw",
+        "vocrpp_ran": sr_vocrpp.ran,
+    }
+    with run_stage("vocr", cfg, inputs=vocr_inputs) as sr_vocr:
+        if sr_vocr.ran:
             if _preprocess_img is not None:
                 ocr_img = _preprocess_img
                 print(
-                    f"    Using preprocessed OCR image for page {page_num}",
+                    f"    vocr: using preprocessed image for page {page_num}",
                     flush=True,
                 )
             else:
-                ocr_img = render_page_image(
-                    pdf, page_num, resolution=cfg.ocr_reconcile_resolution
+                _vocr_res = (
+                    cfg.vocr_resolution
+                    if cfg.vocr_resolution > 0
+                    else cfg.ocr_reconcile_resolution
                 )
-            reconcile_result = reconcile_ocr(
+                ocr_img = render_page_image(pdf, page_num, resolution=_vocr_res)
+            ocr_tokens, ocr_confs = extract_vocr_tokens(
                 page_image=ocr_img,
-                tokens=boxes,
                 page_num=page_num,
                 page_width=page_w,
                 page_height=page_h,
                 cfg=cfg,
             )
+            sr_vocr.counts = {
+                "tokens_total": len(ocr_tokens),
+                "confidence_min": round(min(ocr_confs), 3) if ocr_confs else 0,
+                "confidence_max": round(max(ocr_confs), 3) if ocr_confs else 0,
+                "confidence_mean": (
+                    round(sum(ocr_confs) / len(ocr_confs), 3) if ocr_confs else 0
+                ),
+                "image_source": (
+                    "preprocessed" if _preprocess_img is not None else "raw"
+                ),
+                "render_dpi": (
+                    cfg.vocr_resolution
+                    if cfg.vocr_resolution > 0
+                    else cfg.ocr_reconcile_resolution
+                ),
+            }
+            sr_vocr.inputs = vocr_inputs
+            sr_vocr.status = "success"
+    stage_results["vocr"] = sr_vocr
+
+    # ── Stage: reconcile ───────────────────────────────────────────────
+    reconcile_result = None
+    recon_inputs = {
+        "vocr_failed": sr_vocr.status == "failed",
+        "tocr_tokens": len(boxes),
+        "vocr_tokens": len(ocr_tokens) if ocr_tokens else 0,
+    }
+    with run_stage("reconcile", cfg, inputs=recon_inputs) as sr_recon:
+        if sr_recon.ran:
+            # Determine the OCR image for reconcile (fallback if vocr had tokens)
+            if _preprocess_img is not None:
+                ocr_img_for_recon = _preprocess_img
+            else:
+                ocr_img_for_recon = render_page_image(
+                    pdf, page_num, resolution=cfg.ocr_reconcile_resolution
+                )
+            reconcile_result = reconcile_ocr(
+                page_image=ocr_img_for_recon,
+                tokens=boxes,
+                page_num=page_num,
+                page_width=page_w,
+                page_height=page_h,
+                cfg=cfg,
+                ocr_tokens=ocr_tokens,
+                ocr_confs=ocr_confs,
+            )
             if reconcile_result.added_tokens:
                 boxes.extend(reconcile_result.added_tokens)
-                # Re-run NMS to catch any accidental duplicates
                 boxes = nms_prune(boxes, cfg.iou_prune)
+            sr_recon.counts = {
+                "accepted": len(reconcile_result.added_tokens),
+                "rejected": reconcile_result.stats.get("candidates_rejected", 0),
+                "filtered_non_numeric": reconcile_result.stats.get(
+                    "filtered_non_numeric", 0
+                ),
+                "candidates_generated": reconcile_result.stats.get(
+                    "candidates_generated", 0
+                ),
+                "ocr_total": reconcile_result.stats.get("ocr_total", 0),
+            }
+            sr_recon.status = "success"
+    stage_results["reconcile"] = sr_recon
 
     # v2 pipeline: row-truth first, then non-destructive column detection
     blocks = build_clusters_v2(boxes, page_h, cfg)
@@ -309,9 +729,9 @@ def process_page(
     # Notes detection, will skip header blocks
     mark_notes(blocks, debug_path=debug_path)
     # Group headers with their notes blocks into columns
-    notes_columns = group_notes_columns(blocks, debug_path=debug_path)
+    notes_columns = group_notes_columns(blocks, debug_path=debug_path, cfg=cfg)
     # Link continued columns (e.g., "NOTES" and "NOTES (CONT'D)")
-    link_continued_columns(notes_columns, blocks=blocks, debug_path=debug_path)
+    link_continued_columns(notes_columns, blocks=blocks, debug_path=debug_path, cfg=cfg)
 
     boxes_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_boxes.json"
     save_boxes_json(boxes, boxes_path)
@@ -387,6 +807,7 @@ def process_page(
         page_width=page_w,
         page_height=page_h,
         debug_path=debug_path,
+        cfg=cfg,
     )
 
     # Get exclusion zones from abbreviation regions
@@ -400,6 +821,7 @@ def process_page(
         page_height=page_h,
         debug_path=debug_path,
         exclusion_zones=exclusion_zones,
+        cfg=cfg,
     )
 
     # Add misc title regions to exclusion zones
@@ -414,6 +836,7 @@ def process_page(
         page_height=page_h,
         debug_path=debug_path,
         exclusion_zones=exclusion_zones,
+        cfg=cfg,
     )
 
     # Add revision regions to exclusion zones for legend detection
@@ -431,6 +854,7 @@ def process_page(
         page_height=page_h,
         debug_path=debug_path,
         exclusion_zones=exclusion_zones,
+        cfg=cfg,
     )
 
     # Detect standard detail regions (similar to abbreviations - two-column text)
@@ -441,6 +865,7 @@ def process_page(
         page_height=page_h,
         debug_path=debug_path,
         exclusion_zones=exclusion_zones,
+        cfg=cfg,
     )
 
     # Save abbreviation regions
@@ -620,6 +1045,7 @@ def process_page(
         "page_width": page_w,
         "page_height": page_h,
         "skew_degrees": skew,
+        "stages": {name: sr.to_dict() for name, sr in stage_results.items()},
         "counts": {
             "boxes": len(boxes),
             "rows": sum(len(blk.rows) for blk in blocks),
@@ -735,15 +1161,21 @@ def run_pdf(
             page_results.append({"page": page_num, "error": str(exc)})
 
     # Write single manifest for entire run
+    from plancheck.pipeline import input_fingerprint
+
+    pages_list = list(range(start, end_page))
     manifest = {
         "run_id": run_dir.name,
         "created_at": datetime.now().isoformat(),
         "source_pdf": str(pdf.resolve()),
         "pdf_name": pdf.name,
+        "input_fingerprint": input_fingerprint(pdf, pages_list, cfg),
         "render_resolution_dpi": resolution,
         "overlay_scale": resolution / 72.0,
+        "config_snapshot": vars(cfg),
+        # Keep legacy key for backward compat
         "settings": vars(cfg),
-        "pages_processed": list(range(start, end_page)),
+        "pages_processed": pages_list,
         "pages": page_results,
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))

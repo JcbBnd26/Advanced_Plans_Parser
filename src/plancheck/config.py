@@ -38,9 +38,95 @@ class GroupingConfig:
     content_band_top: float = 0.15  # Exclude top 15%
     content_band_bottom: float = 0.85  # Exclude bottom 15%
 
-    # ── OCR full-page reconciliation settings ──────────────────────────
-    # Enable dual-source OCR reconciliation (full-page PaddleOCR + spatial
-    # matching against PDF text layer, injecting only missing symbols).
+    # ── Text OCR (pdfplumber text extraction) ─────────────────────────
+    # When True (default), extract word boxes from the PDF text layer.
+    # Disable to run VOCR-only or skip text extraction entirely.
+    enable_tocr: bool = True
+    # pdfplumber extract_words() horizontal tolerance (pts).
+    # Characters within this distance are grouped into the same word.
+    tocr_x_tolerance: float = 3.0
+    # pdfplumber extract_words() vertical tolerance (pts).
+    # Characters within this distance are considered same-line.
+    tocr_y_tolerance: float = 3.0
+    # When True, include extra attributes (fontname, size) per word.
+    tocr_extra_attrs: bool = True
+    # Filter control characters (U+0000–U+001F except \t\n\r, plus U+FEFF BOM).
+    tocr_filter_control_chars: bool = True
+    # Deduplicate overlapping text boxes with identical text (IoU > threshold).
+    tocr_dedup_iou: float = 0.8
+    # Drop tokens shorter than N characters (0 = keep all).
+    tocr_min_word_length: int = 0
+    # Ignore text below this point size (0.0 = keep all).
+    tocr_min_font_size: float = 0.0
+    # Ignore text above this point size (0.0 = no upper limit).
+    tocr_max_font_size: float = 0.0
+    # Drop tokens that are entirely whitespace after cleanup.
+    tocr_strip_whitespace_tokens: bool = True
+    # Clip word coordinates to page bounds (False keeps raw coords).
+    tocr_clip_to_page: bool = True
+    # Inset margin (pts): ignore words whose centre falls within this
+    # distance of a page edge (title blocks, borders, revision stamps).
+    tocr_margin_pts: float = 0.0
+    # Keep non-upright (rotated/vertical) text.  False drops them.
+    tocr_keep_rotated: bool = True
+    # Apply NFKC unicode normalisation (collapses ligatures, fullwidth chars).
+    tocr_normalize_unicode: bool = False
+    # Lowercase all tokens.
+    tocr_case_fold: bool = False
+    # Replace runs of internal whitespace with a single space.
+    tocr_collapse_whitespace: bool = True
+    # Flag/skip page if token density (tokens/sq-in) falls below this (0 = off).
+    tocr_min_token_density: float = 0.0
+    # Warn if mojibake fraction of tokens exceeds this threshold.
+    tocr_mojibake_threshold: float = 0.1
+    # Preserve PDF's internal text flow ordering instead of spatial sort.
+    tocr_use_text_flow: bool = False
+    # Keep blank chars as individual character objects (for fixed-width forms).
+    tocr_keep_blank_chars: bool = False
+
+    # ── Visual OCR (PaddleOCR full-page extraction) ────────────────────
+    # When True, run PaddleOCR on the rendered page image to extract
+    # visual tokens.  Required as input for the reconcile stage.
+    enable_vocr: bool = False
+    # Model tier: "mobile" for speed (~1x), "server" for accuracy (~10–20x slower).
+    vocr_model_tier: str = "mobile"
+    # Enable PaddleOCR document-orientation classification (auto-rotate).
+    vocr_use_orientation_classify: bool = False
+    # Enable PaddleOCR document unwarping (perspective correction).
+    vocr_use_doc_unwarping: bool = False
+    # Enable PaddleOCR textline orientation detection.
+    vocr_use_textline_orientation: bool = False
+    # Render resolution (DPI) for the VOCR page image.
+    # 0 = fall back to ocr_reconcile_resolution for backward compat.
+    vocr_resolution: int = 0
+    # Minimum PaddleOCR confidence (0–1) to keep a detected token.
+    vocr_min_confidence: float = 0.6
+    # Maximum pixel dimension for a single OCR tile before splitting.
+    # PaddleOCR silently downscales images above ~4000 px — tiling
+    # avoids that.  Lower values tile more aggressively (slower but
+    # preserves small text); higher values let Paddle downscale.
+    vocr_max_tile_px: int = 3800
+    # Fractional overlap between adjacent tiles (0.0–0.25).
+    # More overlap catches text on tile boundaries but is slower.
+    vocr_tile_overlap: float = 0.05
+    # IoU threshold for deduplicating tokens in tile-overlap zones.
+    vocr_tile_dedup_iou: float = 0.5
+    # Minimum OCR token text length to keep (0 = keep all).
+    # Useful to filter single-character OCR noise.
+    vocr_min_text_length: int = 0
+    # Drop OCR tokens that are entirely whitespace.
+    vocr_strip_whitespace: bool = True
+    # Maximum horizontal skew (degrees) for PaddleOCR text detection.
+    # 0 = use PaddleOCR default.
+    vocr_max_det_skew: float = 0.0
+    # Heartbeat interval (seconds) printed to stdout during long OCR
+    # calls so terminals / CI don't consider the process idle.
+    vocr_heartbeat_interval: float = 15.0
+
+    # ── OCR reconciliation (merge VOCR tokens into TOCR) ───────────────
+    # Enable dual-source OCR reconciliation (spatial matching of VOCR
+    # tokens against PDF text layer, injecting only missing symbols).
+    # Requires enable_vocr to also be True.
     enable_ocr_reconcile: bool = False
     # Characters OCR is allowed to inject (symbol whitelist).
     ocr_reconcile_allowed_symbols: str = "%/°±"
@@ -69,3 +155,143 @@ class GroupingConfig:
     # image is preprocessed (grayscale, CLAHE contrast, optional denoise)
     # before being passed to PaddleOCR.
     enable_ocr_preprocess: bool = False
+    # Convert rendered image to grayscale before further processing.
+    vocrpp_grayscale: bool = True
+    # Apply PIL autocontrast (stretch histogram to full range).
+    vocrpp_autocontrast: bool = False
+    # Apply CLAHE (Contrast Limited Adaptive Histogram Equalisation).
+    vocrpp_clahe: bool = True
+    # CLAHE clip limit (higher = more contrast enhancement).
+    vocrpp_clahe_clip_limit: float = 2.0
+    # CLAHE tile grid size (pixels per tile side).
+    vocrpp_clahe_grid_size: int = 8
+    # Apply median filter for denoising.
+    vocrpp_median_denoise: bool = False
+    # Median filter kernel size (must be odd, ≥ 3).
+    vocrpp_median_kernel: int = 3
+    # Apply adaptive binarisation (Gaussian threshold).
+    vocrpp_adaptive_binarize: bool = False
+    # Adaptive threshold block size (must be odd, ≥ 3).
+    vocrpp_binarize_block_size: int = 11
+    # Adaptive threshold constant subtracted from mean.
+    vocrpp_binarize_constant: float = 2.0
+    # Apply UnsharpMask sharpening after other steps.
+    vocrpp_sharpen: bool = False
+    # UnsharpMask radius (pixels).
+    vocrpp_sharpen_radius: int = 2
+    # UnsharpMask percent (strength, 0–500).
+    vocrpp_sharpen_percent: int = 140
+
+    # ── Reconcile stage: symbol generation & candidate acceptance ──────
+    # Multiplier on glyph height for digit-neighbour vertical band tolerance.
+    ocr_reconcile_digit_band_tol_mult: float = 0.5
+    # Horizontal overshoot (pts) when searching for digit neighbours.
+    ocr_reconcile_digit_overshoot: float = -2.0
+    # Fallback estimated character width (pts) when no neighbours found.
+    ocr_reconcile_char_width_fallback: float = 5.0
+    # Multiplier on glyph height for line-neighbour vertical band tolerance.
+    ocr_reconcile_line_neighbour_tol_mult: float = 0.6
+    # Minimum vertical band tolerance (pts) for line-neighbour search.
+    ocr_reconcile_line_neighbour_min_tol: float = 3.0
+    # Fraction of text characters that must be digits for _is_digit_group.
+    ocr_reconcile_digit_ratio: float = 0.5
+    # Slash symbol width as fraction of glyph height.
+    ocr_reconcile_slash_width_mult: float = 0.35
+    # Percent symbol width as fraction of glyph height.
+    ocr_reconcile_pct_width_mult: float = 0.95
+    # Degree / plus-minus symbol width as fraction of glyph height.
+    ocr_reconcile_degree_width_mult: float = 0.5
+    # Max proximity (pts) for accepting a generated candidate.
+    ocr_reconcile_accept_proximity: float = 4.0
+    # IoU threshold for candidate overlap rejection.
+    ocr_reconcile_accept_iou: float = 0.15
+    # Coverage threshold for candidate overlap rejection.
+    ocr_reconcile_accept_coverage: float = 0.30
+    # Maximum debug candidates logged per page.
+    ocr_reconcile_max_debug: int = 200
+
+    # ── Grouping stage: histogram, lines & blocks ──────────────────────
+    # Density threshold for histogram-based gutter detection.
+    grouping_histogram_density: float = 0.08
+    # Number of histogram bins for gutter detection.
+    grouping_histogram_bins: int = 80
+    # Minimum vertical overlap ratio to merge two boxes into one line.
+    grouping_line_overlap_ratio: float = 0.3
+    # Fallback median space-gap width when no spaces detected.
+    grouping_space_gap_fallback: float = 5.0
+    # Percentile cutoff for space-gap estimation (filters outliers).
+    grouping_space_gap_percentile: float = 0.9
+    # Column partition width guard (× median width).
+    grouping_partition_width_guard_mult: float = 30.0
+    # Column partition density decay factor.
+    grouping_partition_decay: float = 0.7
+    # Column partition minimum density floor.
+    grouping_partition_floor: float = 1.0
+    # Majority fraction of rows that must match note-number regex.
+    grouping_note_majority: float = 0.5
+    # Maximum rows in a block to consider note-number column.
+    grouping_note_max_rows: int = 50
+    # Column-gap fallback multiplier (× median row/line width).
+    grouping_col_gap_fallback_mult: float = 0.6
+    # Block merge gap multiplier (× block_gap).
+    grouping_block_merge_mult: float = 1.5
+    # Notes column X-alignment tolerance (pts).
+    grouping_notes_x_tolerance: float = 30.0
+    # Notes column max Y-gap between blocks (pts).
+    grouping_notes_y_gap_max: float = 50.0
+    # First-gap multiplier for notes column detection.
+    grouping_notes_first_gap_mult: float = 2.0
+    # Continued-column X-alignment tolerance (pts).
+    grouping_link_x_tolerance: float = 50.0
+
+    # ── Legend / abbreviation / revision detection ─────────────────────
+    # Tolerance (pts) for matching a rect enclosing a header.
+    legend_enclosure_tolerance: float = 20.0
+    # Maximum side length (pts) for a graphic to qualify as legend symbol.
+    legend_max_symbol_size: float = 50.0
+    # Minimum area (pts²) to keep a symbol (filters noise).
+    legend_symbol_min_area: float = 10.0
+    # Maximum area (pts²) to keep a symbol (filters large graphics).
+    legend_symbol_max_area: float = 2500.0
+    # X-tolerance (pts) for aligning symbols into columns.
+    legend_column_x_tolerance: float = 30.0
+    # Y-tolerance (pts) for pairing a symbol with its text description.
+    legend_text_y_tolerance: float = 20.0
+    # Maximum X-gap (pts) allowed between symbol and text description.
+    legend_text_x_gap_max: float = 300.0
+    # Left margin (pts) to extend search region for unboxed legends.
+    legend_unboxed_x_margin: float = 100.0
+    # Right extent (pts) from header for unboxed legend search.
+    legend_unboxed_x_extent: float = 600.0
+    # Downward extent (pts) from header for unboxed legend search.
+    legend_unboxed_y_extent: float = 500.0
+
+    # ── Font metrics anomaly detection ─────────────────────────────────
+    # Inflation factor threshold above which a font is flagged anomalous.
+    font_metrics_inflation_threshold: float = 1.3
+    # Minimum character samples required to assess a font.
+    font_metrics_min_samples: int = 5
+    # Minimum confidence (0–1) for an anomaly to be considered valid.
+    font_metrics_confidence_min: float = 0.7
+    # Render DPI for visual font metrics analysis.
+    font_metrics_visual_dpi: int = 300
+    # Grayscale threshold (0–255) below which pixels count as "dark".
+    font_metrics_dark_threshold: int = 200
+
+    # ── Overlay / debug visualisation ──────────────────────────────────
+    # Base font size (px) for overlay labels.
+    overlay_label_font_base: int = 10
+    # Minimum font size (px) for overlay labels.
+    overlay_label_font_floor: int = 8
+    # Background alpha (0–255) for overlay label backgrounds.
+    overlay_label_bg_alpha: int = 200
+    # Fill alpha (0–255) for table block overlays.
+    overlay_table_fill_alpha: int = 60
+    # Y-overlap ratio to count two elements on the same line.
+    overlay_same_line_overlap: float = 0.5
+    # Proximity (pts) tolerance for misc-title same-line detection.
+    overlay_proximity_pts: float = 50.0
+
+    # ── Preprocessing (deskew) ─────────────────────────────────────────
+    # Minimum detected skew angle (degrees) below which no rotation is applied.
+    preprocess_min_rotation: float = 0.01

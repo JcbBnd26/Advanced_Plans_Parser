@@ -9,7 +9,10 @@ from .models import BlockCluster, GlyphBox, Line, NotesColumn, RowBand, Span
 
 
 def _histogram_gutters(
-    boxes: List[GlyphBox], bins: int, gutter_width: float
+    boxes: List[GlyphBox],
+    bins: int,
+    gutter_width: float,
+    density_threshold: float = 0.08,
 ) -> List[float]:
     """Find gutters via x-density histogram; return split positions (x)."""
     if not boxes or bins <= 0:
@@ -33,7 +36,7 @@ def _histogram_gutters(
     max_count = max(hist) if hist else 0
     if max_count == 0:
         return []
-    threshold = max_count * 0.08  # adjustable if needed
+    threshold = max_count * density_threshold  # adjustable via config
     gutters = []
     run_start = None
     for i, val in enumerate(hist):
@@ -115,7 +118,10 @@ def build_lines(tokens: List[GlyphBox], settings: GroupingConfig) -> List[Line]:
             min_h = min(token.y1 - token.y0, line_y1 - line_y0)
             overlap_ratio = overlap / (min_h + 1e-6)
 
-            if abs(y_center - line_center) <= vert_tol and overlap_ratio > 0.3:
+            if (
+                abs(y_center - line_center) <= vert_tol
+                and overlap_ratio > settings.grouping_line_overlap_ratio
+            ):
                 line.token_indices.append(idx)
                 placed = True
                 break
@@ -154,7 +160,11 @@ def build_lines(tokens: List[GlyphBox], settings: GroupingConfig) -> List[Line]:
     return lines
 
 
-def compute_median_space_gap(lines: List[Line], tokens: List[GlyphBox]) -> float:
+def compute_median_space_gap(
+    lines: List[Line],
+    tokens: List[GlyphBox],
+    cfg: GroupingConfig | None = None,
+) -> float:
     """Compute the median inter-word space gap from actual token spacing.
 
     This gives a robust estimate of the typical space width on the page,
@@ -163,12 +173,16 @@ def compute_median_space_gap(lines: List[Line], tokens: List[GlyphBox]) -> float
     Args:
         lines: List of Line objects
         tokens: Original token list
+        cfg: GroupingConfig (optional) for fallback and percentile values
 
     Returns:
-        Median space gap in points. Returns 5.0 as fallback if insufficient data.
+        Median space gap in points. Returns fallback if insufficient data.
     """
+    _fallback = cfg.grouping_space_gap_fallback if cfg else 5.0
+    _percentile = cfg.grouping_space_gap_percentile if cfg else 0.9
+
     if not lines or not tokens:
-        return 5.0
+        return _fallback
 
     all_gaps: List[float] = []
 
@@ -187,15 +201,14 @@ def compute_median_space_gap(lines: List[Line], tokens: List[GlyphBox]) -> float
                 all_gaps.append(gap)
 
     if not all_gaps:
-        return 5.0
+        return _fallback
 
     # Filter to "small" gaps: exclude huge gaps (gutters) to get true space width
-    # Use 90th percentile as cutoff to remove column gutters
     sorted_gaps = sorted(all_gaps)
-    cutoff_idx = int(len(sorted_gaps) * 0.9)
+    cutoff_idx = int(len(sorted_gaps) * _percentile)
     small_gaps = sorted_gaps[:cutoff_idx] if cutoff_idx > 0 else sorted_gaps
 
-    return median(small_gaps) if small_gaps else 5.0
+    return median(small_gaps) if small_gaps else _fallback
 
 
 def split_line_spans(
@@ -285,7 +298,12 @@ def detect_column_boundaries(
     # Use histogram-based gutter detection
     if settings.use_hist_gutter:
         gutter_width = median_w * settings.gutter_width_mult
-        gutters = _histogram_gutters(content_tokens, bins=80, gutter_width=gutter_width)
+        gutters = _histogram_gutters(
+            content_tokens,
+            bins=settings.grouping_histogram_bins,
+            gutter_width=gutter_width,
+            density_threshold=settings.grouping_histogram_density,
+        )
         if gutters:
             return sorted(gutters)
 
@@ -367,7 +385,12 @@ def _partition_columns(
     # Histogram-based gutter detection (if enabled)
     if settings.use_hist_gutter:
         gutter_width = median_w * settings.gutter_width_mult
-        gutters = _histogram_gutters(boxes, bins=80, gutter_width=gutter_width)
+        gutters = _histogram_gutters(
+            boxes,
+            bins=settings.grouping_histogram_bins,
+            gutter_width=gutter_width,
+            density_threshold=settings.grouping_histogram_density,
+        )
         if gutters:
             cuts = [span_min] + gutters + [span_max]
             segments: List[tuple[List[GlyphBox], float, float]] = []
@@ -413,9 +436,9 @@ def _partition_columns(
         return segments
 
     gap_mult_cur = settings.column_gap_mult
-    min_gap_mult = 1.0
+    min_gap_mult = settings.grouping_partition_floor
     width_guard = (
-        median_w * 30
+        median_w * settings.grouping_partition_width_guard_mult
     )  # only lower threshold when the page is meaningfully wide
 
     while True:
@@ -424,7 +447,9 @@ def _partition_columns(
         if segments:
             break
         if span_width >= width_guard and gap_mult_cur > min_gap_mult:
-            gap_mult_cur = max(min_gap_mult, gap_mult_cur * 0.7)
+            gap_mult_cur = max(
+                min_gap_mult, gap_mult_cur * settings.grouping_partition_decay
+            )
             continue
         return [(boxes, span_min, span_max)]
 
@@ -458,20 +483,26 @@ def _partition_columns(
     return refined if refined else segments
 
 
-def _is_note_number_column(boxes: List[GlyphBox]) -> bool:
+def _is_note_number_column(
+    boxes: List[GlyphBox],
+    cfg: GroupingConfig | None = None,
+) -> bool:
     """Check if a column consists primarily of note numbers (short labels like '1.', '10.', 'A.')."""
     import re
 
     if not boxes:
         return False
+    _majority = cfg.grouping_note_majority if cfg else 0.5
+    _max_rows = cfg.grouping_note_max_rows if cfg else 50
     note_pattern = re.compile(r"^[\(\[]?[0-9A-Za-z]{1,3}[\.\)\]]?$")
     note_count = sum(1 for b in boxes if note_pattern.match(b.text.strip()))
     # If most boxes in this column are note numbers, it's a note number column
-    return note_count >= len(boxes) * 0.5 and len(boxes) <= 50
+    return note_count >= len(boxes) * _majority and len(boxes) <= _max_rows
 
 
 def _merge_note_number_columns(
     segments: List[tuple[List[GlyphBox], float, float]],
+    cfg: GroupingConfig | None = None,
 ) -> List[tuple[List[GlyphBox], float, float]]:
     """Merge note-number-only columns with their adjacent text column."""
     if len(segments) <= 1:
@@ -486,7 +517,7 @@ def _merge_note_number_columns(
         seg_boxes, seg_min, seg_max = sorted_segs[i]
 
         # Check if this is a note number column
-        if _is_note_number_column(seg_boxes) and i + 1 < len(sorted_segs):
+        if _is_note_number_column(seg_boxes, cfg) and i + 1 < len(sorted_segs):
             # Merge with the next column (the text column to the right)
             next_boxes, next_min, next_max = sorted_segs[i + 1]
             combined_boxes = seg_boxes + next_boxes
@@ -588,7 +619,7 @@ def group_rows(boxes: List[GlyphBox], settings: GroupingConfig) -> List[RowBand]
     # Partition into columns to avoid spanning across big horizontal whitespace.
     columns = _partition_columns(boxes, median_w, settings)
     # Merge note-number-only columns with their adjacent text column
-    columns = _merge_note_number_columns(columns)
+    columns = _merge_note_number_columns(columns, settings)
 
     for col_idx, (col_boxes, col_min, col_max) in enumerate(columns):
         col_width = col_max - col_min
@@ -604,7 +635,10 @@ def group_rows(boxes: List[GlyphBox], settings: GroupingConfig) -> List[RowBand]
                 overlap = min(b.y1, ry1) - max(b.y0, ry0)
                 min_h = min((b.y1 - b.y0), (ry1 - ry0))
                 overlap_ratio = overlap / (min_h + 1e-6)
-                if abs(y_center - r_center) <= vert_tol and overlap_ratio > 0.3:
+                if (
+                    abs(y_center - r_center) <= vert_tol
+                    and overlap_ratio > settings.grouping_line_overlap_ratio
+                ):
                     r.boxes.append(b)
                     placed = True
                     break
@@ -644,7 +678,7 @@ def group_blocks(rows: List[RowBand], settings: GroupingConfig) -> List[BlockClu
         col_index = [r.column_id if r.column_id is not None else 0 for r in rows]
     else:
         # Fallback: infer bands by horizontal gaps between row centers.
-        col_gap = median_row_w * 0.6
+        col_gap = median_row_w * settings.grouping_col_gap_fallback_mult
         centers = [
             (((r.bbox()[0] + r.bbox()[2]) * 0.5), idx) for idx, r in enumerate(rows)
         ]
@@ -720,7 +754,7 @@ def group_blocks(rows: List[RowBand], settings: GroupingConfig) -> List[BlockClu
                 nxt = sorted_blocks[i + 1]
                 nx0, ny0, nx1, ny1 = nxt.bbox()
                 gap = ny0 - y1
-                if gap <= block_gap * 1.5:
+                if gap <= block_gap * settings.grouping_block_merge_mult:
                     nxt.rows = blk.rows + nxt.rows
                     merge_done = True
                     # Do not append blk; it is merged into next.
@@ -785,7 +819,7 @@ def group_blocks_from_lines(
 
     # If no col_ids are set, infer from horizontal positions
     if all(c == 0 for c in col_index):
-        col_gap = median_line_w * 0.6
+        col_gap = median_line_w * settings.grouping_col_gap_fallback_mult
         centers = [
             ((line.bbox(tokens)[0] + line.bbox(tokens)[2]) * 0.5, idx)
             for idx, line in enumerate(lines)
@@ -884,7 +918,7 @@ def group_blocks_from_lines(
                 nx0, ny0, nx1, ny1 = nxt.bbox()
                 gap = ny0 - y1
 
-                if gap <= block_gap * 1.5:
+                if gap <= block_gap * settings.grouping_block_merge_mult:
                     nxt.lines = blk.lines + nxt.lines
                     merge_done = True
 
@@ -996,6 +1030,7 @@ def group_notes_columns(
     x_tolerance: float = 30.0,
     y_gap_max: float = 50.0,
     debug_path: str = None,
+    cfg: GroupingConfig | None = None,
 ) -> List[NotesColumn]:
     """
     Group header blocks with their associated notes blocks into NotesColumn objects.
@@ -1007,6 +1042,9 @@ def group_notes_columns(
     Returns a list of NotesColumn objects. Each header gets one NotesColumn.
     Notes blocks without a header are grouped into a NotesColumn with header=None.
     """
+    if cfg is not None:
+        x_tolerance = cfg.grouping_notes_x_tolerance
+        y_gap_max = cfg.grouping_notes_y_gap_max
     debug_path = debug_path or "debug_headers.txt"
 
     # Find all header and notes blocks
@@ -1081,7 +1119,10 @@ def group_notes_columns(
                 gap = ny0 - last_y1
 
                 # Gap must be positive and within threshold
-                max_gap = y_gap_max * 2 if not column.notes_blocks else y_gap_max
+                _first_mult = cfg.grouping_notes_first_gap_mult if cfg else 2.0
+                max_gap = (
+                    y_gap_max * _first_mult if not column.notes_blocks else y_gap_max
+                )
 
                 if 0 <= gap <= max_gap:
                     column.notes_blocks.append(n)
@@ -1217,6 +1258,7 @@ def link_continued_columns(
     blocks: List[BlockCluster] = None,
     x_tolerance: float = 50.0,
     debug_path: str = None,
+    cfg: GroupingConfig | None = None,
 ) -> None:
     """
     Detect and link columns that are continuations of each other.
@@ -1234,6 +1276,8 @@ def link_continued_columns(
     - column_group_id: A shared identifier for linked columns
     - continues_from: The header text of the parent column (for continuations)
     """
+    if cfg is not None:
+        x_tolerance = cfg.grouping_link_x_tolerance
     debug_path = debug_path or "debug_headers.txt"
 
     # Build a map of base header text -> list of columns
@@ -1589,7 +1633,7 @@ def build_clusters_v2(
     lines = build_lines(tokens, settings)
 
     # Step 2: Compute median space gap for span splitting
-    median_space_gap = compute_median_space_gap(lines, tokens)
+    median_space_gap = compute_median_space_gap(lines, tokens, settings)
 
     # Step 3: Split lines into spans based on large gaps
     for line in lines:

@@ -294,7 +294,10 @@ def main() -> None:
     if args.pdf_only:
         out_pdf = args.output_pdf
         if out_pdf is None:
-            out_pdf = args.run_root / f"{args.pdf.stem}_ocr_preprocessed.pdf"
+            # Create a proper run subfolder for the output PDF
+            run_prefix = args.pdf.stem.replace(" ", "_")[:20]
+            pdf_run_dir = _make_run_dir(args.run_root, run_prefix)
+            out_pdf = pdf_run_dir / "exports" / f"{args.pdf.stem}_ocr_preprocessed.pdf"
         print(f"OCR preprocess (PDF only) -> {out_pdf}", flush=True)
         process_pdf_to_pdf(
             pdf=args.pdf,

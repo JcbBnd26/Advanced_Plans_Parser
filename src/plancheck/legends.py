@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 
 import pdfplumber
 
+from .config import GroupingConfig
 from .models import (
     AbbreviationEntry,
     AbbreviationRegion,
@@ -368,6 +369,7 @@ def detect_legend_regions(
     page_height: float,
     debug_path: str = None,
     exclusion_zones: List[Tuple[float, float, float, float]] = None,
+    cfg: GroupingConfig | None = None,
 ) -> List[LegendRegion]:
     """
     Detect legend regions on a page.
@@ -385,6 +387,8 @@ def detect_legend_regions(
     """
     debug_path = debug_path or "debug_headers.txt"
     exclusion_zones = exclusion_zones or []
+    if cfg is None:
+        cfg = GroupingConfig()
     legends: List[LegendRegion] = []
 
     # Find legend headers (skip those in exclusion zones)
@@ -420,7 +424,9 @@ def detect_legend_regions(
             page = header.page
 
             # Check for enclosing box
-            enclosing_rect = _find_enclosing_rect((hx0, hy0, hx1, hy1), graphics)
+            enclosing_rect = _find_enclosing_rect(
+                (hx0, hy0, hx1, hy1), graphics, tolerance=cfg.legend_enclosure_tolerance
+            )
             is_boxed = enclosing_rect is not None
             box_bbox = enclosing_rect.bbox() if enclosing_rect else None
 
@@ -430,12 +436,16 @@ def detect_legend_regions(
             else:
                 # Define search region below header
                 # Extend down and to the right until we hit another header or edge
-                region_x0 = hx0 - 100  # Allow left margin for symbols
+                region_x0 = (
+                    hx0 - cfg.legend_unboxed_x_margin
+                )  # Allow left margin for symbols
                 region_y0 = hy0
                 region_x1 = min(
-                    hx0 + 600, page_width
+                    hx0 + cfg.legend_unboxed_x_extent, page_width
                 )  # Extend significantly right for text descriptions
-                region_y1 = min(hy1 + 500, page_height)  # Extend down
+                region_y1 = min(
+                    hy1 + cfg.legend_unboxed_y_extent, page_height
+                )  # Extend down
 
                 # Try to find natural boundary (another header below)
                 for blk in blocks:
@@ -454,15 +464,24 @@ def detect_legend_regions(
                 )
 
             # Find symbols in region
-            symbols = _find_symbols_in_region(region_bbox, graphics)
+            symbols = _find_symbols_in_region(
+                region_bbox, graphics, max_symbol_size=cfg.legend_max_symbol_size
+            )
             dbg.write(f"[DEBUG]   Found {len(symbols)} potential symbols in region\n")
 
             # Filter out very tiny symbols (noise) and very large ones
-            symbols = [s for s in symbols if s.area() > 10 and s.area() < 2500]
+            symbols = [
+                s
+                for s in symbols
+                if s.area() > cfg.legend_symbol_min_area
+                and s.area() < cfg.legend_symbol_max_area
+            ]
             dbg.write(f"[DEBUG]   After size filter: {len(symbols)} symbols\n")
 
             # Detect column structure
-            symbol_columns = _detect_legend_columns(symbols)
+            symbol_columns = _detect_legend_columns(
+                symbols, x_tolerance=cfg.legend_column_x_tolerance
+            )
             dbg.write(f"[DEBUG]   Detected {len(symbol_columns)} symbol columns\n")
             for i, col in enumerate(symbol_columns):
                 dbg.write(
@@ -489,7 +508,13 @@ def detect_legend_regions(
 
             # Pair symbols with text
             all_symbols = [s for col in symbol_columns for s in col]
-            entries = _pair_symbols_with_text(all_symbols, text_blocks, page)
+            entries = _pair_symbols_with_text(
+                all_symbols,
+                text_blocks,
+                page,
+                y_tolerance=cfg.legend_text_y_tolerance,
+                x_gap_max=cfg.legend_text_x_gap_max,
+            )
             dbg.write(f"[DEBUG]   Created {len(entries)} legend entries\n")
             for entry in entries:
                 dbg.write(
@@ -516,6 +541,7 @@ def detect_abbreviation_regions(
     page_width: float,
     page_height: float,
     debug_path: str = None,
+    cfg: GroupingConfig | None = None,
 ) -> List[AbbreviationRegion]:
     """
     Detect abbreviation regions on a page.
@@ -1040,6 +1066,7 @@ def detect_standard_detail_regions(
     page_height: float,
     debug_path: str = None,
     exclusion_zones: List[Tuple[float, float, float, float]] = None,
+    cfg: GroupingConfig | None = None,
 ) -> List[StandardDetailRegion]:
     """
     Detect standard detail regions on a page.
@@ -1614,6 +1641,7 @@ def detect_revision_regions(
     page_height: float,
     debug_path: str = None,
     exclusion_zones: List[Tuple[float, float, float, float]] = None,
+    cfg: GroupingConfig | None = None,
 ) -> List[RevisionRegion]:
     """
     Detect revision boxes on a page.
@@ -1920,6 +1948,7 @@ def detect_misc_title_regions(
     page_height: float,
     debug_path: str = None,
     exclusion_zones: List[Tuple[float, float, float, float]] = None,
+    cfg: GroupingConfig | None = None,
 ) -> List[MiscTitleRegion]:
     """
     Detect miscellaneous title boxes (e.g., 'OKLAHOMA DEPARTMENT OF TRANSPORTATION').

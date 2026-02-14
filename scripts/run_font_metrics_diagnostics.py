@@ -16,6 +16,16 @@ from plancheck.font_metrics import (
 )
 
 
+def _make_run_dir(run_root: Path, run_prefix: str) -> Path:
+    """Create a timestamped run folder matching the main pipeline convention."""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"run_{stamp}_fontdiag_{run_prefix}"
+    run_dir = run_root / run_name
+    for sub in ["artifacts", "overlays", "exports", "logs"]:
+        (run_dir / sub).mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
 def run_diagnostics(
     pdf: Path,
     out_dir: Path,
@@ -61,7 +71,8 @@ def run_diagnostics(
             report = visual.analyze_page(pdf, page_num)
             payload["visual_reports"].append(report.to_dict())
 
-    out_path = out_dir / f"{pdf.stem}_font_metrics_diagnostics.json"
+    out_path = out_dir / "artifacts" / f"{pdf.stem}_font_metrics_diagnostics.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return out_path
 
@@ -72,10 +83,16 @@ def main() -> None:
     )
     parser.add_argument("pdf", type=Path, help="Path to PDF")
     parser.add_argument(
-        "--out-dir",
+        "--run-root",
         type=Path,
         default=Path("runs"),
-        help="Output directory for diagnostics JSON",
+        help="Root directory for run output folders (default: runs/)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help="Override: write directly to this directory instead of creating a run folder",
     )
     parser.add_argument("--start", type=int, default=0, help="Start page (inclusive)")
     parser.add_argument(
@@ -106,9 +123,17 @@ def main() -> None:
     if not (args.heuristic or args.visual):
         raise ValueError("Enable at least one tool: --heuristic and/or --visual")
 
+    # Determine output directory: explicit --out-dir or a new timestamped run folder
+    if args.out_dir is not None:
+        out_dir = args.out_dir
+    else:
+        run_prefix = args.pdf.stem.replace(" ", "_")[:20]
+        out_dir = _make_run_dir(args.run_root, run_prefix)
+        print(f"Font diagnostics -> {out_dir}", flush=True)
+
     out_path = run_diagnostics(
         pdf=args.pdf,
-        out_dir=args.out_dir,
+        out_dir=out_dir,
         start=max(0, args.start),
         end=args.end,
         run_heuristic=args.heuristic,

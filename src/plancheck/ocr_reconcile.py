@@ -117,9 +117,9 @@ def _overlaps_existing(
 
 # PaddleOCR's internal limit: images wider/taller than this get silently
 # downscaled, destroying small CAD text.  We tile the image so each tile
-# stays within this limit.
-_PADDLE_MAX_SIDE = 3800  # leave 200 px headroom below the 4000 internal cap
-_TILE_OVERLAP_FRAC = 0.05  # 5% overlap between adjacent tiles
+# stays within this limit.  The default is overridden by cfg.vocr_max_tile_px.
+_PADDLE_MAX_SIDE_DEFAULT = 3800
+_TILE_OVERLAP_FRAC_DEFAULT = 0.05  # 5 % overlap between adjacent tiles
 
 
 def _ocr_one_tile(
@@ -183,7 +183,9 @@ def _ocr_one_tile(
 
 
 def _dedup_tiles(
-    tokens: List[GlyphBox], confs: List[float]
+    tokens: List[GlyphBox],
+    confs: List[float],
+    dedup_iou: float = 0.5,
 ) -> Tuple[List[GlyphBox], List[float]]:
     """Remove near-duplicate tokens from overlapping tile regions.
 
@@ -199,7 +201,7 @@ def _dedup_tiles(
         for j in range(i + 1, len(tokens)):
             if not keep[j]:
                 continue
-            if _iou(tokens[i], tokens[j]) > 0.5:
+            if _iou(tokens[i], tokens[j]) > dedup_iou:
                 # Drop the lower-confidence duplicate
                 if confs[i] >= confs[j]:
                     keep[j] = False
@@ -234,7 +236,18 @@ def _extract_ocr_tokens(
 
     from ._ocr_engine import _get_ocr
 
-    ocr = _get_ocr()
+    ocr = _get_ocr(cfg)
+
+    # Resolve effective knobs
+    max_tile_px = (
+        cfg.vocr_max_tile_px if cfg.vocr_max_tile_px > 0 else _PADDLE_MAX_SIDE_DEFAULT
+    )
+    tile_overlap_frac = cfg.vocr_tile_overlap
+    min_conf = cfg.vocr_min_confidence
+    tile_dedup_iou = cfg.vocr_tile_dedup_iou
+    heartbeat_sec = cfg.vocr_heartbeat_interval
+    min_text_len = cfg.vocr_min_text_length
+    strip_ws = cfg.vocr_strip_whitespace
 
     # Ensure RGB mode (pdfplumber may return RGBA; PaddleOCR needs 3 channels)
     if page_image.mode != "RGB":
@@ -246,17 +259,17 @@ def _extract_ocr_tokens(
     eff_dpi = img_w / page_width * 72
 
     # Determine tiling grid
-    need_tile = img_w > _PADDLE_MAX_SIDE or img_h > _PADDLE_MAX_SIDE
+    need_tile = img_w > max_tile_px or img_h > max_tile_px
     if need_tile:
-        overlap_x = int(img_w * _TILE_OVERLAP_FRAC)
-        overlap_y = int(img_h * _TILE_OVERLAP_FRAC)
-        step_x = _PADDLE_MAX_SIDE - overlap_x
-        step_y = _PADDLE_MAX_SIDE - overlap_y
+        overlap_x = int(img_w * tile_overlap_frac)
+        overlap_y = int(img_h * tile_overlap_frac)
+        step_x = max_tile_px - overlap_x
+        step_y = max_tile_px - overlap_y
 
         tiles_x = []
         x = 0
         while x < img_w:
-            x1 = min(x + _PADDLE_MAX_SIDE, img_w)
+            x1 = min(x + max_tile_px, img_w)
             tiles_x.append((x, x1))
             if x1 >= img_w:
                 break
@@ -265,7 +278,7 @@ def _extract_ocr_tokens(
         tiles_y = []
         y = 0
         while y < img_h:
-            y1 = min(y + _PADDLE_MAX_SIDE, img_h)
+            y1 = min(y + max_tile_px, img_h)
             tiles_y.append((y, y1))
             if y1 >= img_h:
                 break
@@ -304,7 +317,7 @@ def _extract_ocr_tokens(
         t.start()
         beat = 0
         while t.is_alive():
-            t.join(timeout=15.0)
+            t.join(timeout=heartbeat_sec)
             if t.is_alive():
                 beat += 1
                 elapsed = time.perf_counter() - t0
@@ -329,7 +342,7 @@ def _extract_ocr_tokens(
                 sx,
                 sy,
                 page_num,
-                cfg.ocr_reconcile_confidence,
+                min_conf,
                 label="single-pass OCR",
             )
         else:
@@ -349,7 +362,7 @@ def _extract_ocr_tokens(
                         sx,
                         sy,
                         page_num,
-                        cfg.ocr_reconcile_confidence,
+                        min_conf,
                         label=f"tile {tile_idx}/{n_tiles}",
                     )
                     print(
@@ -363,7 +376,7 @@ def _extract_ocr_tokens(
 
             # Deduplicate tokens from overlapping regions
             pre_dedup = len(all_tokens)
-            all_tokens, all_confs = _dedup_tiles(all_tokens, all_confs)
+            all_tokens, all_confs = _dedup_tiles(all_tokens, all_confs, tile_dedup_iou)
             if pre_dedup != len(all_tokens):
                 print(
                     f"    tile dedup: {pre_dedup} -> {len(all_tokens)} tokens",
@@ -378,6 +391,30 @@ def _extract_ocr_tokens(
         return [], []
 
     elapsed = time.perf_counter() - t0
+
+    # ── Post-extraction filtering ──────────────────────────────────────
+    pre_filter = len(all_tokens)
+    if strip_ws or min_text_len > 0:
+        keep = []
+        for tok, conf in zip(all_tokens, all_confs):
+            if strip_ws and not tok.text.strip():
+                continue
+            if min_text_len > 0 and len(tok.text) < min_text_len:
+                continue
+            keep.append((tok, conf))
+        if keep:
+            all_tokens, all_confs = zip(*keep)  # type: ignore[assignment]
+            all_tokens, all_confs = list(all_tokens), list(all_confs)
+        else:
+            all_tokens, all_confs = [], []
+        n_filtered = pre_filter - len(all_tokens)
+        if n_filtered:
+            print(
+                f"  OCR Stage 1: filtered {n_filtered} tokens "
+                f"(min_len={min_text_len}, strip_ws={strip_ws})",
+                flush=True,
+            )
+
     print(
         f"  OCR Stage 1: {len(all_tokens)} tokens extracted " f"in {elapsed:.1f}s",
         flush=True,
@@ -498,10 +535,15 @@ def _has_digit_neighbour_left(
     candidate: GlyphBox,
     pdf_tokens: List[GlyphBox],
     proximity_pts: float,
+    cfg: GroupingConfig | None = None,
 ) -> bool:
     """Return True if a digit-bearing PDF token is within *proximity_pts* to the left."""
+    _tol_mult = cfg.ocr_reconcile_digit_band_tol_mult if cfg else 0.5
+    _overshoot = cfg.ocr_reconcile_digit_overshoot if cfg else -2.0
     cy = (candidate.y0 + candidate.y1) / 2.0
-    band_tol = max(2.0, candidate.height() * 0.5) if candidate.height() > 0 else 2.0
+    band_tol = (
+        max(2.0, candidate.height() * _tol_mult) if candidate.height() > 0 else 2.0
+    )
 
     for t in pdf_tokens:
         if t.origin != "text":
@@ -513,18 +555,21 @@ def _has_digit_neighbour_left(
             continue
         # PDF token must be to the left (its right edge near candidate's left edge)
         dx = candidate.x0 - t.x1
-        if -2.0 <= dx <= proximity_pts:
+        if _overshoot <= dx <= proximity_pts:
             return True
     return False
 
 
-def _estimate_char_width(pdf_tokens: List[GlyphBox]) -> float:
+def _estimate_char_width(
+    pdf_tokens: List[GlyphBox], cfg: GroupingConfig | None = None
+) -> float:
     """Rough median character width from PDF tokens."""
+    _fallback = cfg.ocr_reconcile_char_width_fallback if cfg else 5.0
     widths = []
     for t in pdf_tokens:
         if t.text and t.width() > 0:
             widths.append(t.width() / len(t.text))
-    return median(widths) if widths else 5.0
+    return median(widths) if widths else _fallback
 
 
 # ── Stage 3b: Composite (multi-anchor) symbol injection ───────────────
@@ -534,13 +579,20 @@ def _find_line_neighbours(
     ocr_box: GlyphBox,
     pdf_tokens: List[GlyphBox],
     anchor_margin: float,
+    cfg: GroupingConfig | None = None,
 ) -> List[GlyphBox]:
     """Find PDF tokens on the same text line within a horizontal window.
 
     Returns origin="text" tokens sorted by x0.
     """
+    _tol_mult = cfg.ocr_reconcile_line_neighbour_tol_mult if cfg else 0.6
+    _min_tol = cfg.ocr_reconcile_line_neighbour_min_tol if cfg else 3.0
     cy = (ocr_box.y0 + ocr_box.y1) / 2.0
-    band_tol = max(3.0, ocr_box.height() * 0.6) if ocr_box.height() > 0 else 3.0
+    band_tol = (
+        max(_min_tol, ocr_box.height() * _tol_mult)
+        if ocr_box.height() > 0
+        else _min_tol
+    )
     x_lo = ocr_box.x0 - anchor_margin
     x_hi = ocr_box.x1 + anchor_margin
 
@@ -559,11 +611,11 @@ def _find_line_neighbours(
     return neighbours
 
 
-def _is_digit_group(text: str) -> bool:
+def _is_digit_group(text: str, cfg: GroupingConfig | None = None) -> bool:
     """Return True if *text* qualifies as a digit-group anchor.
 
     A token is a digit group if it starts with a digit (catches ``"09"``,
-    ``"8.33"``, ``"2A"``), OR digits plus ``'.'`` comprise >= 50 %% of its
+    ``"8.33"``, ``"2A"``), OR digits plus ``'.'`` comprise >= *digit_ratio* of its
     characters.  This rejects labels like ``"SECTION 2"`` while keeping
     numeric values that symbols attach to.
     """
@@ -572,8 +624,9 @@ def _is_digit_group(text: str) -> bool:
     # Fast path: starts with a digit
     if text[0].isdigit():
         return True
+    _ratio = cfg.ocr_reconcile_digit_ratio if cfg else 0.5
     digit_dot = sum(1 for ch in text if ch.isdigit() or ch == ".")
-    return digit_dot >= len(text) * 0.5
+    return digit_dot >= len(text) * _ratio
 
 
 def _generate_symbol_candidates(
@@ -592,9 +645,9 @@ def _generate_symbol_candidates(
 
     # Find digit-bearing neighbours (tightened to digit-group tokens)
     neighbours = _find_line_neighbours(
-        ocr_box, pdf_tokens, cfg.ocr_reconcile_anchor_margin
+        ocr_box, pdf_tokens, cfg.ocr_reconcile_anchor_margin, cfg
     )
-    digit_anchors = [t for t in neighbours if _is_digit_group(t.text)]
+    digit_anchors = [t for t in neighbours if _is_digit_group(t.text, cfg)]
     if not digit_anchors:
         return []
 
@@ -621,7 +674,7 @@ def _generate_symbol_candidates(
         gaps.sort(key=lambda g: g[0])  # smallest gap first
         for gap_w, a_l, a_r in gaps[:n_slashes]:
             mid_x = (a_l.x1 + a_r.x0) / 2.0
-            slash_w = max(0.5, 0.35 * h)
+            slash_w = max(0.5, cfg.ocr_reconcile_slash_width_mult * h)
             # Clamp to available gap if positive
             if gap_w > 0:
                 slash_w = min(slash_w, gap_w)
@@ -669,9 +722,9 @@ def _generate_symbol_candidates(
                 # Fallback: anchor-based cursor placement
                 sym_x0 = cursor_x
                 if sym == "%":
-                    sym_w = 0.95 * h
+                    sym_w = cfg.ocr_reconcile_pct_width_mult * h
                 else:  # ° ±
-                    sym_w = 0.5 * h
+                    sym_w = cfg.ocr_reconcile_degree_width_mult * h
 
             candidates.append(
                 SymbolCandidate(
@@ -695,6 +748,7 @@ def _accept_candidates(
     candidates: List[SymbolCandidate],
     pdf_tokens: List[GlyphBox],
     page_width: float,
+    cfg: GroupingConfig | None = None,
 ) -> List[SymbolCandidate]:
     """Run acceptance checks on symbol candidates.
 
@@ -705,6 +759,10 @@ def _accept_candidates(
       the next token to the right.
     Checks both origin="text" and origin="ocr" for "already in PDF" guard.
     """
+    _proximity = cfg.ocr_reconcile_accept_proximity if cfg else 4.0
+    _iou_thr = cfg.ocr_reconcile_accept_iou if cfg else 0.15
+    _cov_thr = cfg.ocr_reconcile_accept_coverage if cfg else 0.30
+
     # Build a combined token set for overlap checking
     all_tokens = list(pdf_tokens)
 
@@ -725,7 +783,7 @@ def _accept_candidates(
                 continue
             t_cx = (t.x0 + t.x1) / 2.0
             t_cy = (t.y0 + t.y1) / 2.0
-            if abs(t_cx - cand_cx) < 4.0 and abs(t_cy - cand_cy) < 4.0:
+            if abs(t_cx - cand_cx) < _proximity and abs(t_cy - cand_cy) < _proximity:
                 already = True
                 break
         if already:
@@ -756,7 +814,7 @@ def _accept_candidates(
         for t in all_tokens:
             if id(t) in exclude_ids:
                 continue
-            if _iou(cand_box, t) > 0.15 or _overlap_ratio(cand_box, t) > 0.30:
+            if _iou(cand_box, t) > _iou_thr or _overlap_ratio(cand_box, t) > _cov_thr:
                 overlap_hit = True
                 break
 
@@ -798,9 +856,9 @@ def _inject_symbols(
     allowed = cfg.ocr_reconcile_allowed_symbols
     added: List[GlyphBox] = []
     debug_log: List[dict] = []
-    char_w = _estimate_char_width(pdf_tokens)
+    char_w = _estimate_char_width(pdf_tokens, cfg)
     n_filtered_non_numeric = 0
-    _MAX_DEBUG = 200
+    _MAX_DEBUG = cfg.ocr_reconcile_max_debug
 
     _RE_COMPOSITE = re.compile(r"\d+\s*[%/°±]\s*\d+")
 
@@ -850,7 +908,7 @@ def _inject_symbols(
         candidates = _generate_symbol_candidates(m.ocr_box, pdf_tokens, cfg)
 
         if candidates:
-            _accept_candidates(candidates, pdf_tokens, page_width)
+            _accept_candidates(candidates, pdf_tokens, page_width, cfg)
             entry["path"] = "case_c"
             # Record anchors (from first candidate that has them)
             anchor_ids_seen: set = set()
@@ -901,7 +959,7 @@ def _inject_symbols(
             if _RE_COMPOSITE.search(ocr_text):
                 c_candidates = _generate_symbol_candidates(m.ocr_box, pdf_tokens, cfg)
                 if c_candidates:
-                    _accept_candidates(c_candidates, pdf_tokens, page_width)
+                    _accept_candidates(c_candidates, pdf_tokens, page_width, cfg)
                     entry["path"] = "case_a_deferred_to_c"
                     anchor_ids_seen_a: set = set()
                     for c in c_candidates:
@@ -994,7 +1052,7 @@ def _inject_symbols(
                 continue
 
             if not _has_digit_neighbour_left(
-                m.ocr_box, pdf_tokens, cfg.ocr_reconcile_proximity_pts
+                m.ocr_box, pdf_tokens, cfg.ocr_reconcile_proximity_pts, cfg
             ):
                 entry["path"] = "case_b"
                 entry["candidates"].append(
@@ -1060,7 +1118,43 @@ def _inject_symbols(
     return added, debug_log, n_filtered_non_numeric
 
 
-# ── Stage 4: Public entry point ────────────────────────────────────────
+# ── VOCR public entry point ───────────────────────────────────────────
+
+
+def extract_vocr_tokens(
+    page_image: Image.Image,
+    page_num: int,
+    page_width: float,
+    page_height: float,
+    cfg: GroupingConfig,
+) -> tuple[List[GlyphBox], List[float]]:
+    """Run full-page PaddleOCR and return raw tokens + confidences.
+
+    This is the **VOCR stage** — visual OCR extraction only, no
+    reconciliation.  The returned tokens can be passed to
+    :func:`reconcile_ocr` via its *ocr_tokens* / *ocr_confs* parameters
+    to complete the pipeline.
+
+    Parameters
+    ----------
+    page_image : PIL.Image.Image
+        Full-page render (ideally preprocessed by VOCRPP).
+    page_num : int
+        Zero-based page index.
+    page_width, page_height : float
+        Page dimensions in PDF points.
+    cfg : GroupingConfig
+        Configuration (``ocr_reconcile_*`` fields used).
+
+    Returns
+    -------
+    (tokens, confidences)
+        Parallel lists of :class:`GlyphBox` and float scores.
+    """
+    return _extract_ocr_tokens(page_image, page_num, page_width, page_height, cfg)
+
+
+# ── Reconcile public entry point ──────────────────────────────────────
 
 
 def reconcile_ocr(
@@ -1070,6 +1164,9 @@ def reconcile_ocr(
     page_width: float,
     page_height: float,
     cfg: GroupingConfig,
+    *,
+    ocr_tokens: Optional[List[GlyphBox]] = None,
+    ocr_confs: Optional[List[float]] = None,
 ) -> ReconcileResult:
     """Run full-page OCR reconciliation against existing PDF tokens.
 
@@ -1077,6 +1174,7 @@ def reconcile_ocr(
     ----------
     page_image : PIL.Image.Image
         Full-page render at ``cfg.ocr_reconcile_resolution`` DPI.
+        Used for VOCR extraction when *ocr_tokens* is not supplied.
     tokens : list[GlyphBox]
         Existing PDF-extracted tokens (origin="text").
     page_num : int
@@ -1085,6 +1183,11 @@ def reconcile_ocr(
         Page dimensions in PDF points.
     cfg : GroupingConfig
         Configuration (OCR reconcile settings).
+    ocr_tokens : list[GlyphBox], optional
+        Pre-extracted VOCR tokens (from :func:`extract_vocr_tokens`).
+        When provided, the internal VOCR extraction is skipped.
+    ocr_confs : list[float], optional
+        Parallel confidence scores for *ocr_tokens*.
 
     Returns
     -------
@@ -1093,14 +1196,18 @@ def reconcile_ocr(
     """
     result = ReconcileResult()
 
-    # Stage 1 — full-page OCR
-    ocr_tokens, ocr_confs = _extract_ocr_tokens(
-        page_image,
-        page_num,
-        page_width,
-        page_height,
-        cfg,
-    )
+    # Stage 1 — full-page OCR (skipped when caller supplies tokens)
+    if ocr_tokens is not None:
+        if ocr_confs is None:
+            ocr_confs = [1.0] * len(ocr_tokens)
+    else:
+        ocr_tokens, ocr_confs = _extract_ocr_tokens(
+            page_image,
+            page_num,
+            page_width,
+            page_height,
+            cfg,
+        )
     result.all_ocr_tokens = ocr_tokens
 
     if not ocr_tokens:

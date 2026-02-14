@@ -51,9 +51,13 @@ def estimate_skew_degrees(boxes: Iterable[GlyphBox], max_degrees: float) -> floa
 
 
 def rotate_boxes(
-    boxes: Iterable[GlyphBox], degrees: float, page_width: float, page_height: float
+    boxes: Iterable[GlyphBox],
+    degrees: float,
+    page_width: float,
+    page_height: float,
+    min_rotation: float = 0.01,
 ) -> List[GlyphBox]:
-    if abs(degrees) < 0.01:
+    if abs(degrees) < min_rotation:
         return list(boxes)
     radians = math.radians(degrees)
     cos_t = math.cos(radians)

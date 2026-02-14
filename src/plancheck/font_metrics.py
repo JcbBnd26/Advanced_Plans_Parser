@@ -43,9 +43,9 @@ class FontMetricsAnomaly:
     sample_chars: List[str] = field(default_factory=list)
     detection_method: str = "heuristic"  # "heuristic" or "visual"
 
-    def is_anomalous(self, threshold: float = 1.3) -> bool:
+    def is_anomalous(self, threshold: float = 1.3, confidence_min: float = 0.7) -> bool:
         """Return True if font metrics are significantly inflated."""
-        return self.inflation_factor > threshold and self.confidence > 0.7
+        return self.inflation_factor > threshold and self.confidence > confidence_min
 
     def to_dict(self) -> dict:
         return {
@@ -170,12 +170,21 @@ EXPECTED_WIDTH_RATIOS = {
 class FontMetricsAnalyzer:
     """Analyzes font metrics to detect anomalies in PDF text extraction."""
 
-    def __init__(self, inflation_threshold: float = 1.3):
+    def __init__(
+        self,
+        inflation_threshold: float = 1.3,
+        min_samples: int = 5,
+        confidence_min: float = 0.7,
+    ):
         """
         Args:
             inflation_threshold: Fonts with inflation_factor above this are flagged.
+            min_samples: Minimum character samples required to assess a font.
+            confidence_min: Minimum confidence to consider an anomaly valid.
         """
         self.inflation_threshold = inflation_threshold
+        self.min_samples = min_samples
+        self.confidence_min = confidence_min
 
     def analyze_page(self, pdf_path: Path | str, page_num: int) -> PageMetricsReport:
         """
@@ -254,7 +263,7 @@ class FontMetricsAnalyzer:
                 width_ratios.append(inflation)
                 sample_chars.append(text)
 
-        if len(width_ratios) < 5:
+        if len(width_ratios) < self.min_samples:
             # Not enough samples to make a determination
             return None
 

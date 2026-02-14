@@ -27,6 +27,8 @@ class OcrPreprocessConfig:
     adaptive_block_size: int = 11
     adaptive_c: float = 2.0
     sharpen: bool = False
+    sharpen_radius: int = 2
+    sharpen_percent: int = 140
     save_intermediate: bool = False
 
 
@@ -168,7 +170,11 @@ def preprocess_image_for_ocr(
             steps.append("adaptive_binarize_skipped_no_cv2")
 
     if cfg.sharpen:
-        current = current.filter(ImageFilter.UnsharpMask(radius=2, percent=140))
+        current = current.filter(
+            ImageFilter.UnsharpMask(
+                radius=cfg.sharpen_radius, percent=cfg.sharpen_percent
+            )
+        )
         steps.append("unsharp_mask")
         _save_step("unsharp_mask")
 

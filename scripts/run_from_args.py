@@ -50,6 +50,16 @@ parser.add_argument(
     help="Path to JSON file with color overrides",
 )
 parser.add_argument(
+    "--no-tocr",
+    action="store_true",
+    help="Disable text-layer OCR (pdfplumber word extraction)",
+)
+parser.add_argument(
+    "--vocr",
+    action="store_true",
+    help="Run PaddleOCR full-page visual token extraction",
+)
+parser.add_argument(
     "--ocr-preprocess",
     action="store_true",
     help="Preprocess OCR image (grayscale + CLAHE contrast) before PaddleOCR",
@@ -57,7 +67,7 @@ parser.add_argument(
 parser.add_argument(
     "--ocr-full-reconcile",
     action="store_true",
-    help="Enable full-page OCR reconciliation (inject missing symbols)",
+    help="Enable OCR reconciliation (inject missing symbols from VOCR into text layer)",
 )
 parser.add_argument(
     "--ocr-debug",
@@ -72,9 +82,14 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-# Build GroupingConfig from OCR-related flags
+# Build GroupingConfig from OCR-related flags.
+# --ocr-full-reconcile implies --vocr (reconcile needs VOCR tokens).
+# --ocr-preprocess implies --vocr (preprocessing has no consumer without VOCR).
+_vocr = args.vocr or args.ocr_full_reconcile or args.ocr_preprocess
 ocr_cfg = GroupingConfig(
-    enable_ocr_reconcile=args.ocr_full_reconcile or args.ocr_preprocess,
+    enable_tocr=not args.no_tocr,
+    enable_vocr=_vocr,
+    enable_ocr_reconcile=args.ocr_full_reconcile,
     enable_ocr_preprocess=args.ocr_preprocess,
     ocr_reconcile_debug=args.ocr_debug,
     ocr_reconcile_resolution=args.ocr_resolution,

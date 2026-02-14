@@ -49,7 +49,42 @@ class PlanParserGUI:
 
         self.tab1_frame = ttk.Frame(self.notebook)
         self.tab1_frame.columnconfigure(0, weight=1)
+        self.tab1_frame.rowconfigure(0, weight=1)
         self.notebook.add(self.tab1_frame, text="Tab 1")
+
+        # Scrollable canvas inside Tab 1
+        self._tab1_canvas = tk.Canvas(self.tab1_frame, highlightthickness=0)
+        self._tab1_scrollbar = ttk.Scrollbar(
+            self.tab1_frame, orient="vertical", command=self._tab1_canvas.yview
+        )
+        self._tab1_inner = ttk.Frame(self._tab1_canvas)
+        self._tab1_inner.columnconfigure(0, weight=1)
+
+        self._tab1_inner.bind(
+            "<Configure>",
+            lambda e: self._tab1_canvas.configure(
+                scrollregion=self._tab1_canvas.bbox("all")
+            ),
+        )
+        self._tab1_canvas_window = self._tab1_canvas.create_window(
+            (0, 0), window=self._tab1_inner, anchor="nw"
+        )
+        self._tab1_canvas.configure(yscrollcommand=self._tab1_scrollbar.set)
+
+        self._tab1_canvas.grid(row=0, column=0, sticky="nsew")
+        self._tab1_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        # Resize inner frame width to match canvas
+        def _on_tab1_canvas_configure(event):
+            self._tab1_canvas.itemconfig(self._tab1_canvas_window, width=event.width)
+
+        self._tab1_canvas.bind("<Configure>", _on_tab1_canvas_configure)
+
+        # Mousewheel scrolling
+        def _on_mousewheel(event):
+            self._tab1_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        self._tab1_canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         self.tab2_frame = ttk.Frame(self.notebook)
         self.tab2_frame.columnconfigure(0, weight=1)
@@ -94,42 +129,23 @@ class PlanParserGUI:
         ).grid(row=3, column=0, sticky="w")
 
         # --- File Selection Section ---
-        file_frame = ttk.LabelFrame(self.tab1_frame, text="PDF Files", padding=10)
+        file_frame = ttk.LabelFrame(self._tab1_inner, text="PDF File", padding=10)
         file_frame.grid(row=0, column=0, sticky="ew", **pad)
-        file_frame.columnconfigure(0, weight=1)
+        file_frame.columnconfigure(1, weight=1)
 
-        btn_frame = ttk.Frame(file_frame)
-        btn_frame.grid(row=0, column=0, sticky="ew")
-        btn_frame.columnconfigure(1, weight=1)
-
-        ttk.Button(btn_frame, text="Add Files...", command=self._add_files).grid(
+        ttk.Button(file_frame, text="Select File...", command=self._select_file).grid(
             row=0, column=0, padx=(0, 5)
         )
-        ttk.Button(
-            btn_frame, text="Remove Selected", command=self._remove_selected
-        ).grid(row=0, column=1, sticky="w")
-        ttk.Button(btn_frame, text="Clear All", command=self._clear_all).grid(
+        self.file_label_var = tk.StringVar(value="No file selected")
+        ttk.Label(file_frame, textvariable=self.file_label_var, foreground="gray").grid(
+            row=0, column=1, sticky="w"
+        )
+        ttk.Button(file_frame, text="Clear", command=self._clear_file).grid(
             row=0, column=2, padx=(5, 0)
         )
 
-        # Listbox with scrollbar for selected files
-        list_frame = ttk.Frame(file_frame)
-        list_frame.grid(row=1, column=0, sticky="nsew", pady=(5, 0))
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
-        file_frame.rowconfigure(1, weight=1)
-
-        self.file_listbox = tk.Listbox(list_frame, height=4, selectmode=tk.EXTENDED)
-        self.file_listbox.grid(row=0, column=0, sticky="nsew")
-
-        scrollbar = ttk.Scrollbar(
-            list_frame, orient="vertical", command=self.file_listbox.yview
-        )
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self.file_listbox.config(yscrollcommand=scrollbar.set)
-
         # --- Page Selection Section ---
-        page_frame = ttk.LabelFrame(self.tab1_frame, text="Page Selection", padding=10)
+        page_frame = ttk.LabelFrame(self._tab1_inner, text="Page Selection", padding=10)
         page_frame.grid(row=1, column=0, sticky="nsew", **pad)
         page_frame.columnconfigure(2, weight=1)
 
@@ -190,44 +206,32 @@ class PlanParserGUI:
         self._update_page_mode()
 
         # --- Settings Sections ---
-        settings_container = ttk.Frame(self.tab1_frame)
+        settings_container = ttk.Frame(self._tab1_inner)
         settings_container.grid(row=2, column=0, sticky="nsew", **pad)
         settings_container.columnconfigure(0, weight=1)
-
-        general_frame = ttk.LabelFrame(settings_container, text="General", padding=10)
-        general_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        general_frame.columnconfigure(1, weight=1)
 
         optical_ocr_frame = ttk.LabelFrame(
             settings_container, text="Optical OCR", padding=10
         )
-        optical_ocr_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
+        optical_ocr_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         optical_ocr_frame.columnconfigure(1, weight=1)
         optical_ocr_frame.columnconfigure(2, weight=1)
 
         text_ocr_frame = ttk.LabelFrame(settings_container, text="Text OCR", padding=10)
-        text_ocr_frame.grid(row=2, column=0, sticky="ew")
+        text_ocr_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
         text_ocr_frame.columnconfigure(0, weight=1)
 
-        # General settings
-        ttk.Label(general_frame, text="Resolution (DPI):").grid(
-            row=0, column=0, sticky="w", pady=2
+        reconcile_frame = ttk.LabelFrame(
+            settings_container, text="Post Processing", padding=10
         )
-        self.resolution_var = tk.StringVar(value="200")
-        self.resolution_spinbox = ttk.Spinbox(
-            general_frame,
-            textvariable=self.resolution_var,
-            values=(72, 150, 200, 300),
-            width=8,
-            state="readonly",
-        )
-        self.resolution_spinbox.grid(row=0, column=1, sticky="w", pady=2)
+        reconcile_frame.grid(row=2, column=0, sticky="ew")
+        reconcile_frame.columnconfigure(0, weight=1)
 
         # Optical OCR settings
-        self.ocr_preprocess_var = tk.BooleanVar(value=False)
+        self.ocr_preprocess_var = tk.BooleanVar(value=True)
         self.ocr_preprocess_check = ttk.Checkbutton(
             optical_ocr_frame,
-            text="OCR Preprocessing",
+            text="VOCRPP (Preprocessing)",
             variable=self.ocr_preprocess_var,
             command=self._toggle_preprocess_button,
         )
@@ -239,50 +243,83 @@ class PlanParserGUI:
             foreground="gray",
         ).grid(row=0, column=1, sticky="w", padx=(10, 0))
 
-        # Run Preprocessing Only button (disabled until checkbox is ticked)
+        # Run Preprocessing Only button (enabled when VOCRPP checkbox is ticked)
         self.preprocess_only_button = ttk.Button(
             optical_ocr_frame,
             text="Run Preprocessing Only...",
             command=self._run_preprocess_only,
-            state="disabled",
+            state="normal",
         )
         self.preprocess_only_button.grid(row=0, column=2, sticky="e", pady=2)
 
-        # Text OCR settings placeholder
+        # VOCR checkbox (PaddleOCR full-page extraction)
+        self.vocr_var = tk.BooleanVar(value=True)
+        self.vocr_check = ttk.Checkbutton(
+            optical_ocr_frame,
+            text="VOCR (PaddleOCR extraction)",
+            variable=self.vocr_var,
+        )
+        self.vocr_check.grid(row=1, column=0, sticky="w", pady=2)
+
+        ttk.Label(
+            optical_ocr_frame,
+            text="(Full-page PaddleOCR visual token extraction)",
+            foreground="gray",
+        ).grid(row=1, column=1, sticky="w", padx=(10, 0))
+
+        # Text OCR (TOCR) toggle — on by default
+        self.tocr_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            text_ocr_frame,
+            text="TOCR (pdfplumber text extraction)",
+            variable=self.tocr_var,
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
         ttk.Label(
             text_ocr_frame,
-            text="Text OCR settings will appear here.",
+            text="(Extract word boxes from the PDF text layer)",
             foreground="gray",
-        ).grid(row=0, column=0, sticky="w")
+        ).grid(row=0, column=1, sticky="w", padx=(10, 0))
 
-        # --- Status Section ---
-        status_frame = ttk.Frame(self.tab1_frame, padding=5)
-        status_frame.grid(row=3, column=0, sticky="ew", **pad)
-        status_frame.columnconfigure(0, weight=1)
-
-        self.status_var = tk.StringVar(value="Ready")
-        self.status_label = ttk.Label(
-            status_frame, textvariable=self.status_var, anchor="w"
+        # Reconcile checkbox (merge VOCR tokens into TOCR)
+        self.ocr_reconcile_var = tk.BooleanVar(value=True)
+        self.ocr_reconcile_check = ttk.Checkbutton(
+            reconcile_frame,
+            text="Reconcile",
+            variable=self.ocr_reconcile_var,
         )
-        self.status_label.grid(row=0, column=0, sticky="ew")
+        self.ocr_reconcile_check.grid(row=0, column=0, sticky="w", pady=2)
+
+        ttk.Label(
+            reconcile_frame,
+            text="(Inject missing %, /, °, ± from VOCR into text layer)",
+            foreground="gray",
+        ).grid(row=0, column=1, sticky="w", padx=(10, 0))
 
         # --- Run Button ---
-        btn_run_frame = ttk.Frame(self.tab1_frame)
-        btn_run_frame.grid(row=4, column=0, sticky="ew", **pad)
+        btn_run_frame = ttk.Frame(self._tab1_inner)
+        btn_run_frame.grid(row=5, column=0, sticky="ew", **pad)
         btn_run_frame.columnconfigure(0, weight=1)
 
-        self.run_button = ttk.Button(
-            btn_run_frame, text="Run Processing", command=self._run_processing
+        run_style = ttk.Style()
+        run_style.configure(
+            "Run.TButton", font=("TkDefaultFont", 12, "bold"), padding=(20, 10)
         )
-        self.run_button.grid(row=0, column=0, pady=(0, 10))
+
+        self.run_button = ttk.Button(
+            btn_run_frame,
+            text="Run Processing",
+            command=self._run_processing,
+            style="Run.TButton",
+        )
+        self.run_button.grid(row=0, column=0, sticky="ew", pady=(0, 10), padx=20)
 
         # --- Tag Selection & Color Debugger Section ---
         tag_frame = ttk.LabelFrame(
-            self.tab1_frame, text="Tag Visual Debugger", padding=10
+            self._tab1_inner, text="Visual Debug Overlays", padding=10
         )
-        tag_frame.grid(row=5, column=0, sticky="nsew", padx=10, pady=5)
+        tag_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=5)
         tag_frame.columnconfigure(1, weight=1)
-        tag_frame.rowconfigure(1, weight=1)
 
         # Tag dropdown
         self.tag_var = tk.StringVar(value=TAG_LIST[0])
@@ -298,8 +335,22 @@ class PlanParserGUI:
             row=0, column=1, sticky="w", padx=(5, 0)
         )
 
+        # Overlay resolution (DPI) — same row as tag dropdown
+        ttk.Label(tag_frame, text="Overlay DPI:").grid(
+            row=0, column=2, sticky="e", padx=(20, 0)
+        )
+        self.resolution_var = tk.StringVar(value="200")
+        self.resolution_spinbox = ttk.Spinbox(
+            tag_frame,
+            textvariable=self.resolution_var,
+            values=(72, 150, 200, 300),
+            width=8,
+            state="readonly",
+        )
+        self.resolution_spinbox.grid(row=0, column=3, sticky="w", padx=(5, 0))
+
         # Scrollable frame for tag checkboxes
-        tag_canvas = tk.Canvas(tag_frame, height=120, highlightthickness=0)
+        tag_canvas = tk.Canvas(tag_frame, height=60, highlightthickness=0)
         tag_scrollbar = ttk.Scrollbar(
             tag_frame, orient="vertical", command=tag_canvas.yview
         )
@@ -310,15 +361,15 @@ class PlanParserGUI:
         )
         tag_canvas.create_window((0, 0), window=self.tag_inner_frame, anchor="nw")
         tag_canvas.configure(yscrollcommand=tag_scrollbar.set)
-        tag_canvas.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(5, 0))
-        tag_scrollbar.grid(row=1, column=2, sticky="ns", pady=(5, 0))
+        tag_canvas.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=(5, 0))
+        tag_scrollbar.grid(row=1, column=4, sticky="ns", pady=(5, 0))
 
         # Tag data: {tag: {"color": hex, "ignored": bool, "selected": BooleanVar, "widgets": {...}}}
         self.tag_data = {}
 
         # Mass action buttons
         action_frame = ttk.Frame(tag_frame)
-        action_frame.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+        action_frame.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(5, 0))
         ttk.Button(
             action_frame, text="Set Color", command=self._set_color_selected
         ).grid(row=0, column=0, padx=2)
@@ -343,31 +394,22 @@ class PlanParserGUI:
         self._tooltip_after_id = None
         self._tooltip_tag = None
 
-    def _add_files(self) -> None:
-        """Open file dialog to add PDF files."""
-        files = filedialog.askopenfilenames(
-            title="Select PDF Files",
+    def _select_file(self) -> None:
+        """Open file dialog to select a single PDF file."""
+        f = filedialog.askopenfilename(
+            title="Select PDF File",
             filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
             initialdir=Path(__file__).parent.parent / "input",
         )
-        for f in files:
+        if f:
             path = Path(f)
-            if path not in self.pdf_files:
-                self.pdf_files.append(path)
-                self.file_listbox.insert(tk.END, path.name)
+            self.pdf_files = [path]
+            self.file_label_var.set(path.name)
 
-    def _remove_selected(self) -> None:
-        """Remove selected files from the list."""
-        selected = list(self.file_listbox.curselection())
-        # Remove in reverse order to preserve indices
-        for idx in reversed(selected):
-            self.file_listbox.delete(idx)
-            del self.pdf_files[idx]
-
-    def _clear_all(self) -> None:
-        """Clear all files from the list."""
-        self.file_listbox.delete(0, tk.END)
+    def _clear_file(self) -> None:
+        """Clear the selected file."""
         self.pdf_files.clear()
+        self.file_label_var.set("No file selected")
 
     def _update_page_mode(self) -> None:
         """Enable/disable page entry fields based on selected mode."""
@@ -460,9 +502,15 @@ class PlanParserGUI:
             f"--resolution {resolution}",
             f'--run-root "{str(self.runs_root)}"',
         ]
-        # Add OCR preprocessing flag if enabled
+        # Add OCR flags based on checkboxes
+        if not self.tocr_var.get():
+            args.append("--no-tocr")
+        if self.vocr_var.get():
+            args.append("--vocr")
         if self.ocr_preprocess_var.get():
             args.append("--ocr-preprocess")
+        if self.ocr_reconcile_var.get():
+            args.append("--ocr-full-reconcile")
         if color_dict:
             # Write colors to temp file to avoid PowerShell escaping issues
             color_file = Path(tempfile.gettempdir()) / "planparser_colors.json"
@@ -539,7 +587,10 @@ class PlanParserGUI:
             )
 
     def _run_font_diagnostics(self) -> None:
-        """Run selected font diagnostics as standalone tests."""
+        """Run selected font diagnostics as standalone tests.
+
+        Output goes into a timestamped run subfolder under runs/ by default.
+        """
         if not self.pdf_files:
             messagebox.showwarning("No Files", "Please add at least one PDF file.")
             return
@@ -557,17 +608,10 @@ class PlanParserGUI:
             messagebox.showerror("Invalid Input", "Page numbers must be integers.")
             return
 
-        out_dir = filedialog.askdirectory(
-            title="Select Output Folder for Font Diagnostics Reports",
-            initialdir=str(self.runs_root),
-        )
-        if not out_dir:
-            return
-
         for pdf_path in self.pdf_files:
             args = [
                 f'"{str(pdf_path)}"',
-                f'--out-dir "{out_dir}"',
+                f'--run-root "{str(self.runs_root)}"',
                 f"--start {start}",
             ]
 
