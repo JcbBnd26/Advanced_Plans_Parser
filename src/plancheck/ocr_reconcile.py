@@ -653,25 +653,40 @@ def _generate_symbol_candidates(
         rightmost = digit_anchors[-1]  # already sorted by x0
         pad = cfg.ocr_reconcile_symbol_pad
         cursor_x = rightmost.x1 + pad
+
+        # Per-character width from the OCR token for positional placement
+        ocr_cw = ocr_box.width() / max(1, len(ocr_text)) if ocr_text else 0.0
+
         for sym in unique_after:
-            if sym == "%":
-                sym_w = 0.95 * h
-            else:  # ° ±
-                sym_w = 0.5 * h
+            # Prefer OCR-relative placement: use the symbol's position
+            # inside the OCR token so the injected box aligns with the
+            # printed glyph (even if it overlaps the PDF glyph).
+            sym_idx = ocr_text.find(sym)
+            if sym_idx >= 0 and ocr_cw > 0:
+                sym_x0 = ocr_box.x0 + sym_idx * ocr_cw
+                sym_w = max(ocr_cw, 0.5 * h)  # at least half line-height
+            else:
+                # Fallback: anchor-based cursor placement
+                sym_x0 = cursor_x
+                if sym == "%":
+                    sym_w = 0.95 * h
+                else:  # ° ±
+                    sym_w = 0.5 * h
+
             candidates.append(
                 SymbolCandidate(
                     symbol=sym,
                     slot_type="after_digit",
-                    x0=cursor_x,
+                    x0=sym_x0,
                     y0=band_y0,
-                    x1=cursor_x + sym_w,
+                    x1=sym_x0 + sym_w,
                     y1=band_y1,
                     ocr_source=ocr_box,
                     anchor_left=None,
                     anchor_right=rightmost,
                 )
             )
-            cursor_x += sym_w + pad  # advance for next symbol
+            cursor_x = max(cursor_x, sym_x0 + sym_w + pad)  # advance for next symbol
 
     return candidates
 
