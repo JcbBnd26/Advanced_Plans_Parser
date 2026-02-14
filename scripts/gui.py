@@ -267,6 +267,28 @@ class PlanParserGUI:
             foreground="gray",
         ).grid(row=1, column=1, sticky="w", padx=(10, 0))
 
+        # OCR/Preprocess DPI selection (used by VOCR + preprocessing stages)
+        ttk.Label(optical_ocr_frame, text="OCR/Preprocess DPI:").grid(
+            row=2, column=0, sticky="w", pady=(6, 2)
+        )
+        self.ocr_dpi_var = tk.StringVar(value="300")
+        self.ocr_dpi_spinbox = ttk.Spinbox(
+            optical_ocr_frame,
+            textvariable=self.ocr_dpi_var,
+            values=(120, 150, 180, 200, 220, 300, 400),
+            width=8,
+            state="readonly",
+        )
+        self.ocr_dpi_spinbox.grid(
+            row=2, column=1, sticky="w", padx=(10, 0), pady=(6, 2)
+        )
+
+        ttk.Label(
+            optical_ocr_frame,
+            text="(Applies to Run Processing OCR and Run Preprocessing Only)",
+            foreground="gray",
+        ).grid(row=2, column=2, sticky="e", pady=(6, 2))
+
         # Text OCR (TOCR) toggle — on by default
         self.tocr_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
@@ -458,8 +480,8 @@ class PlanParserGUI:
         """Enable or disable UI elements during processing."""
         state = "normal" if enabled else "disabled"
         self.run_button.config(state=state)
-        self.file_listbox.config(state=state)
         self.resolution_spinbox.config(state="readonly" if enabled else "disabled")
+        self.ocr_dpi_spinbox.config(state="readonly" if enabled else "disabled")
 
         if enabled:
             # Restore proper state based on page mode
@@ -484,6 +506,10 @@ class PlanParserGUI:
             resolution = int(self.resolution_var.get())
         except ValueError:
             resolution = 200
+        try:
+            ocr_dpi = int(self.ocr_dpi_var.get())
+        except ValueError:
+            ocr_dpi = 300
         mode = self.page_mode_var.get()
         pdf_args = " ".join(f'"{str(p)}"' for p in self.pdf_files)
 
@@ -500,6 +526,7 @@ class PlanParserGUI:
             f"--pdfs {pdf_args}",
             f"--mode {mode}",
             f"--resolution {resolution}",
+            f"--ocr-resolution {ocr_dpi}",
             f'--run-root "{str(self.runs_root)}"',
         ]
         # Add OCR flags based on checkboxes
@@ -554,6 +581,10 @@ class PlanParserGUI:
             resolution = int(self.resolution_var.get())
         except ValueError:
             resolution = 200
+        try:
+            ocr_dpi = int(self.ocr_dpi_var.get())
+        except ValueError:
+            ocr_dpi = 300
 
         # Ask user to pick output folder
         out_dir = filedialog.askdirectory(
@@ -568,7 +599,7 @@ class PlanParserGUI:
             output_pdf = Path(out_dir) / f"{pdf_path.stem}_ocr_preprocessed.pdf"
             args = [
                 f'"{str(pdf_path)}"',
-                f"--render-dpi {resolution}",
+                f"--render-dpi {ocr_dpi}",
                 f"--start {start}",
                 f'--run-root "{out_dir}"',
                 "--pdf-only",

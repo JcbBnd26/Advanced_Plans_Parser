@@ -10,14 +10,19 @@ from plancheck import (
     BlockCluster,
     GlyphBox,
     GroupingConfig,
+    build_clusters_v2,
     draw_overlay,
     estimate_skew_degrees,
-    group_blocks,
-    group_rows,
-    mark_tables,
     nms_prune,
     rotate_boxes,
 )
+from plancheck.grouping import (
+    group_notes_columns,
+    link_continued_columns,
+    mark_headers,
+    mark_notes,
+)
+from plancheck.overlay import draw_lines_overlay
 
 
 def make_run_dir(name: str | None = None) -> Path:
@@ -83,8 +88,10 @@ def summarize(blocks: list[BlockCluster]) -> None:
     print(f"Marked tables: {table_count}")
     for i, blk in enumerate(blocks, start=1):
         x0, y0, x1, y1 = blk.bbox()
+        num_items = len(blk.lines) if blk.lines else len(blk.rows)
+        item_label = "lines" if blk.lines else "rows"
         print(
-            f"Block {i}: rows={len(blk.rows)} table={blk.is_table} bbox=({x0:.1f},{y0:.1f},{x1:.1f},{y1:.1f})"
+            f"Block {i}: {item_label}={num_items} table={blk.is_table} bbox=({x0:.1f},{y0:.1f},{x1:.1f},{y1:.1f})"
         )
 
 
@@ -122,23 +129,28 @@ def main() -> None:
         skew = estimate_skew_degrees(boxes, cfg.max_skew_degrees)
         boxes = rotate_boxes(boxes, -skew, page_w, page_h)
 
-    rows = group_rows(boxes, cfg)
-    blocks = group_blocks(rows, cfg)
-    mark_tables(blocks, cfg)
+    # v2 pipeline: row-truth first, then non-destructive column detection
+    blocks = build_clusters_v2(boxes, page_h, cfg)
+
+    # Block-level header detection
+    mark_headers(blocks)
+    mark_notes(blocks)
+    notes_columns = group_notes_columns(blocks, cfg=cfg)
+    link_continued_columns(notes_columns, blocks=blocks, cfg=cfg)
 
     # Save JSON of boxes used.
     boxes_path = run_dir / "artifacts" / f"{pdf_stem}_page_{args.page}_boxes.json"
     save_boxes_json(boxes, boxes_path)
 
-    # Save overlay.
+    # Save overlay using v2 lines overlay.
     overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{args.page}_overlay.png"
     scale = args.resolution / 72.0  # PDF user units are 1/72 inch.
-    draw_overlay(
+    all_lines = [ln for blk in blocks for ln in (blk.lines or [])]
+    draw_lines_overlay(
         page_width=page_w,
         page_height=page_h,
-        boxes=boxes,
-        rows=rows,
-        blocks=blocks,
+        lines=all_lines,
+        tokens=boxes,
         out_path=overlay_path,
         scale=scale,
         background=bg_img,
@@ -159,9 +171,10 @@ def main() -> None:
         "skew_degrees": skew if cfg.enable_skew else 0.0,
         "counts": {
             "boxes": len(boxes),
-            "rows": len(rows),
+            "lines": sum(len(blk.lines or []) for blk in blocks),
             "blocks": len(blocks),
             "tables": sum(1 for b in blocks if b.is_table),
+            "notes_columns": len(notes_columns),
         },
         "artifacts": {
             "boxes_json": str(boxes_path),

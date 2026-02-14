@@ -26,6 +26,17 @@ except ImportError:
     draw_symbol_overlay = None  # type: ignore[assignment]
     extract_vocr_tokens = None  # type: ignore[assignment]
 
+from .export import (
+    export_abbreviations_csv,
+    export_blocks_csv,
+    export_from_manifest,
+    export_legends_csv,
+    export_notes_csv,
+    export_page_results,
+    export_page_summary_csv,
+    export_revisions_csv,
+    export_standard_details_csv,
+)
 from .ocr_preprocess_pipeline import (
     OcrPreprocessConfig,
     OcrPreprocessResult,
@@ -41,6 +52,7 @@ from .pipeline import (
     run_stage,
 )
 from .preprocess import estimate_skew_degrees, nms_prune, rotate_boxes
+from .zoning import PageZone, ZoneTag, classify_blocks, detect_zones, zone_summary
 
 __all__ = [
     "GroupingConfig",
@@ -72,4 +84,18 @@ __all__ = [
     "gate",
     "run_stage",
     "input_fingerprint",
+    "PageZone",
+    "ZoneTag",
+    "detect_zones",
+    "classify_blocks",
+    "zone_summary",
+    "export_page_results",
+    "export_page_summary_csv",
+    "export_notes_csv",
+    "export_abbreviations_csv",
+    "export_legends_csv",
+    "export_standard_details_csv",
+    "export_revisions_csv",
+    "export_blocks_csv",
+    "export_from_manifest",
 ]

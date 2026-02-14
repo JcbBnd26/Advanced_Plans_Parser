@@ -70,6 +70,8 @@ from plancheck import (
     Line,
     StageResult,
     build_clusters_v2,
+    classify_blocks,
+    detect_zones,
     draw_reconcile_debug,
     draw_symbol_overlay,
     estimate_skew_degrees,
@@ -81,7 +83,9 @@ from plancheck import (
     reconcile_ocr,
     rotate_boxes,
     run_stage,
+    zone_summary,
 )
+from plancheck.export import export_page_results
 from plancheck.grouping import (
     compute_median_space_gap,
     group_notes_columns,
@@ -993,6 +997,23 @@ def process_page(
     ]
     std_details_path.write_text(json.dumps(std_details_serialized, indent=2))
 
+    # ── Zoning: detect semantic page zones ─────────────────────────────
+    page_zones = detect_zones(
+        page_width=page_w,
+        page_height=page_h,
+        blocks=blocks,
+        notes_columns=notes_columns,
+        legend_bboxes=[leg.bbox() for leg in legend_regions],
+        abbreviation_bboxes=[ab.bbox() for ab in abbreviation_regions],
+        revision_bboxes=[rev.bbox() for rev in revision_regions],
+        detail_bboxes=[sd.bbox() for sd in standard_detail_regions],
+        cfg=cfg,
+    )
+    block_zone_map = classify_blocks(blocks, page_zones)
+
+    zones_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_zones.json"
+    zones_path.write_text(json.dumps(zone_summary(page_zones), indent=2))
+
     # Build the lines/spans overlay as the primary overlay (v2 pipeline)
     all_lines = [ln for blk in blocks for ln in (blk.lines or [])]
     overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
@@ -1100,7 +1121,9 @@ def process_page(
             "abbreviations_json": str(abbrev_path),
             "revisions_json": str(revisions_path),
             "standard_details_json": str(std_details_path),
+            "zones_json": str(zones_path),
         },
+        "zones": zone_summary(page_zones),
     }
     if ocr_reconcile_debug_path:
         page_result["artifacts"]["ocr_reconcile_png"] = str(ocr_reconcile_debug_path)
@@ -1113,6 +1136,13 @@ def process_page(
     ):
         inj_log = reconcile_result.stats.get("injection_log", [])
         page_result["ocr_injection_log"] = inj_log[:50]
+
+    # ── Export structured CSVs ────────────────────────────────────────
+    try:
+        page_exports = export_page_results(page_result, run_dir, pdf_stem)
+        page_result["exports"] = page_exports
+    except Exception as exc:  # pragma: no cover
+        print(f"  page {page_num}: export warning: {exc}", flush=True)
 
     print(f"  page {page_num}: done", flush=True)
     print(summarize(blocks), flush=True)
