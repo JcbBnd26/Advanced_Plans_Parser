@@ -154,6 +154,7 @@ def main() -> None:
         out_path=overlay_path,
         scale=scale,
         background=bg_img,
+        cfg=cfg,
     )
 
     # Manifest

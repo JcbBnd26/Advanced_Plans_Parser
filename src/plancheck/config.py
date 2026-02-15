@@ -1,6 +1,38 @@
 from dataclasses import dataclass
 
 
+class ConfigValidationError(ValueError):
+    """Raised when a GroupingConfig field has an invalid value."""
+
+
+def _check_range(
+    name: str, value: float, lo: float, hi: float, *, inclusive: bool = True
+) -> None:
+    if inclusive:
+        if not (lo <= value <= hi):
+            raise ConfigValidationError(f"{name}={value} out of range [{lo}, {hi}]")
+    else:
+        if not (lo < value < hi):
+            raise ConfigValidationError(f"{name}={value} out of range ({lo}, {hi})")
+
+
+def _check_positive(name: str, value: float) -> None:
+    if value <= 0:
+        raise ConfigValidationError(f"{name}={value} must be > 0")
+
+
+def _check_non_negative(name: str, value: float) -> None:
+    if value < 0:
+        raise ConfigValidationError(f"{name}={value} must be >= 0")
+
+
+def _check_odd(name: str, value: int, floor: int = 3) -> None:
+    if value < floor:
+        raise ConfigValidationError(f"{name}={value} must be >= {floor}")
+    if value % 2 == 0:
+        raise ConfigValidationError(f"{name}={value} must be odd")
+
+
 @dataclass
 class GroupingConfig:
     """Tunables for geometry-first grouping."""
@@ -287,6 +319,14 @@ class GroupingConfig:
     overlay_label_bg_alpha: int = 200
     # Fill alpha (0–255) for table block overlays.
     overlay_table_fill_alpha: int = 60
+    # Outline width (px) for individual glyph-box overlays.
+    overlay_glyph_outline_width: int = 1
+    # Outline width (px) for block-level overlays (rows, blocks, headers).
+    overlay_block_outline_width: int = 3
+    # Outline width (px) for region-level overlays (legend, notes-column, revision, etc.).
+    overlay_region_outline_width: int = 4
+    # Outline width (px) for span / entry sub-element overlays.
+    overlay_span_outline_width: int = 2
     # Y-overlap ratio to count two elements on the same line.
     overlay_same_line_overlap: float = 0.5
     # Proximity (pts) tolerance for misc-title same-line detection.
@@ -295,3 +335,118 @@ class GroupingConfig:
     # ── Preprocessing (deskew) ─────────────────────────────────────────
     # Minimum detected skew angle (degrees) below which no rotation is applied.
     preprocess_min_rotation: float = 0.01
+
+    def __post_init__(self) -> None:
+        """Validate field ranges to catch misconfiguration early."""
+        # -- Thresholds that must be in [0, 1] --
+        _unit = [
+            "iou_prune",
+            "tocr_dedup_iou",
+            "vocr_min_confidence",
+            "vocr_tile_overlap",
+            "vocr_tile_dedup_iou",
+            "ocr_reconcile_confidence",
+            "ocr_reconcile_iou_threshold",
+            "ocr_reconcile_digit_ratio",
+            "ocr_reconcile_accept_iou",
+            "ocr_reconcile_accept_coverage",
+            "grouping_line_overlap_ratio",
+            "grouping_space_gap_percentile",
+            "grouping_note_majority",
+            "table_regular_tol",
+            "content_band_top",
+            "content_band_bottom",
+            "overlay_same_line_overlap",
+            "tocr_mojibake_threshold",
+            "font_metrics_confidence_min",
+        ]
+        for name in _unit:
+            _check_range(name, getattr(self, name), 0.0, 1.0)
+
+        # -- Strictly positive floats --
+        _pos_floats = [
+            "horizontal_tol_mult",
+            "vertical_tol_mult",
+            "row_gap_mult",
+            "block_gap_mult",
+            "max_block_height_mult",
+            "row_split_gap_mult",
+            "column_gap_mult",
+            "span_gap_mult",
+            "max_row_width_mult",
+            "tocr_x_tolerance",
+            "tocr_y_tolerance",
+            "vocrpp_clahe_clip_limit",
+            "font_metrics_inflation_threshold",
+        ]
+        for name in _pos_floats:
+            _check_positive(name, getattr(self, name))
+
+        # -- Non-negative floats --
+        _nn_floats = [
+            "max_skew_degrees",
+            "ocr_reconcile_proximity_pts",
+            "ocr_reconcile_anchor_margin",
+            "ocr_reconcile_accept_proximity",
+            "ocr_reconcile_char_width_fallback",
+            "grouping_space_gap_fallback",
+            "preprocess_min_rotation",
+        ]
+        for name in _nn_floats:
+            _check_non_negative(name, getattr(self, name))
+
+        # -- Positive ints --
+        _pos_ints = [
+            "grouping_histogram_bins",
+            "grouping_note_max_rows",
+            "ocr_reconcile_max_debug",
+            "font_metrics_min_samples",
+            "overlay_glyph_outline_width",
+            "overlay_block_outline_width",
+            "overlay_region_outline_width",
+            "overlay_span_outline_width",
+        ]
+        for name in _pos_ints:
+            val = getattr(self, name)
+            if val < 1:
+                raise ConfigValidationError(f"{name}={val} must be >= 1")
+
+        # -- DPI / resolution must be positive when set --
+        if self.ocr_reconcile_resolution < 1:
+            raise ConfigValidationError(
+                f"ocr_reconcile_resolution={self.ocr_reconcile_resolution} must be >= 1"
+            )
+
+        # -- Odd kernel sizes --
+        if self.vocrpp_median_denoise:
+            _check_odd("vocrpp_median_kernel", self.vocrpp_median_kernel, floor=3)
+        if self.vocrpp_adaptive_binarize:
+            _check_odd(
+                "vocrpp_binarize_block_size", self.vocrpp_binarize_block_size, floor=3
+            )
+
+        # -- VOCR model tier must be known --
+        if self.vocr_model_tier not in ("mobile", "server"):
+            raise ConfigValidationError(
+                f"vocr_model_tier={self.vocr_model_tier!r} must be 'mobile' or 'server'"
+            )
+
+        # -- content_band ordering --
+        if self.content_band_top >= self.content_band_bottom:
+            raise ConfigValidationError(
+                f"content_band_top ({self.content_band_top}) must be < "
+                f"content_band_bottom ({self.content_band_bottom})"
+            )
+
+        # -- Alpha ranges 0-255 --
+        for name in ("overlay_label_bg_alpha", "overlay_table_fill_alpha"):
+            val = getattr(self, name)
+            if not (0 <= val <= 255):
+                raise ConfigValidationError(f"{name}={val} out of range [0, 255]")
+
+        # -- Dark threshold 0-255 --
+        if not (0 <= self.font_metrics_dark_threshold <= 255):
+            raise ConfigValidationError(
+                f"font_metrics_dark_threshold={self.font_metrics_dark_threshold} "
+                f"out of range [0, 255]"
+            )

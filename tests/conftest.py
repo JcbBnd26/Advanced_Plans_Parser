@@ -3,7 +3,7 @@
 import pytest
 
 from plancheck.config import GroupingConfig
-from plancheck.models import BlockCluster, GlyphBox, Line, RowBand, Span
+from plancheck.models import BlockCluster, GlyphBox, GraphicElement, Line, RowBand, Span
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -19,6 +19,48 @@ def make_box(
 ) -> GlyphBox:
     """Create a GlyphBox with sane defaults."""
     return GlyphBox(page=page, x0=x0, y0=y0, x1=x1, y1=y1, text=text, origin=origin)
+
+
+def make_block(
+    texts: list[tuple[float, float, float, float, str]],
+    page: int = 0,
+    is_header: bool = False,
+    is_table: bool = False,
+) -> BlockCluster:
+    """Build a BlockCluster from a list of (x0, y0, x1, y1, text) tuples.
+
+    Each unique y0 value creates a separate RowBand.  Text tuples sharing
+    the same y0 are grouped into the same row.
+    """
+    from collections import defaultdict
+
+    row_map: dict[float, list[GlyphBox]] = defaultdict(list)
+    for x0, y0, x1, y1, text in texts:
+        row_map[y0].append(make_box(x0, y0, x1, y1, text, page=page))
+
+    rows = [RowBand(page=page, boxes=boxes) for _, boxes in sorted(row_map.items())]
+    return BlockCluster(page=page, rows=rows, is_header=is_header, is_table=is_table)
+
+
+def make_graphic(
+    element_type: str = "rect",
+    x0: float = 0.0,
+    y0: float = 0.0,
+    x1: float = 10.0,
+    y1: float = 10.0,
+    page: int = 0,
+    **kwargs,
+) -> GraphicElement:
+    """Create a GraphicElement with sane defaults."""
+    return GraphicElement(
+        page=page,
+        element_type=element_type,
+        x0=x0,
+        y0=y0,
+        x1=x1,
+        y1=y1,
+        **kwargs,
+    )
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────

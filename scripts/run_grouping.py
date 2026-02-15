@@ -93,6 +93,7 @@ def main() -> None:
             blocks=blocks,
             out_path=args.overlay,
             scale=args.scale,
+            cfg=cfg,
         )
         print(f"Overlay saved to {args.overlay}")
 

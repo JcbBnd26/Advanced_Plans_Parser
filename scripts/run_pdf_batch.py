@@ -804,73 +804,82 @@ def process_page(
     # Extract graphics and detect legends
     graphics = extract_graphics(str(pdf), page_num)
 
-    # Detect abbreviation regions FIRST (pure text, no graphics)
-    abbreviation_regions = detect_abbreviation_regions(
-        blocks=blocks,
-        graphics=graphics,
-        page_width=page_w,
-        page_height=page_h,
-        debug_path=debug_path,
-        cfg=cfg,
-    )
+    # Set up file-based logging for legends module (mirrors old debug_path behaviour)
+    import logging as _logging
 
-    # Get exclusion zones from abbreviation regions
-    exclusion_zones = [abbrev.bbox() for abbrev in abbreviation_regions]
+    _legends_logger = _logging.getLogger("plancheck.legends")
+    _legends_fh = _logging.FileHandler(debug_path, mode="a", encoding="utf-8")
+    _legends_fh.setLevel(_logging.DEBUG)
+    _legends_fh.setFormatter(_logging.Formatter("[DEBUG] %(message)s"))
+    _legends_logger.addHandler(_legends_fh)
+    _legends_logger.setLevel(_logging.DEBUG)
 
-    # Detect misc title regions (e.g., 'OKLAHOMA DEPARTMENT OF TRANSPORTATION')
-    misc_title_regions = detect_misc_title_regions(
-        blocks=blocks,
-        graphics=graphics,
-        page_width=page_w,
-        page_height=page_h,
-        debug_path=debug_path,
-        exclusion_zones=exclusion_zones,
-        cfg=cfg,
-    )
+    try:
+        # Detect abbreviation regions FIRST (pure text, no graphics)
+        abbreviation_regions = detect_abbreviation_regions(
+            blocks=blocks,
+            graphics=graphics,
+            page_width=page_w,
+            page_height=page_h,
+            cfg=cfg,
+        )
 
-    # Add misc title regions to exclusion zones
-    for mt in misc_title_regions:
-        exclusion_zones.append(mt.bbox())
+        # Get exclusion zones from abbreviation regions
+        exclusion_zones = [abbrev.bbox() for abbrev in abbreviation_regions]
 
-    # Detect revision regions BEFORE legends (title block element)
-    revision_regions = detect_revision_regions(
-        blocks=blocks,
-        graphics=graphics,
-        page_width=page_w,
-        page_height=page_h,
-        debug_path=debug_path,
-        exclusion_zones=exclusion_zones,
-        cfg=cfg,
-    )
+        # Detect misc title regions (e.g., 'OKLAHOMA DEPARTMENT OF TRANSPORTATION')
+        misc_title_regions = detect_misc_title_regions(
+            blocks=blocks,
+            graphics=graphics,
+            page_width=page_w,
+            page_height=page_h,
+            exclusion_zones=exclusion_zones,
+            cfg=cfg,
+        )
 
-    # Add revision regions to exclusion zones for legend detection
-    for rev in revision_regions:
-        exclusion_zones.append(rev.bbox())
+        # Add misc title regions to exclusion zones
+        for mt in misc_title_regions:
+            exclusion_zones.append(mt.bbox())
 
-    # Filter graphics to exclude those in abbreviation/revision regions
-    filtered_graphics = filter_graphics_outside_regions(graphics, exclusion_zones)
+        # Detect revision regions BEFORE legends (title block element)
+        revision_regions = detect_revision_regions(
+            blocks=blocks,
+            graphics=graphics,
+            page_width=page_w,
+            page_height=page_h,
+            exclusion_zones=exclusion_zones,
+            cfg=cfg,
+        )
 
-    # Now detect legend regions with filtered graphics AND exclusion zones for text
-    legend_regions = detect_legend_regions(
-        blocks=blocks,
-        graphics=filtered_graphics,
-        page_width=page_w,
-        page_height=page_h,
-        debug_path=debug_path,
-        exclusion_zones=exclusion_zones,
-        cfg=cfg,
-    )
+        # Add revision regions to exclusion zones for legend detection
+        for rev in revision_regions:
+            exclusion_zones.append(rev.bbox())
 
-    # Detect standard detail regions (similar to abbreviations - two-column text)
-    standard_detail_regions = detect_standard_detail_regions(
-        blocks=blocks,
-        graphics=graphics,
-        page_width=page_w,
-        page_height=page_h,
-        debug_path=debug_path,
-        exclusion_zones=exclusion_zones,
-        cfg=cfg,
-    )
+        # Filter graphics to exclude those in abbreviation/revision regions
+        filtered_graphics = filter_graphics_outside_regions(graphics, exclusion_zones)
+
+        # Now detect legend regions with filtered graphics AND exclusion zones for text
+        legend_regions = detect_legend_regions(
+            blocks=blocks,
+            graphics=filtered_graphics,
+            page_width=page_w,
+            page_height=page_h,
+            exclusion_zones=exclusion_zones,
+            cfg=cfg,
+        )
+
+        # Detect standard detail regions (similar to abbreviations - two-column text)
+        standard_detail_regions = detect_standard_detail_regions(
+            blocks=blocks,
+            graphics=graphics,
+            page_width=page_w,
+            page_height=page_h,
+            exclusion_zones=exclusion_zones,
+            cfg=cfg,
+        )
+    finally:
+        _legends_logger.removeHandler(_legends_fh)
+        _legends_fh.close()
 
     # Save abbreviation regions
     abbrev_path = (
@@ -1026,6 +1035,7 @@ def process_page(
         out_path=overlay_path,
         scale=scale,
         background=bg_img,
+        cfg=cfg,
     )
 
     # OCR reconcile debug overlay

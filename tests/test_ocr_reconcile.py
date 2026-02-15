@@ -5,12 +5,22 @@ from conftest import make_box
 
 from plancheck.config import GroupingConfig
 from plancheck.ocr_reconcile import (
+    SymbolCandidate,
+    _accept_candidates,
+    _build_match_index,
+    _center,
+    _dedup_tiles,
+    _estimate_char_width,
     _extra_symbols,
     _find_line_neighbours,
+    _generate_symbol_candidates,
     _has_allowed_symbol,
     _has_digit_neighbour_left,
     _has_numeric_symbol_context,
+    _iou,
     _is_digit_group,
+    _overlap_ratio,
+    _overlaps_existing,
 )
 
 
@@ -134,3 +144,208 @@ class TestFindLineNeighbours:
         cfg = GroupingConfig()
         result = _find_line_neighbours(ocr_box, tokens, anchor_margin=25.0, cfg=cfg)
         assert len(result) == 0
+
+
+# =====================================================================
+# Deeper geometry & pipeline coverage
+# =====================================================================
+
+
+class TestIoU:
+    def test_identical_boxes(self):
+        a = make_box(0, 0, 10, 10, "")
+        assert _iou(a, a) == pytest.approx(1.0)
+
+    def test_no_overlap(self):
+        a = make_box(0, 0, 10, 10, "")
+        b = make_box(20, 20, 30, 30, "")
+        assert _iou(a, b) == 0.0
+
+    def test_partial_overlap(self):
+        a = make_box(0, 0, 10, 10, "")
+        b = make_box(5, 0, 15, 10, "")
+        # Inter = 5*10 = 50; union = 100+100-50 = 150
+        assert _iou(a, b) == pytest.approx(50.0 / 150.0)
+
+    def test_contained(self):
+        outer = make_box(0, 0, 20, 20, "")
+        inner = make_box(5, 5, 10, 10, "")
+        # Inter = 5*5 = 25; union = 400+25-25 = 400
+        assert _iou(outer, inner) == pytest.approx(25.0 / 400.0)
+
+
+class TestOverlapRatio:
+    def test_full_coverage(self):
+        a = make_box(5, 5, 10, 10, "")
+        b = make_box(0, 0, 20, 20, "")
+        # b fully covers a → ratio = a.area / a.area = 1.0
+        assert _overlap_ratio(a, b) == pytest.approx(1.0)
+
+    def test_no_coverage(self):
+        a = make_box(0, 0, 10, 10, "")
+        b = make_box(20, 20, 30, 30, "")
+        assert _overlap_ratio(a, b) == 0.0
+
+    def test_zero_area(self):
+        a = make_box(5, 5, 5, 5, "")  # zero-area
+        b = make_box(0, 0, 10, 10, "")
+        assert _overlap_ratio(a, b) == 0.0
+
+
+class TestCenter:
+    def test_simple(self):
+        b = make_box(10, 20, 30, 40, "")
+        cx, cy = _center(b)
+        assert cx == 20.0
+        assert cy == 30.0
+
+
+class TestOverlapsExisting:
+    def test_no_overlap(self):
+        cand = make_box(100, 100, 110, 110, "%")
+        tokens = [make_box(0, 0, 10, 10, "A")]
+        assert _overlaps_existing(cand, tokens) is False
+
+    def test_high_iou_overlap(self):
+        cand = make_box(0, 0, 10, 10, "%")
+        tokens = [make_box(1, 1, 11, 11, "A")]
+        assert _overlaps_existing(cand, tokens) is True
+
+    def test_empty_tokens(self):
+        cand = make_box(0, 0, 10, 10, "%")
+        assert _overlaps_existing(cand, []) is False
+
+
+class TestEstimateCharWidth:
+    def test_normal(self):
+        tokens = [
+            make_box(0, 0, 50, 10, "HELLO", origin="text"),  # 50/5 = 10
+            make_box(60, 0, 90, 10, "HI", origin="text"),  # 30/2 = 15
+        ]
+        w = _estimate_char_width(tokens)
+        # median of [10, 15] = 12.5
+        assert w == pytest.approx(12.5)
+
+    def test_empty_fallback(self):
+        cfg = GroupingConfig()
+        w = _estimate_char_width([], cfg)
+        assert w == cfg.ocr_reconcile_char_width_fallback
+
+    def test_zero_width_excluded(self):
+        tokens = [make_box(5, 0, 5, 10, "A", origin="text")]  # zero width
+        cfg = GroupingConfig()
+        w = _estimate_char_width(tokens, cfg)
+        assert w == cfg.ocr_reconcile_char_width_fallback
+
+
+class TestDedupTiles:
+    def test_no_dups(self):
+        a = make_box(0, 0, 10, 10, "A")
+        b = make_box(50, 50, 60, 60, "B")
+        out, confs = _dedup_tiles([a, b], [0.9, 0.8])
+        assert len(out) == 2
+
+    def test_duplicate_keeps_higher_conf(self):
+        a = make_box(0, 0, 10, 10, "A")
+        b = make_box(1, 1, 11, 11, "B")  # heavy overlap
+        out, confs = _dedup_tiles([a, b], [0.7, 0.95])
+        assert len(out) == 1
+        assert out[0].text == "B"
+        assert confs[0] == 0.95
+
+    def test_single_token(self):
+        a = make_box(0, 0, 10, 10, "X")
+        out, confs = _dedup_tiles([a], [0.5])
+        assert len(out) == 1
+
+    def test_empty(self):
+        out, confs = _dedup_tiles([], [])
+        assert out == []
+        assert confs == []
+
+
+class TestBuildMatchIndex:
+    def test_matched_tokens(self):
+        ocr_tokens = [make_box(0, 0, 10, 10, "85%", origin="ocr_full")]
+        pdf_tokens = [make_box(0, 0, 10, 10, "85", origin="text")]
+        cfg = GroupingConfig()
+        matches = _build_match_index(ocr_tokens, [0.9], pdf_tokens, cfg)
+        assert len(matches) == 1
+        assert matches[0].match_type == "iou"
+        assert matches[0].ocr_confidence == 0.9
+
+    def test_unmatched_token(self):
+        ocr_tokens = [make_box(500, 500, 510, 510, "XYZ", origin="ocr_full")]
+        pdf_tokens = [make_box(0, 0, 10, 10, "85", origin="text")]
+        cfg = GroupingConfig()
+        matches = _build_match_index(ocr_tokens, [0.8], pdf_tokens, cfg)
+        assert len(matches) == 1
+        assert matches[0].match_type == "unmatched"
+
+
+class TestGenerateSymbolCandidates:
+    def test_slash_between_digits(self):
+        """OCR sees '09/15' → should generate a slash candidate between two digit anchors."""
+        ocr_box = make_box(10, 100, 60, 112, "09/15", origin="ocr_full")
+        pdf_tokens = [
+            make_box(10, 100, 28, 112, "09", origin="text"),
+            make_box(35, 100, 60, 112, "15", origin="text"),
+        ]
+        cfg = GroupingConfig()
+        candidates = _generate_symbol_candidates(ocr_box, pdf_tokens, cfg)
+        slash_cands = [c for c in candidates if c.symbol == "/"]
+        assert len(slash_cands) >= 1
+        assert slash_cands[0].slot_type == "between_digits"
+
+    def test_percent_after_digit(self):
+        ocr_box = make_box(10, 100, 50, 112, "85%", origin="ocr_full")
+        pdf_tokens = [make_box(10, 100, 35, 112, "85", origin="text")]
+        cfg = GroupingConfig()
+        candidates = _generate_symbol_candidates(ocr_box, pdf_tokens, cfg)
+        pct_cands = [c for c in candidates if c.symbol == "%"]
+        assert len(pct_cands) >= 1
+        assert pct_cands[0].slot_type == "after_digit"
+
+    def test_no_digit_anchors(self):
+        ocr_box = make_box(10, 100, 60, 112, "ABC/DEF", origin="ocr_full")
+        pdf_tokens = [make_box(10, 100, 60, 112, "ABCDEF", origin="text")]
+        cfg = GroupingConfig()
+        candidates = _generate_symbol_candidates(ocr_box, pdf_tokens, cfg)
+        assert candidates == []
+
+
+class TestAcceptCandidates:
+    def _make_candidate(self, symbol, x0, y0, x1, y1, ocr_box, anchor_right=None):
+        return SymbolCandidate(
+            symbol=symbol,
+            slot_type="after_digit",
+            x0=x0,
+            y0=y0,
+            x1=x1,
+            y1=y1,
+            ocr_source=ocr_box,
+            anchor_right=anchor_right,
+        )
+
+    def test_accepts_in_clear_area(self):
+        ocr = make_box(10, 100, 50, 112, "85%", origin="ocr_full")
+        anchor = make_box(10, 100, 35, 112, "85", origin="text")
+        cand = self._make_candidate("%", 36, 100, 44, 112, ocr, anchor_right=anchor)
+        result = _accept_candidates([cand], [anchor], page_width=600.0)
+        assert result[0].status == "accepted"
+
+    def test_rejects_out_of_bounds(self):
+        ocr = make_box(10, 100, 50, 112, "85%", origin="ocr_full")
+        cand = self._make_candidate("%", -5, 100, 3, 112, ocr)
+        result = _accept_candidates([cand], [], page_width=600.0)
+        assert result[0].status == "rejected"
+        assert result[0].reject_reason == "out_of_bounds"
+
+    def test_rejects_already_in_pdf(self):
+        ocr = make_box(10, 100, 50, 112, "85%", origin="ocr_full")
+        existing = make_box(38, 100, 44, 112, "%", origin="text")
+        cand = self._make_candidate("%", 38, 100, 44, 112, ocr)
+        cfg = GroupingConfig()
+        result = _accept_candidates([cand], [existing], page_width=600.0, cfg=cfg)
+        assert result[0].status == "rejected"
+        assert result[0].reject_reason == "already_in_pdf"
