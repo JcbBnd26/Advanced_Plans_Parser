@@ -143,23 +143,9 @@ def _draw_label(
     draw.text((x, y - font_size - 2), label, fill=text_color, font=font)
 
 
-# Palette for column bands — distinct, semi-transparent colors
-_COL_PALETTE = [
-    (255, 0, 0, 50),  # red
-    (0, 180, 0, 50),  # green
-    (0, 0, 255, 50),  # blue
-    (255, 165, 0, 50),  # orange
-    (128, 0, 255, 50),  # purple
-    (0, 200, 200, 50),  # cyan
-    (200, 200, 0, 50),  # yellow
-    (255, 0, 180, 50),  # magenta
-]
-
-
 def draw_columns_overlay(
     page_width: float,
     page_height: float,
-    col_boundaries: List[float],
     blocks: List[BlockCluster],
     tokens: List[GlyphBox],
     out_path: Path,
@@ -167,15 +153,14 @@ def draw_columns_overlay(
     background: Image.Image | None = None,
     cfg: GroupingConfig | None = None,
 ) -> None:
-    """Render column bands & block outlines colour-coded by column.
+    """Render block outlines colour-coded by semantic type.
 
-    Each column band is drawn as a full-height semi-transparent rectangle.
-    Block outlines are drawn in the same colour as their column.
+    No histogram column bands are drawn.  Each block is outlined and
+    labelled with its semantic type: H=header, N=notes, T=table, B=regular.
 
     Args:
         page_width:  Page width in PDF points
         page_height: Page height in PDF points
-        col_boundaries: Sorted list of column boundary x-positions
         blocks:  BlockClusters (with lines populated)
         tokens:  Full token list (needed for bbox computation)
         out_path: Destination PNG path
@@ -206,64 +191,39 @@ def draw_columns_overlay(
     except (OSError, IOError):
         font = ImageFont.load_default()
 
-    # Build column edge list: [page_left, *boundaries, page_right]
-    edges = [0.0] + sorted(col_boundaries) + [page_width]
-    n_cols = len(edges) - 1
+    # Colour map by semantic type
+    _type_colors = {
+        "H": (255, 0, 0, 220),      # red for headers
+        "N": (0, 0, 255, 220),      # blue for notes
+        "T": (255, 165, 0, 220),    # orange for tables
+        "B": (0, 180, 0, 150),      # green for regular blocks
+    }
 
-    # Draw semi-transparent column bands
-    for ci in range(n_cols):
-        color = _COL_PALETTE[ci % len(_COL_PALETTE)]
-        sx0 = int(edges[ci] * scale)
-        sx1 = int(edges[ci + 1] * scale)
-        draw.rectangle([(sx0, 0), (sx1, img_h)], fill=color)
-
-        # Column label at top
-        label = f"Col {ci}"
-        lx = sx0 + 4
-        ly = 4
-        bbox_txt = draw.textbbox((lx, ly), label, font=font)
-        bg = (bbox_txt[0] - 1, bbox_txt[1] - 1, bbox_txt[2] + 1, bbox_txt[3] + 1)
-        draw.rectangle(bg, fill=(255, 255, 255, 220))
-        draw.text((lx, ly), label, fill=(color[0], color[1], color[2], 255), font=font)
-
-    # Draw column boundary lines (dashed-style solid red lines)
-    for bx in col_boundaries:
-        sx = int(bx * scale)
-        draw.line([(sx, 0), (sx, img_h)], fill=(255, 0, 0, 180), width=2)
-
-    # Draw block outlines colour-coded by their column
+    # Draw block outlines colour-coded by type
     for blk in blocks:
         bb = blk.bbox()
         if bb == (0, 0, 0, 0):
             continue
-        # Determine column id from first row/line
-        col_id = 0
-        if blk.rows and blk.rows[0].column_id is not None:
-            col_id = blk.rows[0].column_id
-        elif blk.lines and blk.lines[0].spans:
-            cid = blk.lines[0].spans[0].col_id
-            if cid is not None:
-                col_id = cid
 
-        color = _COL_PALETTE[col_id % len(_COL_PALETTE)]
-        outline = (color[0], color[1], color[2], 220)
+        # Determine block type label
+        if blk.is_header:
+            tag = "H"
+        elif blk.is_notes:
+            tag = "N"
+        elif blk.is_table:
+            tag = "T"
+        else:
+            tag = "B"
+
+        outline = _type_colors.get(tag, _type_colors["B"])
 
         bx0, by0, bx1, by1 = bb
         sx0, sy0 = int(bx0 * scale), int(by0 * scale)
         sx1, sy1 = int(bx1 * scale), int(by1 * scale)
         draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=outline, width=_block_w)
 
-        # Small label: block type + col
-        parts = []
-        if blk.is_header:
-            parts.append("H")
-        if blk.is_notes:
-            parts.append("N")
-        if blk.is_table:
-            parts.append("T")
-        if not parts:
-            parts.append("B")
-        label = f"{''.join(parts)} c{col_id}"
+        # Small label
+        label = tag
         bbox_txt = draw.textbbox((sx0, sy0 - font_size - 2), label, font=font)
         bg = (bbox_txt[0] - 1, bbox_txt[1] - 1, bbox_txt[2] + 1, bbox_txt[3] + 1)
         draw.rectangle(bg, fill=(255, 255, 255, 220))

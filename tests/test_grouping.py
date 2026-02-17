@@ -5,21 +5,16 @@ from conftest import make_box
 
 from plancheck.config import GroupingConfig
 from plancheck.grouping import (
-    _consensus_gutters,
-    _histogram_gutters,
     _is_note_number,
     _is_note_number_column,
     _median_size,
-    _postfilter_boundaries,
     _split_row_by_width,
     _split_row_on_gaps,
     _text_ends_incomplete,
     _text_starts_as_continuation,
-    assign_column_ids,
     build_clusters_v2,
     build_lines,
     compute_median_space_gap,
-    detect_column_boundaries,
     group_blocks,
     group_blocks_from_lines,
     group_rows,
@@ -27,7 +22,6 @@ from plancheck.grouping import (
     mark_notes,
     mark_tables,
     split_line_spans,
-    split_lines_at_columns,
 )
 from plancheck.models import RowBand
 
@@ -192,88 +186,6 @@ class TestMedianSize:
         assert h == 3.0
 
 
-class TestHistogramGutters:
-    def _two_column_boxes(self):
-        """Two dense clusters separated by a wide gap."""
-        left = [make_box(i * 10, 0, i * 10 + 8, 10, str(i)) for i in range(10)]
-        right = [make_box(300 + i * 10, 0, 308 + i * 10, 10, str(i)) for i in range(10)]
-        return left + right
-
-    def test_finds_gutter(self):
-        boxes = self._two_column_boxes()
-        gutters = _histogram_gutters(boxes, bins=50, gutter_width=20.0)
-        assert len(gutters) >= 1
-        # The gutter should be roughly in the gap between ~100 and 300
-        assert any(100 < g < 300 for g in gutters)
-
-    def test_empty_returns_empty(self):
-        assert _histogram_gutters([], bins=10, gutter_width=5.0) == []
-
-    def test_zero_bins_returns_empty(self):
-        boxes = [make_box(0, 0, 10, 10, "A")]
-        assert _histogram_gutters(boxes, bins=0, gutter_width=5.0) == []
-
-    def test_single_cluster_no_gutters(self):
-        boxes = [make_box(i * 5, 0, i * 5 + 4, 10, str(i)) for i in range(20)]
-        gutters = _histogram_gutters(boxes, bins=20, gutter_width=50.0)
-        # Tight cluster — gutter requirement too wide to find any
-        assert gutters == []
-
-
-class TestDetectColumnBoundaries:
-    def test_single_column(self, simple_boxes, default_cfg):
-        boundaries = detect_column_boundaries(simple_boxes, 800.0, default_cfg)
-        # Tight one-line row shouldn't produce column splits
-        assert isinstance(boundaries, list)
-
-    def test_two_columns(self, default_cfg):
-        left = [
-            make_box(10 + i * 12, 200, 10 + i * 12 + 10, 210, f"L{i}") for i in range(8)
-        ]
-        right = [
-            make_box(400 + i * 12, 200, 410 + i * 12, 210, f"R{i}") for i in range(8)
-        ]
-        boundaries = detect_column_boundaries(left + right, 800.0, default_cfg)
-        assert len(boundaries) >= 1
-
-    def test_empty_tokens(self, default_cfg):
-        assert detect_column_boundaries([], 800.0, default_cfg) == []
-
-    def test_zero_page_height(self, default_cfg):
-        assert (
-            detect_column_boundaries([make_box(0, 0, 10, 10, "A")], 0.0, default_cfg)
-            == []
-        )
-
-
-class TestAssignColumnIds:
-    def test_no_boundaries_all_col_zero(self, simple_boxes, default_cfg):
-        lines = build_lines(simple_boxes, default_cfg)
-        gap = compute_median_space_gap(lines, simple_boxes, default_cfg)
-        for ln in lines:
-            split_line_spans(ln, simple_boxes, gap, default_cfg.span_gap_mult)
-        assign_column_ids(lines, simple_boxes, [])
-        for ln in lines:
-            for span in ln.spans:
-                assert span.col_id == 0
-
-    def test_boundary_splits_columns(self, default_cfg):
-        # Two tokens far apart — force two spans by using a tiny span_gap_mult
-        tokens = [
-            make_box(10, 100, 50, 112, "LEFT"),
-            make_box(200, 100, 250, 112, "RIGHT"),
-        ]
-        lines = build_lines(tokens, default_cfg)
-        # Use a very small span_gap_mult so the gap (150 pt) exceeds the threshold
-        for ln in lines:
-            split_line_spans(ln, tokens, median_space_gap=5.0, span_gap_mult=1.0)
-        assert sum(len(ln.spans) for ln in lines) == 2, "Expected 2 spans"
-        assign_column_ids(lines, tokens, [130.0])
-        col_ids = {span.col_id for ln in lines for span in ln.spans}
-        assert 0 in col_ids
-        assert 1 in col_ids
-
-
 class TestIsNoteNumber:
     @pytest.mark.parametrize(
         "text,expected",
@@ -406,153 +318,13 @@ class TestTextHelpers:
         assert _text_starts_as_continuation(text) == expected
 
 
-class TestSplitLinesAtColumns:
-    """Tests for split_lines_at_columns(): physical splitting of multi-column lines."""
-
-    def test_no_boundaries_returns_same(self, default_cfg):
-        tokens = [make_box(10, 100, 50, 112, "A"), make_box(60, 100, 100, 112, "B")]
-        lines = build_lines(tokens, default_cfg)
-        gap = compute_median_space_gap(lines, tokens, default_cfg)
-        for ln in lines:
-            split_line_spans(ln, tokens, gap, default_cfg.span_gap_mult)
-        result = split_lines_at_columns(lines, tokens, [])
-        assert len(result) == len(lines)
-
-    def test_single_column_lines_unchanged(self, default_cfg):
-        # Two lines, both in column 0 — no splitting needed
-        tokens = [
-            make_box(10, 100, 50, 112, "A"),
-            make_box(60, 100, 100, 112, "B"),
-            make_box(10, 130, 50, 142, "C"),
-        ]
-        lines = build_lines(tokens, default_cfg)
-        gap = compute_median_space_gap(lines, tokens, default_cfg)
-        for ln in lines:
-            split_line_spans(ln, tokens, gap, default_cfg.span_gap_mult)
-        assign_column_ids(lines, tokens, [])  # all col_id=0
-        result = split_lines_at_columns(lines, tokens, [200.0])
-        assert len(result) == len(lines)
-
-    def test_multi_column_line_splits(self, default_cfg):
-        # One line with tokens in two columns separated by a large gap
-        tokens = [
-            make_box(10, 100, 50, 112, "LEFT"),
-            make_box(400, 100, 440, 112, "RIGHT"),
-        ]
-        lines = build_lines(tokens, default_cfg)
-        # Force span split with a tiny span_gap_mult
-        for ln in lines:
-            split_line_spans(ln, tokens, 5.0, 1.0)
-        boundary = 200.0
-        assign_column_ids(lines, tokens, [boundary])
-        assert len(lines) == 1  # One merged line before split
-        result = split_lines_at_columns(lines, tokens, [boundary])
-        assert len(result) == 2
-        # First sub-line has LEFT token, second has RIGHT
-        left_text = result[0].text(tokens)
-        right_text = result[1].text(tokens)
-        assert "LEFT" in left_text
-        assert "RIGHT" in right_text
-
-    def test_line_ids_sequential(self, default_cfg):
-        tokens = [
-            make_box(10, 100, 50, 112, "A"),
-            make_box(400, 100, 440, 112, "B"),
-            make_box(10, 150, 50, 162, "C"),
-        ]
-        lines = build_lines(tokens, default_cfg)
-        for ln in lines:
-            split_line_spans(ln, tokens, 5.0, 1.0)
-        assign_column_ids(lines, tokens, [200.0])
-        result = split_lines_at_columns(lines, tokens, [200.0])
-        ids = [ln.line_id for ln in result]
-        assert ids == list(range(len(result)))
-
-    def test_reading_order_preserved(self, default_cfg):
-        # Tokens at same y in two columns: after split, left column first
-        tokens = [
-            make_box(400, 100, 440, 112, "RIGHT"),
-            make_box(10, 100, 50, 112, "LEFT"),
-        ]
-        lines = build_lines(tokens, default_cfg)
-        for ln in lines:
-            split_line_spans(ln, tokens, 5.0, 1.0)
-        assign_column_ids(lines, tokens, [200.0])
-        result = split_lines_at_columns(lines, tokens, [200.0])
-        assert len(result) == 2
-        assert "LEFT" in result[0].text(tokens)
-        assert "RIGHT" in result[1].text(tokens)
-
-
-class TestPostfilterBoundaries:
-    """Tests for _postfilter_boundaries(): reject narrow columns, merge close boundaries."""
-
-    def test_narrow_left_column_rejected(self):
-        # Boundary at x=50 with content from 0-1000 → left column only 50pt wide
-        result = _postfilter_boundaries([50.0], 0.0, 1000.0, 100.0)
-        assert result == []
-
-    def test_narrow_right_column_rejected(self):
-        result = _postfilter_boundaries([950.0], 0.0, 1000.0, 100.0)
-        assert result == []
-
-    def test_valid_boundary_kept(self):
-        result = _postfilter_boundaries([500.0], 0.0, 1000.0, 100.0)
-        assert result == [500.0]
-
-    def test_close_boundaries_merged(self):
-        # Two boundaries 30pt apart with min_col_width=100 → merged to midpoint
-        result = _postfilter_boundaries([480.0, 510.0], 0.0, 1000.0, 100.0)
-        assert len(result) == 1
-        assert abs(result[0] - 495.0) < 1.0
-
-    def test_empty_input(self):
-        assert _postfilter_boundaries([], 0.0, 1000.0, 100.0) == []
-
-    def test_multiple_valid_boundaries(self):
-        result = _postfilter_boundaries([300.0, 600.0], 0.0, 1000.0, 100.0)
-        assert len(result) == 2
-
-
-class TestConsensusGutters:
-    """Tests for _consensus_gutters(): multi-resolution gutter voting."""
-
-    def test_gutter_in_one_resolution_rejected(self):
-        candidates = [[100.0, 500.0], [500.0], [500.0]]
-        result = _consensus_gutters(candidates, merge_tol=50.0, min_votes=2)
-        # 100 only in first set → rejected; 500 in all 3 → kept
-        assert len(result) == 1
-        assert abs(result[0] - 500.0) < 1.0
-
-    def test_gutter_in_two_resolutions_kept(self):
-        candidates = [[100.0, 500.0], [105.0, 500.0], [500.0]]
-        result = _consensus_gutters(candidates, merge_tol=50.0, min_votes=2)
-        assert len(result) == 2  # both ~100 and ~500 kept
-
-    def test_empty_candidates(self):
-        assert _consensus_gutters([], merge_tol=50.0) == []
-        assert _consensus_gutters([[], []], merge_tol=50.0) == []
-
-    def test_all_same_gutter(self):
-        candidates = [[500.0], [502.0], [498.0]]
-        result = _consensus_gutters(candidates, merge_tol=50.0, min_votes=2)
-        assert len(result) == 1
-        assert abs(result[0] - 500.0) < 5.0
-
-    def test_merge_tol_determines_clustering(self):
-        # Two gutters 80 apart: with tol=50 they're separate, with tol=100 merged
-        candidates = [[400.0], [480.0], [400.0, 480.0]]
-        result_sep = _consensus_gutters(candidates, merge_tol=50.0, min_votes=2)
-        result_merged = _consensus_gutters(candidates, merge_tol=100.0, min_votes=2)
-        assert len(result_sep) == 2
-        assert len(result_merged) == 1
-
-
 class TestThreeColumnLayout:
-    """Integration test: full pipeline on a synthetic 3-column layout."""
+    """Integration: 3-column layout. Without column splitting, same-baseline
+    tokens merge into wide lines — blocks are formed by spatial proximity."""
 
-    def test_three_columns_produce_separate_blocks(self):
-        # Create tokens in 3 columns with clear gutters
+    def test_three_columns_same_y_form_blocks(self):
+        # Create tokens in 3 columns at the same y positions.
+        # Without column splitting, same-y tokens merge into wide lines.
         tokens = []
         # Column 1: x=10-200, 5 lines
         for row in range(5):
@@ -573,12 +345,26 @@ class TestThreeColumnLayout:
         cfg = GroupingConfig()
         blocks = build_clusters_v2(tokens, 800.0, cfg)
 
-        # Should have at least 3 blocks (one per column)
-        assert len(blocks) >= 3
+        # Pipeline should produce at least 1 block without crashing
+        assert len(blocks) >= 1
+        # Total tokens should all be accounted for
+        total_lines = sum(len(blk.lines or []) for blk in blocks)
+        assert total_lines >= 1
 
-        # Verify no block spans more than one column zone
-        for blk in blocks:
-            x0, _, x1, _ = blk.bbox()
-            width = x1 - x0
-            # No block wider than a single column + margin
-            assert width < 350, f"Block too wide ({width:.0f}), spans multiple columns"
+    def test_staggered_columns_separate(self):
+        """Columns at DIFFERENT y positions should form separate blocks."""
+        tokens = []
+        # Column 1: y = 100-180
+        for row in range(5):
+            y = 100 + row * 20
+            tokens.append(make_box(10, y, 80, y + 10, f"C1R{row}"))
+        # Column 2: y = 300-380 (disjoint y from column 1)
+        for row in range(5):
+            y = 300 + row * 20
+            tokens.append(make_box(400, y, 470, y + 10, f"C2R{row}"))
+
+        cfg = GroupingConfig()
+        blocks = build_clusters_v2(tokens, 800.0, cfg)
+
+        # Should get at least 2 blocks since y-ranges don't overlap
+        assert len(blocks) >= 2

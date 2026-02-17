@@ -93,7 +93,6 @@ from plancheck._structural_boxes import (
 from plancheck.export import export_page_results
 from plancheck.grouping import (
     compute_median_space_gap,
-    detect_column_boundaries,
     group_notes_columns,
     link_continued_columns,
     mark_headers,
@@ -1129,13 +1128,11 @@ def process_page(
         cfg=cfg,
     )
 
-    # Column boundaries overlay
-    col_boundaries = detect_column_boundaries(boxes, page_h, cfg)
+    # Blocks overlay (semantic type: header/notes/table/regular)
     col_overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_columns.png"
     draw_columns_overlay(
         page_width=page_w,
         page_height=page_h,
-        col_boundaries=col_boundaries,
         blocks=blocks,
         tokens=boxes,
         out_path=col_overlay_path,
