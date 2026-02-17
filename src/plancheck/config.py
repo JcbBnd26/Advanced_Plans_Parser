@@ -54,9 +54,9 @@ class GroupingConfig:
     # Gap between columns (in median word widths) to split page into columns before row grouping.
     column_gap_mult: float = 1.2
     # Enable histogram-based gutter detection before gap-based splitting.
-    use_hist_gutter: bool = False
+    use_hist_gutter: bool = True
     # Minimum gutter width (in median word widths) for histogram-based column detection.
-    gutter_width_mult: float = 2.0
+    gutter_width_mult: float = 1.0
     # Maximum allowed column width (in median word widths) before forcing an internal split.
     max_column_width_mult: float = 15.0
     # Max row width relative to its column span; rows wider than this are split on largest gaps.
@@ -245,7 +245,8 @@ class GroupingConfig:
     # ── Grouping stage: histogram, lines & blocks ──────────────────────
     # Density threshold for histogram-based gutter detection.
     grouping_histogram_density: float = 0.08
-    # Number of histogram bins for gutter detection.
+    # Minimum number of histogram bins for gutter detection (actual count
+    # is adaptive: max(this, content_width / (median_w * 0.5))).
     grouping_histogram_bins: int = 80
     # Minimum vertical overlap ratio to merge two boxes into one line.
     grouping_line_overlap_ratio: float = 0.3

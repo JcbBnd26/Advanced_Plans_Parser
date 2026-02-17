@@ -75,6 +75,7 @@ class LegendRegion:
     entries: List[LegendEntry] = field(default_factory=list)
     is_boxed: bool = False  # Whether legend is enclosed in a rectangle
     box_bbox: Optional[Tuple[float, float, float, float]] = None
+    confidence: float = 0.0  # 0–1 detection confidence
 
     def header_text(self) -> str:
         if not self.header or not self.header.rows:
@@ -140,6 +141,7 @@ class AbbreviationRegion:
     entries: List[AbbreviationEntry] = field(default_factory=list)
     is_boxed: bool = False
     box_bbox: Optional[Tuple[float, float, float, float]] = None
+    confidence: float = 0.0  # 0–1 detection confidence
 
     def header_text(self) -> str:
         if not self.header or not self.header.rows:
@@ -193,6 +195,7 @@ class MiscTitleRegion:
     text_block: Optional[BlockCluster] = None
     is_boxed: bool = False
     box_bbox: Optional[Tuple[float, float, float, float]] = None
+    confidence: float = 0.0  # 0–1 detection confidence
 
     def bbox(self) -> Tuple[float, float, float, float]:
         if self.box_bbox:
@@ -211,6 +214,7 @@ class RevisionRegion:
     entries: List[RevisionEntry] = field(default_factory=list)
     is_boxed: bool = False
     box_bbox: Optional[Tuple[float, float, float, float]] = None
+    confidence: float = 0.0  # 0–1 detection confidence
 
     def header_text(self) -> str:
         if not self.header or not self.header.rows:
@@ -280,6 +284,7 @@ class StandardDetailRegion:
     entries: List[StandardDetailEntry] = field(default_factory=list)
     is_boxed: bool = False
     box_bbox: Optional[Tuple[float, float, float, float]] = None
+    confidence: float = 0.0  # 0–1 detection confidence
 
     def header_text(self) -> str:
         if not self.header or not self.header.rows:
@@ -319,6 +324,8 @@ class GlyphBox:
     y1: float
     text: str = ""
     origin: str = "text"
+    fontname: str = ""
+    font_size: float = 0.0
 
     def width(self) -> float:
         return self.x1 - self.x0

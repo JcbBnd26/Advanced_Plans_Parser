@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Plans Parser Pipeline</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: bold;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .pipeline-section {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            color: white;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+
+        .stage-card {
+            background: linear-gradient(135deg, var(--color) 0%, var(--glow) 100%);
+            border-radius: 12px;
+            padding: 20px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            margin-bottom: 15px;
+        }
+
+        .stage-card:hover {
+            transform: scale(1.02);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .stage-name {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .stage-desc {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        .badge {
+            margin-top: 10px;
+            font-size: 11px;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .arrow {
+            text-align: center;
+            margin: 10px 0;
+        }
+
+        .arrow-label {
+            font-size: 12px;
+            color: white;
+            margin-bottom: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 4px 12px;
+            border-radius: 12px;
+            display: inline-block;
+        }
+
+        .arrow-symbol {
+            font-size: 24px;
+            color: white;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .parallel-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        .parallel-badge {
+            position: absolute;
+            top: -45px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(251, 191, 36, 0.2);
+            color: #fbbf24;
+            padding: 6px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            border: 1px solid #fbbf24;
+            white-space: nowrap;
+        }
+
+        .parallel-arrows {
+            display: flex;
+            justify-content: center;
+            gap: 100px;
+            margin: 10px 0;
+        }
+
+        .parallel-arrows div {
+            font-size: 24px;
+            color: white;
+        }
+
+        .post-processing {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border-radius: 16px;
+            padding: 30px;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 30px;
+        }
+
+        .feature-card {
+            background: linear-gradient(135deg, var(--color) 0%, var(--glow) 100%);
+            border-radius: 12px;
+            padding: 20px;
+            color: white;
+        }
+
+        .feature-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .feature-desc {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        .info-box {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8fafc;
+            border-radius: 12px;
+            font-size: 13px;
+            color: #475569;
+        }
+
+        .info-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #1e293b;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            margin: 0;
+            font-size: 24px;
+        }
+
+        .close-btn {
+            background: transparent;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+        }
+
+        .close-btn:hover {
+            color: #000;
+        }
+
+        .modal-section {
+            margin-bottom: 20px;
+        }
+
+        .modal-section h3 {
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .modal-section ul {
+            margin: 0;
+            padding-left: 20px;
+            color: #666;
+        }
+
+        .detector-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 6px;
+        }
+
+        .detector-name {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .detector-desc {
+            font-size: 13px;
+            color: #666;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Advanced Plans Parser Pipeline</h1>
+        <p class="subtitle">Construction plan analysis with OCR symbol injection & intelligent grouping</p>
+
+        <div class="pipeline-section">
+            <h2 class="section-title">📋 Core OCR Pipeline (5 Stages)</h2>
+
+            <div class="stage-card" style="--color: #3b82f6; --glow: #60a5fa;" onclick="showDetails('ingest')">
+                <div class="stage-name">INGEST</div>
+                <div class="stage-desc">PDF rendering and initialization</div>
+                <div class="badge">Always runs</div>
+                <div class="badge">📚 pdfplumber • Pillow</div>
+            </div>
+
+            <div style="text-align: center; margin: 20px 0 10px 0;">
+                <div
+                    style="background: rgba(251, 191, 36, 0.2); color: #fbbf24; padding: 6px 12px; border-radius: 12px; font-size: 12px; font-weight: bold; border: 1px solid #fbbf24; display: inline-block;">
+                    ⚡ PARALLEL EXECUTION</div>
+            </div>
+
+            <div class="arrow">
+                <div class="arrow-label">Render PDF page</div>
+                <div class="arrow-symbol">↓</div>
+            </div>
+
+            <div class="parallel-container">
+                <div class="stage-card" style="--color: #10b981; --glow: #34d399;" onclick="showDetails('tocr')">
+                    <div class="stage-name">TOCR (Text OCR)</div>
+                    <div class="stage-desc">Text layer extraction from PDF</div>
+                    <div class="badge">⚡ Parallel with vocrpp</div>
+                    <div class="badge">📚 pdfplumber</div>
+                </div>
+                <div class="stage-card" style="--color: #f59e0b; --glow: #fbbf24;" onclick="showDetails('vocrpp')">
+                    <div class="stage-name">VOCRPP (Vision OCR Preprocess)</div>
+                    <div class="stage-desc">Image preprocessing for vision OCR</div>
+                    <div class="badge">⚡ Parallel with tocr</div>
+                    <div class="badge">📚 OpenCV • Pillow</div>
+                </div>
+            </div>
+
+            <div class="parallel-arrows">
+                <div>↓</div>
+                <div>↓</div>
+            </div>
+
+            <div class="stage-card" style="--color: #8b5cf6; --glow: #a78bfa;" onclick="showDetails('vocr')">
+                <div class="stage-name">VOCR (Vision OCR)</div>
+                <div class="stage-desc">PaddleOCR symbol extraction</div>
+                <div class="badge">📚 PaddleOCR</div>
+            </div>
+
+            <div class="arrow">
+                <div class="arrow-label">Extract vision tokens</div>
+                <div class="arrow-symbol">↓</div>
+            </div>
+
+            <div class="stage-card" style="--color: #ec4899; --glow: #f472b6;" onclick="showDetails('reconcile')">
+                <div class="stage-name">RECONCILE</div>
+                <div class="stage-desc">OCR symbol injection and merging</div>
+                <div class="badge">📚 NumPy • Regex</div>
+            </div>
+        </div>
+
+        <div class="arrow">
+            <div class="arrow-label">Merged tokens</div>
+            <div class="arrow-symbol">↓</div>
+        </div>
+
+        <div class="post-processing">
+            <h2 class="section-title">🔧 Post-Processing & Analysis</h2>
+
+            <div class="stage-card" style="--color: #06b6d4; --glow: #22d3ee;" onclick="showDetails('grouping')">
+                <div class="stage-name">GROUPING</div>
+                <div class="stage-desc">Build text clusters and structure</div>
+                <div class="badge">📚 NumPy • Custom algorithms</div>
+            </div>
+
+            <div class="stage-card" style="--color: #14b8a6; --glow: #2dd4bf;" onclick="showDetails('zoning')">
+                <div class="stage-name">ZONING & CLASSIFICATION</div>
+                <div class="stage-desc">Detect specialized regions</div>
+                <div class="badge">📚 pdfplumber • Pattern matching</div>
+            </div>
+
+            <div class="stage-card" style="--color: #6366f1; --glow: #818cf8;" onclick="showDetails('export')">
+                <div class="stage-name">EXPORT</div>
+                <div class="stage-desc">Generate output artifacts</div>
+                <div class="badge">📚 Pillow • JSON</div>
+            </div>
+        </div>
+
+        <div class="feature-grid">
+            <div class="feature-card" style="--color: #f59e0b; --glow: #fbbf24;">
+                <div class="feature-title">⚡ Parallel Processing</div>
+                <div class="feature-desc">TOCR and VOCRPP run simultaneously using ThreadPoolExecutor</div>
+            </div>
+            <div class="feature-card" style="--color: #ec4899; --glow: #f472b6;">
+                <div class="feature-title">🎯 Smart Symbol Detection</div>
+                <div class="feature-desc">Recovers CAD vector symbols (/, %, °, ±) invisible to text extraction</div>
+            </div>
+            <div class="feature-card" style="--color: #8b5cf6; --glow: #a78bfa;">
+                <div class="feature-title">🔄 Gated Execution</div>
+                <div class="feature-desc">Each stage checks dependencies and config before running</div>
+            </div>
+            <div class="feature-card" style="--color: #06b6d4; --glow: #22d3ee;">
+                <div class="feature-title">📊 Rich Diagnostics</div>
+                <div class="feature-desc">Detailed timing, counts, quality metrics, and rejection reasons</div>
+            </div>
+        </div>
+
+        <div class="info-box">
+            <div class="info-title">💡 Click any stage to see detailed inputs, outputs, and processing steps</div>
+            Pipeline processes construction/architectural plans from PDF to structured JSON with intelligent grouping,
+            zoning, and legend detection.
+        </div>
+
+        <div style="margin-top: 30px; padding: 30px; background: #f8fafc; border-radius: 12px;">
+            <h2 style="font-size: 20px; margin-bottom: 20px; color: #1e293b;">📚 Open Source Libraries</h2>
+
+            <div style="display: grid; gap: 15px;">
+                <div style="padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                    <div style="font-weight: bold; color: #1e293b; margin-bottom: 5px;">
+                        pdfplumber
+                        <a href="https://github.com/jsvine/pdfplumber" target="_blank"
+                            style="font-size: 12px; color: #3b82f6; text-decoration: none; margin-left: 10px;">GitHub
+                            →</a>
+                    </div>
+                    <div style="font-size: 13px; color: #64748b;">
+                        PDF text extraction, word boxes, font metrics, and graphics extraction. Used in INGEST, TOCR,
+                        and ZONING stages.
+                    </div>
+                </div>
+
+                <div style="padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                    <div style="font-weight: bold; color: #1e293b; margin-bottom: 5px;">
+                        Pillow (PIL)
+                        <a href="https://python-pillow.org/" target="_blank"
+                            style="font-size: 12px; color: #f59e0b; text-decoration: none; margin-left: 10px;">Website
+                            →</a>
+                    </div>
+                    <div style="font-size: 13px; color: #64748b;">
+                        Image processing library for rendering PDFs to images and generating debug overlays. Used in
+                        INGEST, VOCRPP, and EXPORT stages.
+                    </div>
+                </div>
+
+                <div style="padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #10b981;">
+                    <div style="font-weight: bold; color: #1e293b; margin-bottom: 5px;">
+                        OpenCV (cv2)
+                        <a href="https://opencv.org/" target="_blank"
+                            style="font-size: 12px; color: #10b981; text-decoration: none; margin-left: 10px;">Website
+                            →</a>
+                    </div>
+                    <div style="font-size: 13px; color: #64748b;">
+                        Computer vision library for image preprocessing: CLAHE enhancement, adaptive binarization,
+                        denoising, and sharpening. Used in VOCRPP stage.
+                    </div>
+                </div>
+
+                <div style="padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #8b5cf6;">
+                    <div style="font-weight: bold; color: #1e293b; margin-bottom: 5px;">
+                        PaddleOCR
+                        <a href="https://github.com/PaddlePaddle/PaddleOCR" target="_blank"
+                            style="font-size: 12px; color: #8b5cf6; text-decoration: none; margin-left: 10px;">GitHub
+                            →</a>
+                    </div>
+                    <div style="font-size: 13px; color: #64748b;">
+                        Deep learning OCR engine for detecting CAD vector symbols (/, %, °, ±) that are invisible to
+                        text extraction. Used in VOCR stage.
+                    </div>
+                </div>
+
+                <div style="padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #ec4899;">
+                    <div style="font-weight: bold; color: #1e293b; margin-bottom: 5px;">
+                        NumPy
+                        <a href="https://numpy.org/" target="_blank"
+                            style="font-size: 12px; color: #ec4899; text-decoration: none; margin-left: 10px;">Website
+                            →</a>
+                    </div>
+                    <div style="font-size: 13px; color: #64748b;">
+                        Numerical computing library for array operations, spatial calculations, and clustering
+                        algorithms. Used in RECONCILE and GROUPING stages.
+                    </div>
+                </div>
+
+                <div style="padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #06b6d4;">
+                    <div style="font-weight: bold; color: #1e293b; margin-bottom: 5px;">
+                        Python Standard Library (re, json)
+                        <a href="https://docs.python.org/3/library/" target="_blank"
+                            style="font-size: 12px; color: #06b6d4; text-decoration: none; margin-left: 10px;">Docs
+                            →</a>
+                    </div>
+                    <div style="font-size: 13px; color: #64748b;">
+                        Regular expressions for pattern matching and numeric context filtering, JSON for artifact
+                        serialization. Used throughout the pipeline.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal" class="modal" onclick="closeModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2 id="modalTitle" class="modal-title"></h2>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+
+    <script>
+        const stageData = {
+            ingest: {
+                name: 'INGEST',
+                color: '#3b82f6',
+                description: 'PDF rendering and initialization',
+                inputs: ['PDF file', 'Page number', 'Resolution (DPI)'],
+                outputs: ['Rendered page image', 'Page dimensions (width, height)'],
+                algorithms: ['pdfplumber', 'Pillow (PIL)']
+            },
+            tocr: {
+                name: 'TOCR (Text OCR)',
+                color: '#10b981',
+                description: 'Text layer extraction from PDF',
+                inputs: ['PDF file', 'Page number'],
+                outputs: ['Text boxes (GlyphBox[])', 'Font metrics', 'Token diagnostics', 'Quality metrics (density, mojibake)'],
+                algorithms: ['pdfplumber']
+            },
+            vocrpp: {
+                name: 'VOCRPP (Vision OCR Preprocess)',
+                color: '#f59e0b',
+                description: 'Image preprocessing for vision OCR',
+                inputs: ['Rendered page image', 'Preprocessing config'],
+                outputs: ['Preprocessed image', 'Applied transformations', 'Quality metrics'],
+                transforms: ['Grayscale conversion', 'Auto-contrast', 'CLAHE enhancement', 'Median denoising', 'Adaptive binarization', 'Sharpening'],
+                algorithms: ['OpenCV (cv2)', 'Pillow (PIL)']
+            },
+            vocr: {
+                name: 'VOCR (Vision OCR)',
+                color: '#8b5cf6',
+                description: 'PaddleOCR symbol extraction',
+                inputs: ['Preprocessed/raw image', 'Page dimensions'],
+                outputs: ['OCR tokens', 'Confidence scores', 'Symbol detection (/, %, °, ±)'],
+                engine: 'PaddleOCR',
+                algorithms: ['PaddleOCR']
+            },
+            reconcile: {
+                name: 'RECONCILE',
+                color: '#ec4899',
+                description: 'OCR symbol injection and merging',
+                inputs: ['Text boxes', 'OCR tokens', 'Page image'],
+                outputs: ['Merged token set', 'Injected symbols', 'Debug logs', 'Rejection reasons'],
+                phases: ['Phase 0: Numeric context filter', 'Phase 1a: Multi-slash generation', 'Phase 1b: Digit-group anchoring', 'Phase 2: Composite deferral', 'Phase 3: Traceable rejections'],
+                algorithms: ['NumPy', 'Custom regex patterns']
+            },
+            grouping: {
+                name: 'GROUPING',
+                color: '#06b6d4',
+                description: 'Build text clusters and structure',
+                steps: ['NMS pruning (deduplication)', 'Skew estimation & rotation', 'Row-truth clustering (v2)', 'Column detection (non-destructive)', 'Block-level header detection', 'Notes detection', 'Notes column grouping', 'Continuation linking'],
+                outputs: ['BlockCluster[]', 'Lines', 'Spans'],
+                algorithms: ['NumPy', 'Custom clustering algorithms']
+            },
+            zoning: {
+                name: 'ZONING & CLASSIFICATION',
+                color: '#14b8a6',
+                description: 'Detect specialized regions',
+                detectors: [
+                    { name: 'Abbreviation Regions', desc: 'Pure text, two-column format' },
+                    { name: 'Misc Title Regions', desc: "e.g., 'OKLAHOMA DEPARTMENT OF TRANSPORTATION'" },
+                    { name: 'Revision Regions', desc: 'Title block elements' },
+                    { name: 'Legend Regions', desc: 'Graphics + filtered text' },
+                    { name: 'Standard Detail Regions', desc: 'Two-column text patterns' }
+                ],
+                outputs: ['Region boundaries', 'Classification labels', 'Exclusion zones'],
+                algorithms: ['pdfplumber (graphics extraction)', 'Custom pattern matching']
+            },
+            export: {
+                name: 'EXPORT',
+                color: '#6366f1',
+                description: 'Generate output artifacts',
+                artifacts: ['boxes.json - All text tokens', 'blocks.json - Clustered blocks', 'columns.json - Notes columns', 'abbreviations.json - Detected abbreviations', 'legends.json - Legend regions', 'revisions.json - Revision info', 'overlays/*.png - Debug visualizations', 'manifest.json - Run metadata'],
+                algorithms: ['Pillow (PIL)', 'JSON (stdlib)']
+            }
+        };
+
+        function showDetails(stage) {
+            const data = stageData[stage];
+            if (!data) return;
+
+            const modal = document.getElementById('modal');
+            const title = document.getElementById('modalTitle');
+            const body = document.getElementById('modalBody');
+
+            title.textContent = data.name;
+            title.style.color = data.color;
+
+            let html = '<p style="color: #666; margin-bottom: 20px;">' + data.description + '</p>';
+
+            if (data.inputs) {
+                html += '<div class="modal-section"><h3>Inputs:</h3><ul>';
+                data.inputs.forEach(input => html += '<li>' + input + '</li>');
+                html += '</ul></div>';
+            }
+
+            if (data.outputs) {
+                html += '<div class="modal-section"><h3>Outputs:</h3><ul>';
+                data.outputs.forEach(output => html += '<li>' + output + '</li>');
+                html += '</ul></div>';
+            }
+
+            if (data.transforms) {
+                html += '<div class="modal-section"><h3>Transformations:</h3><ul>';
+                data.transforms.forEach(t => html += '<li>' + t + '</li>');
+                html += '</ul></div>';
+            }
+
+            if (data.phases) {
+                html += '<div class="modal-section"><h3>Processing Phases:</h3><ul>';
+                data.phases.forEach(p => html += '<li>' + p + '</li>');
+                html += '</ul></div>';
+            }
+
+            if (data.steps) {
+                html += '<div class="modal-section"><h3>Processing Steps:</h3><ul>';
+                data.steps.forEach(s => html += '<li>' + s + '</li>');
+                html += '</ul></div>';
+            }
+
+            if (data.detectors) {
+                html += '<div class="modal-section"><h3>Detectors:</h3>';
+                data.detectors.forEach(d => {
+                    html += '<div class="detector-item"><div class="detector-name">' + d.name + '</div><div class="detector-desc">' + d.desc + '</div></div>';
+                });
+                html += '</div>';
+            }
+
+            if (data.artifacts) {
+                html += '<div class="modal-section"><h3>Output Artifacts:</h3><ul style="font-size: 13px;">';
+                data.artifacts.forEach(a => html += '<li>' + a + '</li>');
+                html += '</ul></div>';
+            }
+
+            if (data.engine) {
+                html += '<div style="margin-top: 20px; padding: 10px; background: #f0f9ff; border-radius: 6px; color: #0369a1; font-size: 13px;">Engine: ' + data.engine + '</div>';
+            }
+
+            if (data.algorithms) {
+                html += '<div class="modal-section"><h3>Open Source Libraries:</h3><ul>';
+                data.algorithms.forEach(alg => html += '<li>' + alg + '</li>');
+                html += '</ul></div>';
+            }
+
+            body.innerHTML = html;
+            modal.classList.add('active');
+        }
+
+        function closeModal(event) {
+            document.getElementById('modal').classList.remove('active');
+        }
+    </script>
+</body>
+
+</html>

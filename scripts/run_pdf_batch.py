@@ -85,9 +85,15 @@ from plancheck import (
     run_stage,
     zone_summary,
 )
+from plancheck._structural_boxes import (
+    BoxType,
+    detect_semantic_regions,
+    mask_blocks_by_structural_boxes,
+)
 from plancheck.export import export_page_results
 from plancheck.grouping import (
     compute_median_space_gap,
+    detect_column_boundaries,
     group_notes_columns,
     link_continued_columns,
     mark_headers,
@@ -113,7 +119,8 @@ from plancheck.ocr_preprocess_pipeline import (
     OcrPreprocessConfig,
     preprocess_image_for_ocr,
 )
-from plancheck.overlay import draw_lines_overlay
+from plancheck.overlay import draw_columns_overlay, draw_lines_overlay
+from plancheck.semantic_checks import run_all_checks
 
 
 def make_run_dir(base: Path, name: str) -> Path:
@@ -268,6 +275,7 @@ def page_boxes(
 
                 # Track font info if available
                 fsize_val: float | None = None
+                fname: str = ""
                 if cfg.tocr_extra_attrs:
                     fname = w.get("fontname", "unknown")
                     fsize = w.get("size")
@@ -364,6 +372,8 @@ def page_boxes(
                         y1=y1,
                         text=text,
                         origin="text",
+                        fontname=fname,
+                        font_size=fsize_val or 0.0,
                     )
                 )
 
@@ -804,6 +814,59 @@ def process_page(
     # Extract graphics and detect legends
     graphics = extract_graphics(str(pdf), page_num)
 
+    # ── Structural box detection & semantic regions ────────────────────
+    structural_boxes, semantic_regions = detect_semantic_regions(
+        blocks=blocks,
+        graphics=graphics,
+        page_width=page_w,
+        page_height=page_h,
+    )
+
+    # Save structural boxes
+    struct_path = (
+        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_structural_boxes.json"
+    )
+    struct_serialized = [
+        {
+            "box_type": sb.box_type.value,
+            "bbox": list(sb.bbox()),
+            "confidence": round(sb.confidence, 3),
+            "is_synthetic": sb.is_synthetic,
+            "contained_blocks": len(sb.contained_block_indices),
+            "contained_text_preview": (
+                sb.contained_text[:120] if sb.contained_text else ""
+            ),
+        }
+        for sb in structural_boxes
+    ]
+    struct_path.write_text(json.dumps(struct_serialized, indent=2))
+
+    # Save semantic regions
+    regions_path = (
+        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_semantic_regions.json"
+    )
+    regions_serialized = [
+        {
+            "label": sr.label,
+            "bbox": list(sr.bbox()),
+            "confidence": round(sr.confidence, 3),
+            "has_enclosing_box": sr.enclosing_box is not None,
+            "anchor_text": (
+                " ".join(
+                    b.text for r in sr.anchor_block.rows for b in r.boxes if b.text
+                )[:80]
+                if sr.anchor_block
+                else ""
+            ),
+            "child_blocks": len(sr.child_blocks),
+        }
+        for sr in semantic_regions
+    ]
+    regions_path.write_text(json.dumps(regions_serialized, indent=2))
+
+    # Compute masked block indices (blocks inside legend/title_block)
+    masked_indices = mask_blocks_by_structural_boxes(blocks, structural_boxes)
+
     # Set up file-based logging for legends module (mirrors old debug_path behaviour)
     import logging as _logging
 
@@ -892,6 +955,7 @@ def process_page(
             "is_boxed": abbrev.is_boxed,
             "box_bbox": list(abbrev.box_bbox) if abbrev.box_bbox else None,
             "bbox": list(abbrev.bbox()),
+            "confidence": abbrev.confidence,
             "entries_count": len(abbrev.entries),
             "entries": [
                 {
@@ -916,6 +980,7 @@ def process_page(
             "is_boxed": legend.is_boxed,
             "box_bbox": list(legend.box_bbox) if legend.box_bbox else None,
             "bbox": list(legend.bbox()),
+            "confidence": legend.confidence,
             "entries_count": len(legend.entries),
             "entries": [
                 {
@@ -943,6 +1008,7 @@ def process_page(
             "is_boxed": rev.is_boxed,
             "box_bbox": list(rev.box_bbox) if rev.box_bbox else None,
             "bbox": list(rev.bbox()),
+            "confidence": rev.confidence,
             "entries_count": len(rev.entries),
             "entries": [
                 {
@@ -969,6 +1035,7 @@ def process_page(
             "is_boxed": mt.is_boxed,
             "box_bbox": list(mt.box_bbox) if mt.box_bbox else None,
             "bbox": list(mt.bbox()),
+            "confidence": mt.confidence,
         }
 
     misc_titles_serialized = [serialize_misc_title(mt) for mt in misc_title_regions]
@@ -987,6 +1054,7 @@ def process_page(
             "is_boxed": sd.is_boxed,
             "box_bbox": list(sd.box_bbox) if sd.box_bbox else None,
             "bbox": list(sd.bbox()),
+            "confidence": sd.confidence,
             "entries_count": len(sd.entries),
             "entries": [
                 {
@@ -1023,6 +1091,29 @@ def process_page(
     zones_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_zones.json"
     zones_path.write_text(json.dumps(zone_summary(page_zones), indent=2))
 
+    # ── Semantic checks ───────────────────────────────────────────────
+    semantic_findings = run_all_checks(
+        notes_columns=notes_columns,
+        abbreviation_regions=abbreviation_regions,
+        revision_regions=revision_regions,
+        standard_detail_regions=standard_detail_regions,
+        legend_regions=legend_regions,
+        misc_title_regions=misc_title_regions,
+        blocks=blocks,
+        page=page_num,
+    )
+    if semantic_findings:
+        findings_path = (
+            run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_findings.json"
+        )
+        findings_path.write_text(
+            json.dumps([f.to_dict() for f in semantic_findings], indent=2)
+        )
+        print(
+            f"  page {page_num}: {len(semantic_findings)} semantic finding(s)",
+            flush=True,
+        )
+
     # Build the lines/spans overlay as the primary overlay (v2 pipeline)
     all_lines = [ln for blk in blocks for ln in (blk.lines or [])]
     overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
@@ -1033,6 +1124,21 @@ def process_page(
         lines=all_lines,
         tokens=boxes,
         out_path=overlay_path,
+        scale=scale,
+        background=bg_img,
+        cfg=cfg,
+    )
+
+    # Column boundaries overlay
+    col_boundaries = detect_column_boundaries(boxes, page_h, cfg)
+    col_overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_columns.png"
+    draw_columns_overlay(
+        page_width=page_w,
+        page_height=page_h,
+        col_boundaries=col_boundaries,
+        blocks=blocks,
+        tokens=boxes,
+        out_path=col_overlay_path,
         scale=scale,
         background=bg_img,
         cfg=cfg,
@@ -1071,11 +1177,89 @@ def process_page(
             )
 
     # Return page results for manifest (don't write manifest here)
+
+    # ── Compute page-level quality score ──────────────────────────────
+    # Combines token density, region coverage, and error signals into a
+    # single 0–1 reliability metric that downstream semantic checks can
+    # use to decide how much to trust this page's detections.
+    _tocr_counts = stage_results.get("tocr", StageResult(stage="tocr")).counts or {}
+    _token_density = _tocr_counts.get("token_density_per_sqin", 0.0)
+    _encoding_issues = _tocr_counts.get("char_encoding_issues", 0)
+    _tokens_total = _tocr_counts.get("tokens_total", 0)
+
+    # Token density score: normalise to 0–1 (2+ tokens/sq-in → full score)
+    _density_score = min(1.0, _token_density / 2.0)
+
+    # Region coverage: at least some structure detected
+    _region_count = (
+        len(notes_columns)
+        + len(abbreviation_regions)
+        + len(legend_regions)
+        + len(revision_regions)
+        + len(standard_detail_regions)
+        + len(misc_title_regions)
+    )
+    _region_score = min(1.0, _region_count / 3.0)  # 3+ regions → full score
+
+    # Error penalty: encoding issues relative to total tokens
+    _error_frac = _encoding_issues / _tokens_total if _tokens_total > 0 else 0.0
+    _error_penalty = min(1.0, _error_frac * 10.0)  # 10% issues → full penalty
+
+    _page_quality = round(
+        max(
+            0.0,
+            (_density_score * 0.4 + _region_score * 0.4) * (1.0 - _error_penalty) + 0.2,
+        ),
+        3,
+    )
+
+    # ── Stage health flags ────────────────────────────────────────────
+    _stage_health: dict = {}
+    _vocr_sr = stage_results.get("vocr", StageResult(stage="vocr"))
+    if _vocr_sr.ran:
+        _vocr_tokens = (_vocr_sr.counts or {}).get("tokens_total", 0)
+        _vocr_ms = _vocr_sr.duration_ms
+        _stage_health["vocr_degraded"] = _vocr_tokens == 0 and _vocr_ms > 30_000
+    _recon_sr = stage_results.get("reconcile", StageResult(stage="reconcile"))
+    if _recon_sr.ran:
+        _recon_counts = _recon_sr.counts or {}
+        _stage_health["reconcile_no_candidates"] = (
+            _recon_counts.get("ocr_total", 0) == 0
+        )
+
+    # ── Per-region confidence summaries ───────────────────────────────
+    _region_confidences: dict = {}
+    if abbreviation_regions:
+        _region_confidences["abbreviation"] = [
+            round(ab.confidence, 2) for ab in abbreviation_regions
+        ]
+    if legend_regions:
+        _region_confidences["legend"] = [
+            round(lg.confidence, 2) for lg in legend_regions
+        ]
+    if revision_regions:
+        _region_confidences["revision"] = [
+            round(rv.confidence, 2) for rv in revision_regions
+        ]
+    if standard_detail_regions:
+        _region_confidences["standard_detail"] = [
+            round(sd.confidence, 2) for sd in standard_detail_regions
+        ]
+    if misc_title_regions:
+        _region_confidences["misc_title"] = [
+            round(mt.confidence, 2) for mt in misc_title_regions
+        ]
+
     page_result = {
         "page": page_num,
         "page_width": page_w,
         "page_height": page_h,
         "skew_degrees": skew,
+        "page_quality": _page_quality,
+        "stage_health": _stage_health,
+        "region_confidences": _region_confidences,
+        "semantic_findings": [f.to_dict() for f in semantic_findings],
+        "semantic_findings_count": len(semantic_findings),
         "stages": {name: sr.to_dict() for name, sr in stage_results.items()},
         "counts": {
             "boxes": len(boxes),
@@ -1097,6 +1281,12 @@ def process_page(
             "standard_detail_entries": sum(
                 len(sd.entries) for sd in standard_detail_regions
             ),
+            "structural_boxes": len(structural_boxes),
+            "structural_boxes_classified": sum(
+                1 for sb in structural_boxes if sb.box_type != BoxType.unknown
+            ),
+            "semantic_regions": len(semantic_regions),
+            "masked_blocks": len(masked_indices),
             "ocr_reconcile_accepted": (
                 len(reconcile_result.added_tokens) if reconcile_result else 0
             ),

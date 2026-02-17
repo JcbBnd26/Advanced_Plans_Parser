@@ -143,6 +143,141 @@ def _draw_label(
     draw.text((x, y - font_size - 2), label, fill=text_color, font=font)
 
 
+# Palette for column bands — distinct, semi-transparent colors
+_COL_PALETTE = [
+    (255, 0, 0, 50),  # red
+    (0, 180, 0, 50),  # green
+    (0, 0, 255, 50),  # blue
+    (255, 165, 0, 50),  # orange
+    (128, 0, 255, 50),  # purple
+    (0, 200, 200, 50),  # cyan
+    (200, 200, 0, 50),  # yellow
+    (255, 0, 180, 50),  # magenta
+]
+
+
+def draw_columns_overlay(
+    page_width: float,
+    page_height: float,
+    col_boundaries: List[float],
+    blocks: List[BlockCluster],
+    tokens: List[GlyphBox],
+    out_path: Path,
+    scale: float = 1.0,
+    background: Image.Image | None = None,
+    cfg: GroupingConfig | None = None,
+) -> None:
+    """Render column bands & block outlines colour-coded by column.
+
+    Each column band is drawn as a full-height semi-transparent rectangle.
+    Block outlines are drawn in the same colour as their column.
+
+    Args:
+        page_width:  Page width in PDF points
+        page_height: Page height in PDF points
+        col_boundaries: Sorted list of column boundary x-positions
+        blocks:  BlockClusters (with lines populated)
+        tokens:  Full token list (needed for bbox computation)
+        out_path: Destination PNG path
+        scale:   PDF-to-pixel scale factor
+        background: Optional background image
+        cfg:     GroupingConfig (for font sizing)
+    """
+    img_w = int(page_width * scale)
+    img_h = int(page_height * scale)
+
+    if background is not None:
+        img = background.convert("RGBA")
+        if img.size != (img_w, img_h):
+            img = img.resize((img_w, img_h))
+    else:
+        img = Image.new("RGBA", (img_w, img_h), (255, 255, 255, 255))
+
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay, "RGBA")
+
+    _font_base = cfg.overlay_label_font_base if cfg else 10
+    _font_floor = cfg.overlay_label_font_floor if cfg else 8
+    _block_w = cfg.overlay_block_outline_width if cfg else 3
+
+    font_size = max(_font_floor, int(_font_base * scale))
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except (OSError, IOError):
+        font = ImageFont.load_default()
+
+    # Build column edge list: [page_left, *boundaries, page_right]
+    edges = [0.0] + sorted(col_boundaries) + [page_width]
+    n_cols = len(edges) - 1
+
+    # Draw semi-transparent column bands
+    for ci in range(n_cols):
+        color = _COL_PALETTE[ci % len(_COL_PALETTE)]
+        sx0 = int(edges[ci] * scale)
+        sx1 = int(edges[ci + 1] * scale)
+        draw.rectangle([(sx0, 0), (sx1, img_h)], fill=color)
+
+        # Column label at top
+        label = f"Col {ci}"
+        lx = sx0 + 4
+        ly = 4
+        bbox_txt = draw.textbbox((lx, ly), label, font=font)
+        bg = (bbox_txt[0] - 1, bbox_txt[1] - 1, bbox_txt[2] + 1, bbox_txt[3] + 1)
+        draw.rectangle(bg, fill=(255, 255, 255, 220))
+        draw.text((lx, ly), label, fill=(color[0], color[1], color[2], 255), font=font)
+
+    # Draw column boundary lines (dashed-style solid red lines)
+    for bx in col_boundaries:
+        sx = int(bx * scale)
+        draw.line([(sx, 0), (sx, img_h)], fill=(255, 0, 0, 180), width=2)
+
+    # Draw block outlines colour-coded by their column
+    for blk in blocks:
+        bb = blk.bbox()
+        if bb == (0, 0, 0, 0):
+            continue
+        # Determine column id from first row/line
+        col_id = 0
+        if blk.rows and blk.rows[0].column_id is not None:
+            col_id = blk.rows[0].column_id
+        elif blk.lines and blk.lines[0].spans:
+            cid = blk.lines[0].spans[0].col_id
+            if cid is not None:
+                col_id = cid
+
+        color = _COL_PALETTE[col_id % len(_COL_PALETTE)]
+        outline = (color[0], color[1], color[2], 220)
+
+        bx0, by0, bx1, by1 = bb
+        sx0, sy0 = int(bx0 * scale), int(by0 * scale)
+        sx1, sy1 = int(bx1 * scale), int(by1 * scale)
+        draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=outline, width=_block_w)
+
+        # Small label: block type + col
+        parts = []
+        if blk.is_header:
+            parts.append("H")
+        if blk.is_notes:
+            parts.append("N")
+        if blk.is_table:
+            parts.append("T")
+        if not parts:
+            parts.append("B")
+        label = f"{''.join(parts)} c{col_id}"
+        bbox_txt = draw.textbbox((sx0, sy0 - font_size - 2), label, font=font)
+        bg = (bbox_txt[0] - 1, bbox_txt[1] - 1, bbox_txt[2] + 1, bbox_txt[3] + 1)
+        draw.rectangle(bg, fill=(255, 255, 255, 220))
+        draw.text(
+            (sx0, sy0 - font_size - 2),
+            label,
+            fill=(outline[0], outline[1], outline[2]),
+            font=font,
+        )
+
+    img = Image.alpha_composite(img, overlay)
+    img.save(out_path, format="PNG")
+
+
 def draw_lines_overlay(
     page_width: float,
     page_height: float,

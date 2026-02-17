@@ -215,12 +215,24 @@ def detect_misc_title_regions(
         # Note: Don't extend bbox to include adjacent blocks - keep it at the actual box bounds
         # The overlay will handle combining text visually
 
+        # Compute detection confidence:
+        #   - boxed titles are more reliable (+0.4)
+        #   - text pattern match is baseline (+0.4)
+        #   - located in title block area (bottom 20%) (+0.2)
+        conf = 0.4  # baseline: text pattern matched
+        if is_boxed:
+            conf += 0.4
+        if by0 > page_height * 0.8:
+            conf += 0.2
+        conf = round(min(1.0, conf), 2)
+
         misc_title = MiscTitleRegion(
             page=blk.page,
             text=all_text,
             text_block=blk,
             is_boxed=is_boxed,
             box_bbox=box_bbox,
+            confidence=conf,
         )
         misc_titles.append(misc_title)
 

@@ -597,6 +597,20 @@ def detect_standard_detail_regions(
         if len(entries) > 10:
             logger.debug("    ... and %d more", len(entries) - 10)
 
+        # Compute detection confidence:
+        #   - boxed regions are more reliable (+0.3)
+        #   - entries confirm structure (+0.3 scaled by count)
+        #   - subheader confirms context (+0.1)
+        #   - header pattern match is baseline (+0.3)
+        conf = 0.3  # baseline: header matched
+        if is_boxed:
+            conf += 0.3
+        if subheader:
+            conf += 0.1
+        if entries:
+            conf += min(0.3, 0.1 * len(entries))  # up to +0.3 for >=3 entries
+        conf = round(min(1.0, conf), 2)
+
         detail_region = StandardDetailRegion(
             page=page,
             header=header,
@@ -605,6 +619,7 @@ def detect_standard_detail_regions(
             entries=entries,
             is_boxed=is_boxed,
             box_bbox=box_bbox,
+            confidence=conf,
         )
         details.append(detail_region)
 

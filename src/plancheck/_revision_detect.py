@@ -330,12 +330,27 @@ def detect_revision_regions(
         entries = _parse_revision_entries(text_blocks, page, region_bbox)
         logger.debug("  Parsed %d revision entries", len(entries))
 
+        # Compute detection confidence:
+        #   - boxed regions are more reliable (+0.3)
+        #   - entries confirm structure (+0.3 scaled by count)
+        #   - column headers in header block confirm table (+0.1)
+        #   - header pattern match is baseline (+0.3)
+        conf = 0.3  # baseline: header matched
+        if is_boxed:
+            conf += 0.3
+        if has_column_headers:
+            conf += 0.1
+        if entries:
+            conf += min(0.3, 0.1 * len(entries))  # up to +0.3 for >=3 entries
+        conf = round(min(1.0, conf), 2)
+
         revision = RevisionRegion(
             page=page,
             header=header,
             entries=entries,
             is_boxed=is_boxed,
             box_bbox=box_bbox,
+            confidence=conf,
         )
         revisions.append(revision)
 

@@ -26,6 +26,16 @@ except ImportError:
     draw_symbol_overlay = None  # type: ignore[assignment]
     extract_vocr_tokens = None  # type: ignore[assignment]
 
+from ._structural_boxes import (
+    BoxType,
+    SemanticRegion,
+    StructuralBox,
+    classify_structural_boxes,
+    create_synthetic_regions,
+    detect_semantic_regions,
+    detect_structural_boxes,
+    mask_blocks_by_structural_boxes,
+)
 from .export import (
     export_abbreviations_csv,
     export_blocks_csv,
@@ -98,4 +108,12 @@ __all__ = [
     "export_revisions_csv",
     "export_blocks_csv",
     "export_from_manifest",
+    "BoxType",
+    "StructuralBox",
+    "SemanticRegion",
+    "detect_structural_boxes",
+    "classify_structural_boxes",
+    "create_synthetic_regions",
+    "detect_semantic_regions",
+    "mask_blocks_by_structural_boxes",
 ]

@@ -425,12 +425,24 @@ def detect_abbreviation_regions(
         if len(entries) > 10:
             logger.debug("    ... and %d more", len(entries) - 10)
 
+        # Compute detection confidence:
+        #   - boxed regions are more reliable (+0.3)
+        #   - having entries confirms the structure (+0.4 scaled by count)
+        #   - header pattern match is baseline (+0.3)
+        conf = 0.3  # baseline: header matched
+        if is_boxed:
+            conf += 0.3
+        if entries:
+            conf += min(0.4, 0.1 * len(entries))  # up to +0.4 for >=4 entries
+        conf = round(min(1.0, conf), 2)
+
         abbrev = AbbreviationRegion(
             page=page,
             header=header,
             entries=entries,
             is_boxed=is_boxed,
             box_bbox=box_bbox,
+            confidence=conf,
         )
         abbreviations.append(abbrev)
 
