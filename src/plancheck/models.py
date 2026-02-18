@@ -339,6 +339,33 @@ class GlyphBox:
     def bbox(self) -> Tuple[float, float, float, float]:
         return (self.x0, self.y0, self.x1, self.y1)
 
+    def to_dict(self) -> dict:
+        return {
+            "page": self.page,
+            "x0": round(self.x0, 3),
+            "y0": round(self.y0, 3),
+            "x1": round(self.x1, 3),
+            "y1": round(self.y1, 3),
+            "text": self.text,
+            "origin": self.origin,
+            "fontname": self.fontname,
+            "font_size": round(self.font_size, 3),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "GlyphBox":
+        return cls(
+            page=d["page"],
+            x0=d["x0"],
+            y0=d["y0"],
+            x1=d["x1"],
+            y1=d["y1"],
+            text=d.get("text", ""),
+            origin=d.get("origin", "text"),
+            fontname=d.get("fontname", ""),
+            font_size=d.get("font_size", 0.0),
+        )
+
 
 @dataclass
 class Span:
@@ -366,6 +393,19 @@ class Span:
     def text(self, tokens: List[GlyphBox]) -> str:
         """Join token text in index order."""
         return " ".join(tokens[i].text for i in self.token_indices if tokens[i].text)
+
+    def to_dict(self) -> dict:
+        return {
+            "token_indices": list(self.token_indices),
+            "col_id": self.col_id,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Span":
+        return cls(
+            token_indices=d.get("token_indices", []),
+            col_id=d.get("col_id"),
+        )
 
 
 @dataclass
@@ -401,6 +441,26 @@ class Line:
         # Sort by x0 to ensure correct reading order
         sorted_indices = sorted(self.token_indices, key=lambda i: tokens[i].x0)
         return " ".join(tokens[i].text for i in sorted_indices if tokens[i].text)
+
+    def to_dict(self) -> dict:
+        return {
+            "line_id": self.line_id,
+            "page": self.page,
+            "token_indices": list(self.token_indices),
+            "baseline_y": round(self.baseline_y, 3),
+            "spans": [s.to_dict() for s in self.spans],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Line":
+        spans = [Span.from_dict(s) for s in d.get("spans", [])]
+        return cls(
+            line_id=d["line_id"],
+            page=d["page"],
+            token_indices=d.get("token_indices", []),
+            baseline_y=d.get("baseline_y", 0.0),
+            spans=spans,
+        )
 
 
 @dataclass
@@ -489,6 +549,39 @@ class BlockCluster:
             for row in self.rows:
                 boxes.extend(row.boxes)
             return sorted(boxes, key=lambda b: (b.y0, b.x0))
+
+    def to_dict(self) -> dict:
+        """Serialize to JSON-friendly dict.  Eagerly evaluates bbox()."""
+        all_boxes = self.get_all_boxes()
+        text_preview = " ".join(b.text for b in all_boxes)
+        return {
+            "page": self.page,
+            "bbox": [round(v, 3) for v in self.bbox()],
+            "label": self.label,
+            "is_table": self.is_table,
+            "is_notes": self.is_notes,
+            "is_header": self.is_header,
+            "parent_block_index": self.parent_block_index,
+            "text": text_preview,
+            "lines": [ln.to_dict() for ln in self.lines],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict, tokens: List[GlyphBox]) -> "BlockCluster":
+        """Reconstruct a BlockCluster from a serialized dict + token list."""
+        lines = [Line.from_dict(ld) for ld in d.get("lines", [])]
+        blk = cls(
+            page=d["page"],
+            lines=lines,
+            _tokens=tokens,
+            label=d.get("label"),
+            is_table=d.get("is_table", False),
+            is_notes=d.get("is_notes", False),
+            is_header=d.get("is_header", False),
+            parent_block_index=d.get("parent_block_index"),
+        )
+        blk.populate_rows_from_lines()
+        return blk
 
     def populate_rows_from_lines(self) -> None:
         """Populate .rows from .lines for backward compatibility.
@@ -613,6 +706,41 @@ class NotesColumn:
             result.append(self.header)
         result.extend(self.notes_blocks)
         return result
+
+    def to_dict(self, blocks: List[BlockCluster]) -> dict:
+        """Serialize to JSON-friendly dict using block indices."""
+        header_idx = blocks.index(self.header) if self.header in blocks else None
+        notes_indices = []
+        for nb in self.notes_blocks:
+            try:
+                notes_indices.append(blocks.index(nb))
+            except ValueError:
+                pass
+        return {
+            "page": self.page,
+            "bbox": [round(v, 3) for v in self.bbox()],
+            "header_block_index": header_idx,
+            "notes_block_indices": notes_indices,
+            "column_group_id": self.column_group_id,
+            "continues_from": self.continues_from,
+            "header_text": self.header_text(),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict, blocks: List[BlockCluster]) -> "NotesColumn":
+        """Reconstruct a NotesColumn from a serialized dict + block list."""
+        hi = d.get("header_block_index")
+        header = blocks[hi] if hi is not None and 0 <= hi < len(blocks) else None
+        notes_blocks = [
+            blocks[i] for i in d.get("notes_block_indices", []) if 0 <= i < len(blocks)
+        ]
+        return cls(
+            page=d["page"],
+            header=header,
+            notes_blocks=notes_blocks,
+            column_group_id=d.get("column_group_id"),
+            continues_from=d.get("continues_from"),
+        )
 
 
 @dataclass

@@ -53,6 +53,7 @@ from .ocr_preprocess_pipeline import (
     preprocess_image_for_ocr,
 )
 from .overlay import draw_overlay
+from .page_data import deserialize_page, serialize_page
 from .pipeline import (
     STAGE_ORDER,
     SkipReason,
@@ -76,6 +77,8 @@ __all__ = [
     "estimate_skew_degrees",
     "rotate_boxes",
     "draw_overlay",
+    "serialize_page",
+    "deserialize_page",
     "group_rows",
     "group_blocks",
     "group_blocks_from_lines",

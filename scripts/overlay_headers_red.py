@@ -1,7 +1,12 @@
 """Generate an overlay with ONLY notes-header blocks boxed in red.
 
 Usage:
+    # Run pipeline + write JSON + draw overlay (standard):
     python scripts/overlay_headers_red.py <pdf> --page <N> [--resolution <DPI>]
+
+    # Draw overlay from existing JSON (skip PDF re-parse):
+    python scripts/overlay_headers_red.py --json <path/to/page_N_extraction.json> \\
+        --pdf <pdf> [--resolution <DPI>]
 
 Page is zero-based.  Writes to the most recent run's overlays/ folder.
 """
@@ -12,11 +17,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import argparse
+import json
 
 import pdfplumber
 from PIL import ImageDraw, ImageFont
 
 from plancheck import GlyphBox, GroupingConfig, build_clusters_v2, nms_prune
+from plancheck.page_data import deserialize_page, serialize_page
+
+
+def _latest_overlays_dir() -> Path:
+    runs_dir = Path("runs")
+    if runs_dir.is_dir():
+        run_dirs = sorted(runs_dir.iterdir(), reverse=True)
+        if run_dirs:
+            d = run_dirs[0] / "overlays"
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+    return Path(".")
 
 
 def _scale(x: float, y: float, s: float):
@@ -25,55 +43,98 @@ def _scale(x: float, y: float, s: float):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Red notes-header overlay")
-    parser.add_argument("pdf", type=Path)
+    parser.add_argument("pdf", type=Path, nargs="?", default=None)
     parser.add_argument("--page", type=int, default=0, help="Zero-based page index")
     parser.add_argument("--resolution", type=int, default=200)
     parser.add_argument("--out", type=Path, default=None, help="Output PNG path")
+    parser.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        metavar="EXTRACTION_JSON",
+        help="Read pipeline output from this JSON instead of re-running the pipeline",
+    )
     args = parser.parse_args()
 
     cfg = GroupingConfig()
 
-    # ── Extract text boxes ──────────────────────────────────────────
-    with pdfplumber.open(args.pdf) as pdf:
-        page = pdf.pages[args.page]
-        page_w, page_h = float(page.width), float(page.height)
-        words = page.extract_words(
-            x_tolerance=cfg.tocr_x_tolerance,
-            y_tolerance=cfg.tocr_y_tolerance,
-            extra_attrs=["fontname", "size"] if cfg.tocr_extra_attrs else None,
-        )
-        boxes = []
-        for w in words:
-            x0 = max(0.0, min(page_w, float(w.get("x0", 0))))
-            x1 = max(0.0, min(page_w, float(w.get("x1", 0))))
-            y0 = max(0.0, min(page_h, float(w.get("top", 0))))
-            y1 = max(0.0, min(page_h, float(w.get("bottom", 0))))
-            text = w.get("text", "")
-            if x1 <= x0 or y1 <= y0:
-                continue
-            boxes.append(
-                GlyphBox(
-                    page=args.page,
-                    x0=x0,
-                    y0=y0,
-                    x1=x1,
-                    y1=y1,
-                    text=text,
-                    origin="text",
-                    fontname=w.get("fontname", ""),
-                    font_size=float(w["size"]) if "size" in w else 0.0,
-                )
+    #  Determine output path
+    out_path = args.out
+
+    #  Load or compute pipeline data
+    if args.json is not None:
+        raw = json.loads(args.json.read_text(encoding="utf-8"))
+        tokens, blocks, _notes_columns, page_w, page_h = deserialize_page(raw)
+        page_idx = raw["page"]
+        if out_path is None:
+            out_path = _latest_overlays_dir() / f"page_{page_idx}_headers_red.png"
+        pdf_path = args.pdf
+    else:
+        if args.pdf is None:
+            parser.error("A PDF path is required unless --json is provided")
+        pdf_path = args.pdf
+        page_idx = args.page
+        if out_path is None:
+            out_path = _latest_overlays_dir() / f"page_{page_idx}_headers_red.png"
+
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[page_idx]
+            page_w, page_h = float(page.width), float(page.height)
+            words = page.extract_words(
+                x_tolerance=cfg.tocr_x_tolerance,
+                y_tolerance=cfg.tocr_y_tolerance,
+                extra_attrs=["fontname", "size"] if cfg.tocr_extra_attrs else None,
             )
+            tokens: list[GlyphBox] = []
+            for w in words:
+                x0 = max(0.0, min(page_w, float(w.get("x0", 0))))
+                x1 = max(0.0, min(page_w, float(w.get("x1", 0))))
+                y0 = max(0.0, min(page_h, float(w.get("top", 0))))
+                y1 = max(0.0, min(page_h, float(w.get("bottom", 0))))
+                text = w.get("text", "")
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                tokens.append(
+                    GlyphBox(
+                        page=page_idx,
+                        x0=x0,
+                        y0=y0,
+                        x1=x1,
+                        y1=y1,
+                        text=text,
+                        origin="text",
+                        fontname=w.get("fontname", ""),
+                        font_size=float(w["size"]) if "size" in w else 0.0,
+                    )
+                )
 
-    # ── Render background image ─────────────────────────────────────
-    with pdfplumber.open(args.pdf) as pdf:
-        bg_img = (
-            pdf.pages[args.page].to_image(resolution=args.resolution).original.copy()
+        tokens = nms_prune(tokens, cfg.iou_prune)
+        blocks = build_clusters_v2(tokens, page_h, cfg)
+
+        json_out = out_path.parent / f"page_{page_idx}_extraction.json"
+        from plancheck.grouping import group_notes_columns, link_continued_columns
+
+        notes_columns = group_notes_columns(blocks, cfg=cfg)
+        link_continued_columns(notes_columns, blocks=blocks, cfg=cfg)
+        data = serialize_page(
+            page=page_idx,
+            page_width=page_w,
+            page_height=page_h,
+            tokens=tokens,
+            blocks=blocks,
+            notes_columns=notes_columns,
         )
+        json_out.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        print(f"Extraction JSON: {json_out}")
 
-    # ── Grouping pipeline (up to header detection) ──────────────────
-    boxes = nms_prune(boxes, cfg.iou_prune)
-    blocks = build_clusters_v2(boxes, page_h, cfg)
+    #  Render background image
+    if pdf_path is None:
+        parser.error("A PDF path is required to render the background image")
+
+    with pdfplumber.open(pdf_path) as pdf:
+        bg_img = (
+            pdf.pages[page_idx].to_image(resolution=args.resolution).original.copy()
+        )
 
     # ── Identify header blocks ──────────────────────────────────────
     header_blocks = [
@@ -112,9 +173,9 @@ def main() -> None:
             display_labels[i] = lbl
             parent_label[i] = lbl
 
-    print(f"Page {args.page}: {len(blocks)} blocks, {len(header_blocks)} header(s)")
+    print(f"Page {page_idx}: {len(blocks)} blocks, {len(header_blocks)} header(s)")
 
-    # ── Draw red rectangles on the background ───────────────────────
+    # ── Draw red rectangles on the background ─────────────────────
     scale = args.resolution / 72.0
     img = bg_img.convert("RGBA")
     img_w, img_h = int(page_w * scale), int(page_h * scale)
@@ -164,15 +225,6 @@ def main() -> None:
         draw.text((lx + pad, ly + pad), label, fill=LABEL_FG, font=font)
 
     # ── Save ────────────────────────────────────────────────────────
-    out_path = args.out
-    if out_path is None:
-        runs_dir = Path("runs")
-        run_dirs = sorted(runs_dir.iterdir(), reverse=True)
-        latest = run_dirs[0] if run_dirs else None
-        if latest and (latest / "overlays").is_dir():
-            out_path = latest / "overlays" / f"page_{args.page}_headers_red.png"
-        else:
-            out_path = Path(f"page_{args.page}_headers_red.png")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(out_path))

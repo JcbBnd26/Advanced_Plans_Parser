@@ -15,6 +15,7 @@ import subprocess
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from overlay_viewer import OverlayViewerTab
 from run_pdf_batch import cleanup_old_runs, run_pdf
 from tag_list import TAG_DESCRIPTIONS, TAG_LIST
 
@@ -89,6 +90,9 @@ class PlanParserGUI:
         self.tab2_frame = ttk.Frame(self.notebook)
         self.tab2_frame.columnconfigure(0, weight=1)
         self.notebook.add(self.tab2_frame, text="Tab 2")
+
+        # Tab 3: Visual Debug overlay viewer
+        self._overlay_tab = OverlayViewerTab(self.notebook)
 
         # --- Tab 2: Standalone Diagnostics ---
         diag_frame = ttk.LabelFrame(
