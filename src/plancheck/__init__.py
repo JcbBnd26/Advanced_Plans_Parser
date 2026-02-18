@@ -13,20 +13,16 @@ from .grouping import (
 from .models import BlockCluster, GlyphBox, Line, RowBand, Span, SuspectRegion
 
 try:
-    from .ocr_reconcile import (
-        draw_reconcile_debug,
-        draw_symbol_overlay,
-        extract_vocr_tokens,
-        reconcile_ocr,
-    )
+    from .export.reconcile_overlay import draw_reconcile_debug, draw_symbol_overlay
+    from .reconcile import reconcile_ocr
+    from .vocr import extract_vocr_tokens
 except ImportError:
-    # PaddleOCR not installed — OCR reconciliation unavailable
     reconcile_ocr = None  # type: ignore[assignment]
+    extract_vocr_tokens = None  # type: ignore[assignment]
     draw_reconcile_debug = None  # type: ignore[assignment]
     draw_symbol_overlay = None  # type: ignore[assignment]
-    extract_vocr_tokens = None  # type: ignore[assignment]
 
-from ._structural_boxes import (
+from .analysis.structural_boxes import (
     BoxType,
     SemanticRegion,
     StructuralBox,
@@ -36,7 +32,14 @@ from ._structural_boxes import (
     detect_structural_boxes,
     mask_blocks_by_structural_boxes,
 )
-from .export import (
+from .analysis.zoning import (
+    PageZone,
+    ZoneTag,
+    classify_blocks,
+    detect_zones,
+    zone_summary,
+)
+from .export.csv_export import (
     export_abbreviations_csv,
     export_blocks_csv,
     export_from_manifest,
@@ -47,13 +50,8 @@ from .export import (
     export_revisions_csv,
     export_standard_details_csv,
 )
-from .ocr_preprocess_pipeline import (
-    OcrPreprocessConfig,
-    OcrPreprocessResult,
-    preprocess_image_for_ocr,
-)
-from .overlay import draw_overlay
-from .page_data import deserialize_page, serialize_page
+from .export.overlay import draw_overlay
+from .export.page_data import deserialize_page, serialize_page
 from .pipeline import (
     STAGE_ORDER,
     SkipReason,
@@ -62,9 +60,10 @@ from .pipeline import (
     input_fingerprint,
     run_stage,
 )
-from .preprocess import estimate_skew_degrees, nms_prune, rotate_boxes
-from .zoning import PageZone, ZoneTag, classify_blocks, detect_zones, zone_summary
+from .tocr.preprocess import estimate_skew_degrees, nms_prune, rotate_boxes
+from .vocrpp import OcrPreprocessConfig, OcrPreprocessResult, preprocess_image_for_ocr
 
+# Keep __all__ identical to the original
 __all__ = [
     "GroupingConfig",
     "GlyphBox",
