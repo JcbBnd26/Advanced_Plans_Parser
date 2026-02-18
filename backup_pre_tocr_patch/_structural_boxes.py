@@ -557,10 +557,6 @@ def create_synthetic_regions(
     structural_boxes: List[StructuralBox],
     page_width: float,
     page_height: float,
-    max_gap: float = 0.0,
-    x_tolerance: float = 80.0,
-    font_size_ratio: float = 1.8,
-    adaptive_gap_mult: float = 3.0,
 ) -> List[StructuralBox]:
     """Create synthetic structural boxes from text anchors when no drawn
     rectangle was detected.
@@ -621,10 +617,6 @@ def create_synthetic_regions(
             structural_boxes=structural_boxes,
             page_width=page_width,
             page_height=page_height,
-            max_gap=max_gap,
-            x_tolerance=x_tolerance,
-            font_size_ratio=font_size_ratio,
-            adaptive_gap_mult=adaptive_gap_mult,
         )
 
         sb = StructuralBox(
@@ -658,25 +650,23 @@ def _grow_region_from_anchor(
     structural_boxes: List[StructuralBox],
     page_width: float,
     page_height: float,
-    max_gap: float = 0.0,
+    max_gap: float = 40.0,
     x_tolerance: float = 80.0,
-    font_size_ratio: float = 1.8,
-    adaptive_gap_mult: float = 3.0,
 ) -> Tuple[float, float, float, float]:
     """Grow a bounded region downward from a header anchor block.
 
     Starting from the anchor block, we expand the region to include
     nearby blocks below it that are:
     - Within ``x_tolerance`` of the anchor's x-range (same column)
-    - Within an adaptive vertical gap of the current region bottom
+    - Within ``max_gap`` vertical distance of the current region bottom
     - Not already inside a classified structural box
     - Not a header for a *different* section
-    - Within ``font_size_ratio`` of the section's median font size
-      (prevents vacuuming title-block labels into note regions)
 
-    The adaptive gap is computed as median_line_spacing * adaptive_gap_mult
-    from the blocks already in the region.  If ``max_gap > 0``, it is used
-    as a hard cap instead.
+    The region stops at:
+    - A large vertical gap (> max_gap)
+    - Another header block
+    - A classified structural box of a different type
+    - The bottom of the page (or a title block boundary)
 
     Returns the bounding box ``(x0, y0, x1, y1)`` of the grown region.
     """
@@ -700,17 +690,6 @@ def _grow_region_from_anchor(
     region_blocks = [anchor]
     region_bottom = ay1
 
-    # Track y-positions of block tops for adaptive gap computation
-    block_bottoms = [ay1]
-
-    # Collect font sizes in the region for glyph-style continuity
-    region_font_sizes: List[float] = []
-    for row in anchor.rows:
-        for b in row.boxes:
-            sz = getattr(b, "font_size", 0.0)
-            if sz > 0:
-                region_font_sizes.append(sz)
-
     # Sort remaining blocks by y-position
     candidates = []
     for i, blk in enumerate(blocks):
@@ -733,32 +712,8 @@ def _grow_region_from_anchor(
         if by0 >= stop_y:
             break
 
-        # Compute adaptive gap threshold from blocks already in region
-        if max_gap > 0:
-            effective_gap = max_gap
-        else:
-            # Adaptive: use median line spacing * multiplier
-            if len(block_bottoms) >= 2:
-                spacings = [
-                    block_bottoms[j] - block_bottoms[j - 1]
-                    for j in range(1, len(block_bottoms))
-                    if block_bottoms[j] > block_bottoms[j - 1]
-                ]
-                if spacings:
-                    spacings.sort()
-                    median_spacing = spacings[len(spacings) // 2]
-                    effective_gap = median_spacing * adaptive_gap_mult
-                else:
-                    effective_gap = 40.0 * adaptive_gap_mult
-            else:
-                # Fallback for first block after anchor
-                effective_gap = 40.0 * adaptive_gap_mult
-
-            # Clamp to a reasonable range
-            effective_gap = max(20.0, min(effective_gap, 200.0))
-
         # Stop if there's a large vertical gap
-        if by0 - region_bottom > effective_gap:
+        if by0 - region_bottom > max_gap:
             break
 
         # Check horizontal alignment with anchor
@@ -774,39 +729,8 @@ def _grow_region_from_anchor(
             # Different header — stop growing
             break
 
-        # Font-size continuity check: reject blocks whose average font
-        # size deviates too far from the section's median.
-        if font_size_ratio > 0 and region_font_sizes:
-            blk_sizes = []
-            for row in blk.rows:
-                for b in row.boxes:
-                    sz = getattr(b, "font_size", 0.0)
-                    if sz > 0:
-                        blk_sizes.append(sz)
-            if blk_sizes:
-                region_median_sz = sorted(region_font_sizes)[
-                    len(region_font_sizes) // 2
-                ]
-                blk_avg_sz = sum(blk_sizes) / len(blk_sizes)
-                if region_median_sz > 0:
-                    ratio = max(
-                        blk_avg_sz / region_median_sz,
-                        region_median_sz / blk_avg_sz,
-                    )
-                    if ratio > font_size_ratio:
-                        # Font size too different — skip this block
-                        continue
-
         region_blocks.append(blk)
         region_bottom = max(region_bottom, by1)
-        block_bottoms.append(by1)
-
-        # Update font-size tracking
-        for row in blk.rows:
-            for b in row.boxes:
-                sz = getattr(b, "font_size", 0.0)
-                if sz > 0:
-                    region_font_sizes.append(sz)
 
     # Compute bounding box of all collected blocks
     r_x0 = min(blk.bbox()[0] for blk in region_blocks)
@@ -825,10 +749,6 @@ def detect_semantic_regions(
     graphics: List[GraphicElement],
     page_width: float,
     page_height: float,
-    max_gap: float = 0.0,
-    x_tolerance: float = 80.0,
-    font_size_ratio: float = 1.8,
-    adaptive_gap_mult: float = 3.0,
 ) -> Tuple[List[StructuralBox], List[SemanticRegion]]:
     """Run the full structural detection + semantic region pipeline.
 
@@ -848,14 +768,6 @@ def detect_semantic_regions(
         Graphic elements on the page (from ``extract_graphics``).
     page_width, page_height : float
         Page dimensions in points.
-    max_gap : float
-        Max vertical gap for region growth (0 = adaptive).
-    x_tolerance : float
-        Horizontal tolerance for column membership.
-    font_size_ratio : float
-        Max font-size ratio before excluding a block (0 = disabled).
-    adaptive_gap_mult : float
-        Multiplier for adaptive gap computation.
 
     Returns
     -------
@@ -872,11 +784,7 @@ def detect_semantic_regions(
     classify_structural_boxes(struct_boxes, blocks, page_width, page_height)
 
     # Step 3: Synthetic regions from text anchors
-    synthetic = create_synthetic_regions(
-        blocks, struct_boxes, page_width, page_height,
-        max_gap=max_gap, x_tolerance=x_tolerance,
-        font_size_ratio=font_size_ratio, adaptive_gap_mult=adaptive_gap_mult,
-    )
+    synthetic = create_synthetic_regions(blocks, struct_boxes, page_width, page_height)
     # Classify the synthetic boxes (they need text collection too)
     for sb in synthetic:
         # Populate contained blocks
@@ -893,11 +801,7 @@ def detect_semantic_regions(
     all_boxes = struct_boxes + synthetic
 
     # Step 4: Build semantic regions
-    regions = _build_semantic_regions(
-        blocks, all_boxes, page_width, page_height,
-        max_gap=max_gap, x_tolerance=x_tolerance,
-        font_size_ratio=font_size_ratio, adaptive_gap_mult=adaptive_gap_mult,
-    )
+    regions = _build_semantic_regions(blocks, all_boxes, page_width, page_height)
 
     logger.debug(
         "detect_semantic_regions: %d structural boxes (%d drawn, %d synthetic), "
@@ -916,10 +820,6 @@ def _build_semantic_regions(
     structural_boxes: List[StructuralBox],
     page_width: float,
     page_height: float,
-    max_gap: float = 0.0,
-    x_tolerance: float = 80.0,
-    font_size_ratio: float = 1.8,
-    adaptive_gap_mult: float = 3.0,
 ) -> List[SemanticRegion]:
     """Build semantic regions from header anchors + structural boxes.
 
@@ -1003,10 +903,6 @@ def _build_semantic_regions(
             structural_boxes=structural_boxes,
             page_width=page_width,
             page_height=page_height,
-            max_gap=max_gap,
-            x_tolerance=x_tolerance,
-            font_size_ratio=font_size_ratio,
-            adaptive_gap_mult=adaptive_gap_mult,
         )
 
         # Collect child blocks inside the grown region

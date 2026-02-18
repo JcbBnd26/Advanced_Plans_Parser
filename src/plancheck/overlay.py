@@ -96,12 +96,44 @@ COLUMN_COLORS = [
 ]
 
 
+def _header_to_prefix(header_text: str) -> str:
+    """Derive a short prefix from header text using initials of main words.
+
+    Generic suffix words like "NOTES" are excluded so the prefix captures
+    the *subject* of the column rather than its type.
+
+    Examples:
+        "GENERAL NOTES:"                    → "G"
+        "CAST IN PLACE CONCRETE - GENERAL:" → "CIPC"
+        "EROSION CONTROL NOTES - GENERAL:"  → "EC"
+        "SIDEWALK/CURB RAMP NOTES:"         → "SCR"
+        "ODOT STANDARD DETAILS:"            → "OSD"
+    """
+    import re as _re
+
+    # Words to exclude from initials (generic column-type suffixes)
+    _stop_words = {"NOTES", "NOTE"}
+
+    text = header_text.strip().rstrip(":")
+    # Take part before " - " if present (strip subtitle like "- GENERAL")
+    if " - " in text:
+        text = text.split(" - ")[0].strip()
+    # Split on spaces, slashes
+    words = _re.split(r"[\s/]+", text)
+    words = [w for w in words if w and w.upper() not in _stop_words]
+    if not words:
+        return "NC"
+    # Take first letter of each word
+    initials = "".join(w[0] for w in words).upper()
+    return initials or "NC"
+
+
 def _draw_label(
     draw: ImageDraw.ImageDraw,
     x: float,
     y: float,
     element_type: str,
-    index: int,
+    index: int | str,
     color: tuple,
     scale: float,
     cfg: GroupingConfig | None = None,
@@ -113,7 +145,7 @@ def _draw_label(
         x: Scaled x position (top-left corner)
         y: Scaled y position (top-left corner)
         element_type: Key from LABEL_PREFIXES
-        index: 1-based index matching internal list position
+        index: 1-based index or full label string (e.g. "GN1.2")
         color: RGBA tuple for the label color
         scale: Current scale factor
         cfg: Optional config for font/alpha knobs
@@ -122,8 +154,11 @@ def _draw_label(
     _font_floor = cfg.overlay_label_font_floor if cfg else 8
     _bg_alpha = cfg.overlay_label_bg_alpha if cfg else 200
 
-    prefix = LABEL_PREFIXES.get(element_type, "?")
-    label = f"{prefix}{index}"
+    if isinstance(index, str):
+        label = index  # Caller provided full label (e.g. "GN1.2")
+    else:
+        prefix = LABEL_PREFIXES.get(element_type, "?")
+        label = f"{prefix}{index}"
 
     # Use a small font size scaled appropriately
     font_size = max(_font_floor, int(_font_base * scale))
@@ -193,10 +228,10 @@ def draw_columns_overlay(
 
     # Colour map by semantic type
     _type_colors = {
-        "H": (255, 0, 0, 220),      # red for headers
-        "N": (0, 0, 255, 220),      # blue for notes
-        "T": (255, 165, 0, 220),    # orange for tables
-        "B": (0, 180, 0, 150),      # green for regular blocks
+        "H": (255, 0, 0, 220),  # red for headers
+        "N": (0, 0, 255, 220),  # blue for notes
+        "T": (255, 165, 0, 220),  # orange for tables
+        "B": (0, 180, 0, 150),  # green for regular blocks
     }
 
     # Draw block outlines colour-coded by type
@@ -479,9 +514,43 @@ def draw_overlay(
                 )
 
     # Notes columns - draw ALL when selected (no region skipping)
-    # Use enumerate so label matches internal list index (NC1 = notes_columns[0])
+    # Compute smart labels: prefix derived from header text initials.
+    # Sub-columns (continuations) get dotted suffixes (e.g., GN1.2, GN1.3).
     if notes_columns:
-        for col_idx, col in enumerate(notes_columns, start=1):
+        notes_columns_list = list(notes_columns)
+        # Build labels: derive prefix from header text, assign sequential
+        # numbers within each prefix, dotted sub-indices within groups.
+        col_labels: list[str] = []
+        prefix_counters: dict[str, int] = {}  # prefix -> next counter
+        group_prefix: dict[str, str] = {}  # group_id -> label (e.g. "GN1")
+        group_sub_counter: dict[str, int] = {}  # group_id -> next sub-index
+        for col in notes_columns_list:
+            grp = col.column_group_id
+            if col.header is not None:
+                # Named column — derive prefix from header text
+                hdr_text = col.header_text()
+                prefix = _header_to_prefix(hdr_text) if hdr_text else "NC"
+                count = prefix_counters.get(prefix, 0) + 1
+                prefix_counters[prefix] = count
+                label = f"{prefix}{count}"
+                if grp is not None:
+                    group_prefix[grp] = label
+                    group_sub_counter[grp] = 2  # next sub starts at .2
+                col_labels.append(label)
+            elif grp is not None and grp in group_prefix:
+                # Continuation sub-column
+                parent_label = group_prefix[grp]
+                sub = group_sub_counter.get(grp, 2)
+                group_sub_counter[grp] = sub + 1
+                col_labels.append(f"{parent_label}.{sub}")
+            else:
+                # True orphan (no header, no group)
+                prefix = "NC"
+                count = prefix_counters.get(prefix, 0) + 1
+                prefix_counters[prefix] = count
+                col_labels.append(f"{prefix}{count}")
+
+        for col_idx, col in enumerate(notes_columns_list):
             x0, y0, x1, y1 = col.bbox()
             if x0 == 0 and y0 == 0 and x1 == 0 and y1 == 0:
                 continue  # Skip empty columns (index still increments)
@@ -491,7 +560,14 @@ def draw_overlay(
                 sx1, sy1 = _scale_point(x1, y1, scale)
                 draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=_region_w)
                 _draw_label(
-                    draw, sx0, sy0, "notes_columns", col_idx, color, scale, cfg=cfg
+                    draw,
+                    sx0,
+                    sy0,
+                    "notes_columns",
+                    col_labels[col_idx],
+                    color,
+                    scale,
+                    cfg=cfg,
                 )
 
     # Legend regions

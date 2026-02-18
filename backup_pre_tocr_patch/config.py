@@ -277,26 +277,6 @@ class GroupingConfig:
     # Continued-column X-alignment tolerance (pts).
     grouping_link_x_tolerance: float = 50.0
 
-    # ── Semantic region growth (anchor-based bbox building) ───────────
-    # Max vertical gap (pts) before region growth stops.
-    # 0 = use adaptive gap (median_line_spacing * region_gap_adaptive_mult).
-    region_growth_max_gap: float = 0.0
-    # Adaptive gap multiplier: allowed gap = median_line_spacing * this.
-    region_gap_adaptive_mult: float = 3.0
-    # X-tolerance (pts) for including blocks in a grown region.
-    region_growth_x_tolerance: float = 80.0
-    # Font-size ratio threshold: blocks with avg font size differing by
-    # more than this factor from the section's median are excluded.
-    # 0.0 = disabled.  Typical: 1.8 (allow ±80% variation).
-    region_font_size_ratio: float = 1.8
-    # Header detection: accept ALL CAPS + large font (≥ this × median).
-    header_large_font_mult: float = 1.25
-    # Header detection: max rows in a block to be considered a header.
-    header_max_rows: int = 3
-    # Notes-column x0 clustering: use running-mean instead of
-    # consecutive-pair gap.  More robust for indented notes.
-    notes_column_running_mean: bool = True
-
     # ── Legend / abbreviation / revision detection ─────────────────────
     # Tolerance (pts) for matching a rect enclosing a header.
     legend_enclosure_tolerance: float = 20.0
@@ -412,10 +392,6 @@ class GroupingConfig:
             "ocr_reconcile_char_width_fallback",
             "grouping_space_gap_fallback",
             "preprocess_min_rotation",
-            "region_growth_max_gap",
-            "region_gap_adaptive_mult",
-            "region_growth_x_tolerance",
-            "region_font_size_ratio",
         ]
         for name in _nn_floats:
             _check_non_negative(name, getattr(self, name))

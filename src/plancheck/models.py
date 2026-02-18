@@ -438,6 +438,7 @@ class BlockCluster:
     is_table: bool = False
     is_notes: bool = False
     is_header: bool = False
+    parent_block_index: Optional[int] = None  # subheader → parent header index
 
     def bbox(self) -> Tuple[float, float, float, float]:
         xs0: List[float] = []
@@ -557,25 +558,52 @@ class NotesColumn:
         )
 
     def bbox(self) -> Tuple[float, float, float, float]:
-        """Bounding box encompassing the header and all notes blocks."""
+        """Bounding box encompassing the header and all notes blocks.
+
+        Uses median-width clipping: if a block is much wider than the
+        column's median width it is clipped to ``median_x0 + median_width``
+        so that a single over-wide block cannot inflate the column bbox
+        into an adjacent visual column.
+        """
+        all_bboxes: List[Tuple[float, float, float, float]] = []
+        if self.header:
+            all_bboxes.append(self.header.bbox())
+        for blk in self.notes_blocks:
+            all_bboxes.append(blk.bbox())
+        if not all_bboxes:
+            return (0, 0, 0, 0)
+
+        # Compute median width from notes blocks only (≥2) so the header
+        # cannot inflate the median and escape clipping.  Fall back to
+        # all bboxes when there aren't enough notes blocks.
+        notes_bboxes = [blk.bbox() for blk in self.notes_blocks]
+        ref_bboxes = notes_bboxes if len(notes_bboxes) >= 2 else all_bboxes
+        ref_widths = sorted(bx[2] - bx[0] for bx in ref_bboxes)
+        median_w = ref_widths[len(ref_widths) // 2]
+
+        # Identify outlier-width blocks: any block wider than 1.4× the
+        # notes-block median is considered an outlier.  The column x1 is
+        # capped at the maximum x1 among non-outlier blocks so that a
+        # single wide block cannot push the column boundary into an
+        # adjacent column.
+        outlier_threshold = median_w * 1.4
+        non_outlier_x1 = [
+            bx[2] for bx in all_bboxes if (bx[2] - bx[0]) <= outlier_threshold
+        ]
+        # Fall back to raw max if everything is "outlier" (e.g. single block)
+        clip_x1 = (
+            max(non_outlier_x1) if non_outlier_x1 else max(bx[2] for bx in all_bboxes)
+        )
+
         xs0: List[float] = []
         ys0: List[float] = []
         xs1: List[float] = []
         ys1: List[float] = []
-        if self.header:
-            x0, y0, x1, y1 = self.header.bbox()
+        for x0, y0, x1, y1 in all_bboxes:
             xs0.append(x0)
             ys0.append(y0)
-            xs1.append(x1)
+            xs1.append(min(x1, clip_x1))
             ys1.append(y1)
-        for blk in self.notes_blocks:
-            x0, y0, x1, y1 = blk.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
-        if not xs0:
-            return (0, 0, 0, 0)
         return (min(xs0), min(ys0), max(xs1), max(ys1))
 
     def all_blocks(self) -> List[BlockCluster]:
@@ -585,3 +613,44 @@ class NotesColumn:
             result.append(self.header)
         result.extend(self.notes_blocks)
         return result
+
+
+@dataclass
+class SuspectRegion:
+    """A region flagged for VOCR / LLM inspection.
+
+    These are locations where the text-layer extraction returned
+    suspicious results (e.g. fused compound words with missing
+    separators) that may need visual OCR rectification.
+    """
+
+    page: int
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    word_text: str  # The suspicious extracted word
+    context: str  # Surrounding text (e.g. full header)
+    reason: str  # Why it was flagged
+    source_label: str = ""  # e.g. "note_column_header"
+    block_index: int = -1  # Index into blocks list
+
+    def bbox(self) -> Tuple[float, float, float, float]:
+        return (self.x0, self.y0, self.x1, self.y1)
+
+    def to_dict(self) -> dict:
+        """Serialize to JSON-friendly dict for VOCR pipeline consumption."""
+        return {
+            "page": self.page,
+            "bbox": [
+                round(self.x0, 2),
+                round(self.y0, 2),
+                round(self.x1, 2),
+                round(self.y1, 2),
+            ],
+            "word_text": self.word_text,
+            "context": self.context,
+            "reason": self.reason,
+            "source_label": self.source_label,
+            "block_index": self.block_index,
+        }

@@ -10,7 +10,7 @@ from .grouping import (
     mark_notes,
     mark_tables,
 )
-from .models import BlockCluster, GlyphBox, Line, RowBand, Span
+from .models import BlockCluster, GlyphBox, Line, RowBand, Span, SuspectRegion
 
 try:
     from .ocr_reconcile import (
@@ -71,6 +71,7 @@ __all__ = [
     "Line",
     "Span",
     "BlockCluster",
+    "SuspectRegion",
     "nms_prune",
     "estimate_skew_degrees",
     "rotate_boxes",

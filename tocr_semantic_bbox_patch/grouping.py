@@ -211,7 +211,6 @@ def split_line_spans(
 def split_wide_lines(
     lines: List[Line],
     tokens: List[GlyphBox],
-    median_space_gap: float = 3.5,
 ) -> List[Line]:
     """Split lines that have multiple widely-separated spans into sub-lines.
 
@@ -221,95 +220,31 @@ def split_wide_lines(
     creates a separate Line for each span so that downstream spatial
     block grouping can treat them independently.
 
-    Additionally, any resulting single-span sub-line wider than 1.5× the
-    median span width is checked for a large inter-token gap (>
-    ``_wide_line_gap_mult × median_space_gap``).  If found, the sub-line
-    is split at that gap.  This catches cross-column merges where the
-    inter-column gap is smaller than the span threshold but still
-    significantly larger than a normal word space.
+    Single-span lines are kept as-is.
 
     Returns a new list of Lines with sequential IDs.
     """
-    _wide_line_gap_mult = 4.0  # gap must exceed this × median_space_gap
-
-    # Compute median *span* width from multi-span lines so we have a
-    # single-column width reference.  Single-span lines at this stage may
-    # span the entire page, inflating the median if we used raw line widths.
-    span_widths: List[float] = []
-    for ln in lines:
-        if len(ln.spans) >= 2:
-            for sp in ln.spans:
-                if sp.token_indices:
-                    xs = [tokens[i].x0 for i in sp.token_indices]
-                    xe = [tokens[i].x1 for i in sp.token_indices]
-                    span_widths.append(max(xe) - min(xs))
-    if not span_widths:
-        # Fallback: use line widths directly
-        span_widths = [
-            ln.bbox(tokens)[2] - ln.bbox(tokens)[0] for ln in lines if ln.token_indices
-        ]
-    med_span_width = median(span_widths) if span_widths else 0.0
-    wide_thresh = med_span_width * 1.5
-    gap_thresh = max(median_space_gap * _wide_line_gap_mult, 12.0)
-
-    # --- helper: try to split a single-span line at its largest gap ---
-    def _try_gap_split(line: Line, next_id_val: int) -> tuple[list[Line], int] | None:
-        """Return (sub_lines, updated_next_id) or None if no split needed."""
-        bb = line.bbox(tokens)
-        line_w = bb[2] - bb[0]
-        if len(line.token_indices) < 2 or line_w <= wide_thresh:
-            return None
-        sorted_idx = sorted(line.token_indices, key=lambda i: tokens[i].x0)
-        best_gap = 0.0
-        best_pos = -1
-        for j in range(len(sorted_idx) - 1):
-            g = tokens[sorted_idx[j + 1]].x0 - tokens[sorted_idx[j]].x1
-            if g > best_gap:
-                best_gap = g
-                best_pos = j
-        if best_gap < gap_thresh or best_pos < 0:
-            return None
-        # Split into two sub-lines at the gap
-        parts = [sorted_idx[: best_pos + 1], sorted_idx[best_pos + 1 :]]
-        subs: list[Line] = []
-        nid = next_id_val
-        for sub_idx in parts:
-            if not sub_idx:
-                continue
-            yc = [(tokens[i].y0 + tokens[i].y1) * 0.5 for i in sub_idx]
-            sub_bl = median(yc) if yc else line.baseline_y
-            sub_span = Span(token_indices=list(sub_idx), col_id=None)
-            subs.append(
-                Line(
-                    line_id=nid,
-                    page=line.page,
-                    token_indices=list(sub_idx),
-                    baseline_y=sub_bl,
-                    spans=[sub_span],
-                )
-            )
-            nid += 1
-        return subs, nid
-
-    # --- Phase 1: split multi-span lines into sub-lines per span,
-    #              keep single-span lines as-is. ---
-    phase1: List[Line] = []
+    result: List[Line] = []
     next_id = 0
 
     for line in lines:
         if len(line.spans) <= 1:
             line.line_id = next_id
             next_id += 1
-            phase1.append(line)
+            result.append(line)
             continue
 
         # Multi-span line: create a sub-line per span
         for span in line.spans:
             if not span.token_indices:
                 continue
+
             sub_indices = sorted(span.token_indices, key=lambda i: tokens[i].x0)
-            y_centers = [(tokens[i].y0 + tokens[i].y1) * 0.5 for i in sub_indices]
+            y_centers = [
+                (tokens[i].y0 + tokens[i].y1) * 0.5 for i in sub_indices
+            ]
             sub_baseline = median(y_centers) if y_centers else line.baseline_y
+
             sub_line = Line(
                 line_id=next_id,
                 page=line.page,
@@ -318,22 +253,7 @@ def split_wide_lines(
                 spans=[span],
             )
             next_id += 1
-            phase1.append(sub_line)
-
-    # --- Phase 2: split any wide single-span (sub-)lines at their
-    #              largest inter-token gap.  This catches cross-column
-    #              merges that survived the span threshold. ---
-    result: List[Line] = []
-    next_id = 0
-    for line in phase1:
-        split = _try_gap_split(line, next_id)
-        if split is not None:
-            subs, next_id = split
-            result.extend(subs)
-        else:
-            line.line_id = next_id
-            next_id += 1
-            result.append(line)
+            result.append(sub_line)
 
     # Re-sort by (baseline_y, min_x) for reading order
     def _sort_key(ln: Line) -> tuple:
@@ -779,7 +699,9 @@ def group_blocks_from_lines(
 
     x_clusters: List[List[Line]] = [[line_x0s[0][1]]]
     for x0, ln in line_x0s[1:]:
-        prev_x0 = sum(l.bbox(tokens)[0] for l in x_clusters[-1]) / len(x_clusters[-1])
+        prev_x0 = sum(
+            l.bbox(tokens)[0] for l in x_clusters[-1]
+        ) / len(x_clusters[-1])
         if abs(x0 - prev_x0) > col_gap:
             x_clusters.append([ln])
         else:
@@ -924,115 +846,7 @@ def _block_first_row_text(blk: BlockCluster) -> str:
     return re.sub(r"\s+", " ", " ".join(texts).strip()).upper()
 
 
-def flag_suspect_header_words(
-    blocks: List[BlockCluster],
-    min_word_len: int = 10,
-    debug_path: str | None = None,
-) -> List["SuspectRegion"]:
-    """Flag suspiciously long all-caps words in header blocks for VOCR inspection.
-
-    After ``mark_headers`` has run, this function scans each header block's
-    first row for words that are:
-      - ALL CAPS
-      - Longer than *min_word_len* characters
-      - Not a common English / engineering word (checked against a short
-        allow-list)
-
-    These are likely **fused compound words** where a separator (``/``,
-    ``-``, space) was lost during PDF authoring.  The returned
-    ``SuspectRegion`` list records the **exact glyph bbox** so the VOCR
-    symbol rectifier can re-OCR that region from the raster image.
-
-    Returns:
-        List of SuspectRegion, one per suspicious word.
-    """
-    from .models import SuspectRegion
-
-    # Common long all-caps words that are NOT fused compounds
-    _allowed_long = {
-        "CONSTRUCTION",
-        "DEPARTMENT",
-        "INFORMATION",
-        "TRANSPORTATION",
-        "SPECIFICATIONS",
-        "REINFORCEMENT",
-        "REINFORCED",
-        "REQUIREMENTS",
-        "INSTALLATION",
-        "GEOTECHNICAL",
-        "APPLICATIONS",
-        "CONTRACTOR",
-        "SUBCONTRACTOR",
-        "ABBREVIATIONS",
-        "RESPONSIBILITY",
-        "RESPONSIBLE",
-        "DESCRIPTION",
-        "DESCRIPTIONS",
-        "MISCELLANEOUS",
-        "ENVIRONMENTAL",
-        "COMPRESSIVE",
-        "REPLACEMENT",
-        "DETERMINING",
-        "RECOMMENDED",
-        "DEMOLITION",
-        "EXCAVATION",
-        "STRUCTURAL",
-        "FOUNDATION",
-        "ELECTRICAL",
-        "MECHANICAL",
-        "EARTHWORK",
-    }
-
-    suspects: list[SuspectRegion] = []
-    debug_path = debug_path or "debug_headers.txt"
-
-    with open(debug_path, "a", encoding="utf-8") as dbg:
-        dbg.write("\n[SUSPECT] --- Suspect header word scan ---\n")
-        for i, blk in enumerate(blocks):
-            if not getattr(blk, "is_header", False):
-                continue
-            if not blk.rows:
-                continue
-
-            header_text = _block_first_row_text(blk)
-            for box in blk.rows[0].boxes:
-                word = (box.text or "").strip()
-                if len(word) < min_word_len:
-                    continue
-                # Must be all uppercase (allows digits mixed in)
-                if not re.match(r"^[A-Z0-9]+$", word):
-                    continue
-                if word in _allowed_long:
-                    continue
-
-                sr = SuspectRegion(
-                    page=blk.page,
-                    x0=box.x0,
-                    y0=box.y0,
-                    x1=box.x1,
-                    y1=box.y1,
-                    word_text=word,
-                    context=header_text,
-                    reason=f"long_allcaps_word({len(word)}ch)",
-                    source_label=getattr(blk, "label", ""),
-                    block_index=i,
-                )
-                suspects.append(sr)
-                dbg.write(
-                    f"[SUSPECT] Block {i}: word='{word}' ({len(word)}ch)  "
-                    f"bbox=({box.x0:.1f},{box.y0:.1f},{box.x1:.1f},{box.y1:.1f})  "
-                    f"header='{header_text}'\n"
-                )
-
-        dbg.write(f"[SUSPECT] Total: {len(suspects)} suspect region(s)\n")
-    return suspects
-
-
-def mark_headers(
-    blocks: List[BlockCluster],
-    debug_path: str = None,
-    cfg: GroupingConfig | None = None,
-) -> None:
+def mark_headers(blocks: List[BlockCluster], debug_path: str = None, cfg: GroupingConfig | None = None) -> None:
     """Identify and label header blocks before notes grouping.
 
     Detection signals (any one is sufficient):
@@ -1072,9 +886,6 @@ def mark_headers(
     debug_path = debug_path or "debug_headers.txt"
     with open(debug_path, "a", encoding="utf-8") as dbg:
         for i, blk in enumerate(blocks):
-            # Preserve subheader labels from a prior split pass
-            if getattr(blk, "label", None) == "note_column_subheader":
-                continue
             blk.is_header = False
             if not blk.rows or len(blk.rows) > _max_rows:
                 continue  # Headers are short — skip tall blocks
@@ -1119,60 +930,6 @@ def mark_headers(
                 dbg.write(
                     f"[DEBUG] Header block {i}: '{text}' [{', '.join(signals)}]\n"
                 )
-
-    # ── Post-pass: split header blocks with subtitle rows ───────────
-    # If row-0 font size is noticeably larger than row-1+, the extra rows
-    # are a subtitle / description — split them into a separate block.
-    _font_drop_ratio = 0.85  # row-1 avg size < 85% of row-0 → split
-    inserts: list[tuple[int, BlockCluster]] = []  # (insert_after_idx, new_block)
-    for i, blk in enumerate(blocks):
-        if not blk.is_header or len(blk.rows) < 2:
-            continue
-        r0_sizes = [getattr(b, "font_size", 0.0) for b in blk.rows[0].boxes]
-        r0_sizes = [s for s in r0_sizes if s > 0]
-        if not r0_sizes:
-            continue
-        r0_avg = sum(r0_sizes) / len(r0_sizes)
-        r1_sizes = [
-            getattr(b, "font_size", 0.0) for row in blk.rows[1:] for b in row.boxes
-        ]
-        r1_sizes = [s for s in r1_sizes if s > 0]
-        if not r1_sizes:
-            continue
-        r1_avg = sum(r1_sizes) / len(r1_sizes)
-        if r1_avg < r0_avg * _font_drop_ratio:
-            # Split: keep only row 0 in the header block
-            subtitle_rows = blk.rows[1:]
-            blk.rows = blk.rows[:1]
-
-            # Also split lines/_tokens if present (new pipeline)
-            subtitle_lines: list = []
-            shared_tokens = blk._tokens
-            if blk.lines and shared_tokens and len(blk.lines) >= 2:
-                # Row 0 corresponds to line 0; remaining lines → subtitle
-                subtitle_lines = blk.lines[1:]
-                blk.lines = blk.lines[:1]
-
-            sub_block = BlockCluster(
-                page=blk.page,
-                rows=subtitle_rows,
-                lines=subtitle_lines,
-                _tokens=shared_tokens,
-                label="note_column_subheader",
-                parent_block_index=i,
-            )
-            inserts.append((i, sub_block))
-            with open(debug_path, "a", encoding="utf-8") as dbg:
-                sub_text = " ".join(b.text for row in subtitle_rows for b in row.boxes)
-                dbg.write(
-                    f"[DEBUG] Split header B{i}: subtitle row(s) "
-                    f"(avg {r1_avg:.1f} < {r0_avg:.1f}*{_font_drop_ratio}) "
-                    f"→ '{sub_text}'\n"
-                )
-
-    # Insert in reverse order so indices stay valid
-    for idx, new_blk in reversed(inserts):
-        blocks.insert(idx + 1, new_blk)
 
 
 def mark_notes(blocks: List[BlockCluster], debug_path: str = None) -> None:
@@ -1222,18 +979,14 @@ def group_notes_columns(
 ) -> List[NotesColumn]:
     """Group header blocks with their associated notes blocks into NotesColumn objects.
 
-    **Visual-column algorithm with reading-order continuation:**
+    **x0-clustering algorithm (no histogram columns):**
 
     1. Collect all header and notes blocks.
     2. Cluster them by x0 proximity: sort by x0, split on gaps > x_tolerance.
-       Each cluster represents a visual column on the page.
-    3. Sort clusters left-to-right; within each cluster, sort blocks top-to-bottom.
-    4. Walk blocks in reading order (left→right, top→bottom).  Headers open a
-       new NotesColumn.  Orphan notes blocks (those with no header at the top
-       of their visual column) are assigned to the *most recently opened*
-       NotesColumn from a previous cluster, creating a sub-column linked via
-       ``column_group_id``.  This handles "snake" columns where a single
-       notes section wraps across multiple visual columns.
+       Each cluster represents a visual column of notes.
+    3. Within each cluster, sort blocks top-to-bottom by y0.
+    4. Walk each cluster: headers open a new NotesColumn, notes append to
+       the most recently opened one. Notes before any header → orphan column.
 
     Returns a list of :class:`NotesColumn` objects.
     """
@@ -1284,33 +1037,22 @@ def group_notes_columns(
 
     with open(debug_path, "a", encoding="utf-8") as dbg:
         dbg.write(
-            f"\n[DEBUG] group_notes_columns (visual-column + reading-order): "
+            f"\n[DEBUG] group_notes_columns (x0-cluster): "
             f"{len(headers)} headers, {len(notes)} notes blocks, "
-            f"{len(x0_clusters)} visual-columns\n"
+            f"{len(x0_clusters)} x-clusters\n"
         )
 
         columns: List[NotesColumn] = []
-        # Track the last *named* (has-a-header) column in reading order
-        # so orphan visual columns can be linked as continuations.
-        last_named_col: NotesColumn | None = None
-        # Counter for sub-column indices per parent group
-        group_sub_index: dict[str, int] = {}  # group_id -> next sub-index (2, 3, …)
-        group_id_counter = 0
 
         for ci, cluster in enumerate(x0_clusters):
             # Sort cluster blocks top-to-bottom
             cluster.sort(key=lambda b: b.bbox()[1])
-
-            # Does this visual column start with a header?
-            first_is_header = cluster and getattr(cluster[0], "is_header", False)
+            active_col: NotesColumn | None = None
 
             dbg.write(
-                f"[DEBUG]   visual-column {ci}: {len(cluster)} blocks, "
-                f"x0 range [{cluster[0].bbox()[0]:.1f} .. {cluster[-1].bbox()[0]:.1f}]"
-                f"{' (starts with header)' if first_is_header else ''}\n"
+                f"[DEBUG]   x-cluster {ci}: {len(cluster)} blocks, "
+                f"x0 range [{cluster[0].bbox()[0]:.1f} .. {cluster[-1].bbox()[0]:.1f}]\n"
             )
-
-            active_col: NotesColumn | None = None
 
             for blk in cluster:
                 bb = blk.bbox()
@@ -1321,52 +1063,20 @@ def group_notes_columns(
                         f"[DEBUG]     Header '{header_text}' "
                         f"x0={bb[0]:.1f} y={bb[1]:.1f}\n"
                     )
-                    active_col = NotesColumn(page=blk.page, header=blk, notes_blocks=[])
+                    active_col = NotesColumn(
+                        page=blk.page, header=blk, notes_blocks=[]
+                    )
                     columns.append(active_col)
-                    last_named_col = active_col
 
                 elif getattr(blk, "is_notes", False):
                     if active_col is None:
-                        # No header yet in this visual column.
-                        # Link to last_named_col as a sub-column if available.
-                        if last_named_col is not None:
-                            # Create a sub-column linked to the parent
-                            parent_hdr = (
-                                _block_first_row_text(last_named_col.header)
-                                if last_named_col.header
-                                else "unnamed"
-                            )
-                            if last_named_col.column_group_id is None:
-                                last_named_col.column_group_id = (
-                                    f"notes_group_{group_id_counter}"
-                                )
-                                group_id_counter += 1
-                                group_sub_index[last_named_col.column_group_id] = 2
-
-                            grp = last_named_col.column_group_id
-                            sub_idx = group_sub_index.get(grp, 2)
-                            group_sub_index[grp] = sub_idx + 1
-
-                            active_col = NotesColumn(
-                                page=blk.page,
-                                header=None,
-                                notes_blocks=[],
-                                column_group_id=grp,
-                                continues_from=parent_hdr,
-                            )
-                            columns.append(active_col)
-                            dbg.write(
-                                f"[DEBUG]     Continuation sub-column "
-                                f"(continues '{parent_hdr}', sub={sub_idx})\n"
-                            )
-                        else:
-                            active_col = NotesColumn(
-                                page=blk.page, header=None, notes_blocks=[]
-                            )
-                            columns.append(active_col)
-                            dbg.write(
-                                "[DEBUG]     Orphan column opened (no header yet)\n"
-                            )
+                        active_col = NotesColumn(
+                            page=blk.page, header=None, notes_blocks=[]
+                        )
+                        columns.append(active_col)
+                        dbg.write(
+                            "[DEBUG]     Orphan column opened (no header yet)\n"
+                        )
 
                     active_col.notes_blocks.append(blk)
                     note_text = _block_first_row_text(blk)
@@ -1378,13 +1088,7 @@ def group_notes_columns(
         # Summary
         for col in columns:
             hdr = _block_first_row_text(col.header) if col.header else "(orphan)"
-            group_info = f" group={col.column_group_id}" if col.column_group_id else ""
-            cont_info = (
-                f" continues='{col.continues_from}'" if col.continues_from else ""
-            )
-            dbg.write(
-                f"[DEBUG] Column '{hdr}': {len(col.notes_blocks)} notes{group_info}{cont_info}\n"
-            )
+            dbg.write(f"[DEBUG] Column '{hdr}': {len(col.notes_blocks)} notes\n")
 
     return columns
 
@@ -1810,155 +1514,6 @@ def link_continued_columns(
         )
 
 
-def _split_wide_blocks(
-    blocks: List[BlockCluster],
-    tokens: List[GlyphBox],
-    settings: GroupingConfig,
-    median_space_gap: float,
-) -> List[BlockCluster]:
-    """Split blocks that span multiple visual columns.
-
-    When ``build_lines`` merges words from adjacent columns onto the same
-    Line (because their y-positions are within tolerance), and the inter-
-    column x-gap is smaller than ``span_gap_mult × median_space_gap``,
-    the resulting Block can span two visual columns.  This function
-    detects such blocks and splits them at the inter-column boundary,
-    then re-groups each half into independent blocks (respecting vertical
-    gaps and note-number starts).
-    """
-    if len(blocks) < 3:
-        return blocks
-
-    widths = sorted([b.bbox()[2] - b.bbox()[0] for b in blocks])
-    med_w = widths[len(widths) // 2]
-    width_thresh = med_w * 1.6
-    min_half = 60.0  # each side must be at least this wide
-
-    # Gap threshold: lighter than span_gap_mult (which missed these gaps)
-    gap_thresh = max(median_space_gap * 6.0, 20.0)
-
-    # For re-grouping split lines into blocks
-    note_re = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
-    line_heights = []
-    for blk in blocks:
-        for ln in blk.lines:
-            bb = ln.bbox(tokens)
-            h = bb[3] - bb[1]
-            if h > 0:
-                line_heights.append(h)
-    median_line_h = (
-        sorted(line_heights)[len(line_heights) // 2] if line_heights else 12.0
-    )
-    block_gap = median_line_h * settings.block_gap_mult
-
-    def _regroup(line_set: List[Line], page: int) -> List[BlockCluster]:
-        """Group a set of lines into blocks, splitting on vertical gap /
-        note-number start (mirrors the inner logic of group_blocks_from_lines).
-        """
-        if not line_set:
-            return []
-        line_set = sorted(line_set, key=lambda ln: ln.baseline_y)
-        sub_blocks: List[BlockCluster] = []
-        current: List[Line] = [line_set[0]]
-        for ln in line_set[1:]:
-            prev_bb = current[-1].bbox(tokens)
-            cur_bb = ln.bbox(tokens)
-            v_gap = cur_bb[1] - prev_bb[3]
-            line_text = ln.text(tokens).strip()
-            starts_note = bool(note_re.match(line_text))
-            if not starts_note and ln.spans:
-                for sp in ln.spans:
-                    sp_text = sp.text(tokens).strip()
-                    if sp_text and note_re.match(sp_text):
-                        starts_note = True
-                        break
-            should_split = v_gap > block_gap or (starts_note and len(current) >= 1)
-            if should_split:
-                blk = BlockCluster(page=page, rows=[], lines=current, _tokens=tokens)
-                blk.populate_rows_from_lines()
-                sub_blocks.append(blk)
-                current = [ln]
-            else:
-                current.append(ln)
-        if current:
-            blk = BlockCluster(page=page, rows=[], lines=current, _tokens=tokens)
-            blk.populate_rows_from_lines()
-            sub_blocks.append(blk)
-        return sub_blocks
-
-    result: List[BlockCluster] = []
-    for blk in blocks:
-        bb = blk.bbox()
-        blk_w = bb[2] - bb[0]
-        if blk_w <= width_thresh or len(blk.lines) < 2:
-            result.append(blk)
-            continue
-
-        # Collect all inter-token gaps within each line
-        gap_candidates: List[tuple] = []
-        for ln in blk.lines:
-            if len(ln.token_indices) < 2:
-                continue
-            sorted_idx = sorted(ln.token_indices, key=lambda i: tokens[i].x0)
-            for j in range(len(sorted_idx) - 1):
-                left_x1 = tokens[sorted_idx[j]].x1
-                right_x0 = tokens[sorted_idx[j + 1]].x0
-                gap = right_x0 - left_x1
-                if gap >= gap_thresh:
-                    gap_candidates.append((gap, left_x1, right_x0))
-
-        if not gap_candidates:
-            result.append(blk)
-            continue
-
-        # Choose the largest gap as the split boundary
-        gap_candidates.sort(key=lambda t: t[0], reverse=True)
-        best_left_x1, best_right_x0 = gap_candidates[0][1], gap_candidates[0][2]
-        split_x = (best_left_x1 + best_right_x0) / 2.0
-
-        # Both halves must be wide enough
-        if (split_x - bb[0]) < min_half or (bb[2] - split_x) < min_half:
-            result.append(blk)
-            continue
-
-        # Split each line's tokens at split_x
-        left_lines: List[Line] = []
-        right_lines: List[Line] = []
-        lid = 0
-        for ln in blk.lines:
-            left_idx = [i for i in ln.token_indices if tokens[i].x0 < split_x]
-            right_idx = [i for i in ln.token_indices if tokens[i].x0 >= split_x]
-            if left_idx:
-                left_idx = sorted(left_idx, key=lambda i: tokens[i].x0)
-                yc = [(tokens[i].y0 + tokens[i].y1) / 2.0 for i in left_idx]
-                left_lines.append(
-                    Line(
-                        line_id=lid,
-                        page=ln.page,
-                        token_indices=left_idx,
-                        baseline_y=median(yc) if yc else ln.baseline_y,
-                    )
-                )
-                lid += 1
-            if right_idx:
-                right_idx = sorted(right_idx, key=lambda i: tokens[i].x0)
-                yc = [(tokens[i].y0 + tokens[i].y1) / 2.0 for i in right_idx]
-                right_lines.append(
-                    Line(
-                        line_id=lid,
-                        page=ln.page,
-                        token_indices=right_idx,
-                        baseline_y=median(yc) if yc else ln.baseline_y,
-                    )
-                )
-                lid += 1
-
-        result.extend(_regroup(left_lines, blk.page))
-        result.extend(_regroup(right_lines, blk.page))
-
-    return result
-
-
 def build_clusters_v2(
     tokens: List[GlyphBox],
     page_height: float,
@@ -1996,13 +1551,10 @@ def build_clusters_v2(
 
     # Step 3b: Split multi-span lines into sub-lines so each sub-line
     #          belongs to one visual column (pure gap-based, no histograms)
-    lines = split_wide_lines(lines, tokens, median_space_gap)
+    lines = split_wide_lines(lines, tokens)
 
     # Step 4: Group lines into blocks via spatial proximity
     blocks = group_blocks_from_lines(lines, tokens, settings, median_space_gap)
-
-    # Step 4b: Split blocks that span multiple visual columns
-    blocks = _split_wide_blocks(blocks, tokens, settings, median_space_gap)
 
     # Step 5: Semantic labeling (uses .rows via compat shim)
     mark_tables(blocks, settings)
