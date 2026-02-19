@@ -5,7 +5,7 @@ from conftest import make_box
 
 from plancheck.config import GroupingConfig
 from plancheck.models import BlockCluster, NotesColumn, RowBand
-from plancheck.zoning import (
+from plancheck.analysis.zoning import (
     PageZone,
     ZoneTag,
     classify_blocks,

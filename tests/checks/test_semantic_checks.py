@@ -18,7 +18,7 @@ from plancheck.models import (
     StandardDetailEntry,
     StandardDetailRegion,
 )
-from plancheck.semantic_checks import (
+from plancheck.checks.semantic_checks import (
     CheckResult,
     _parse_date,
     check_abbreviation_duplicates,

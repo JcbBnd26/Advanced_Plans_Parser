@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from plancheck.export import (
+from plancheck.export.csv_export import (
     _bbox_str,
     export_abbreviations_csv,
     export_blocks_csv,

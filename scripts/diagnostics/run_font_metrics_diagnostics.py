@@ -10,8 +10,8 @@ import pdfplumber
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from plancheck.font_metrics import FontMetricsAnalyzer  # noqa: E402
-from plancheck.font_metrics import VisualMetricsAnalyzer
+from plancheck.grouping.font_metrics import FontMetricsAnalyzer  # noqa: E402
+from plancheck.grouping.font_metrics import VisualMetricsAnalyzer
 
 
 def _make_run_dir(run_root: Path, run_prefix: str) -> Path:

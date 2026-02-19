@@ -4,7 +4,7 @@ import math
 
 from conftest import make_box
 
-from plancheck.preprocess import (
+from plancheck.tocr.preprocess import (
     _cluster_boxes_into_lines,
     _line_angle,
     _weighted_median,

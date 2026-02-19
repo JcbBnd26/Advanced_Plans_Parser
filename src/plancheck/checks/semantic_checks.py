@@ -7,7 +7,7 @@ no LLM calls, no heuristics beyond what's already in the detectors.
 
 Usage::
 
-    from plancheck.semantic_checks import run_all_checks
+    from plancheck.checks.semantic_checks import run_all_checks
     findings = run_all_checks(page_data)
 """
 

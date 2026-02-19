@@ -3,7 +3,7 @@
 import json
 import string
 
-from plancheck.font_metrics import (
+from plancheck.grouping.font_metrics import (
     EXPECTED_WIDTH_RATIOS,
     FontMetricsAnalyzer,
     FontMetricsAnomaly,

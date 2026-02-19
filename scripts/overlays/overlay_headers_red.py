@@ -23,7 +23,8 @@ import pdfplumber
 from PIL import ImageDraw, ImageFont
 
 from plancheck import GlyphBox, GroupingConfig, build_clusters_v2, nms_prune
-from plancheck.page_data import deserialize_page, serialize_page
+from plancheck.export.page_data import deserialize_page, serialize_page
+from plancheck.tocr.extract import extract_tocr_from_page
 
 
 def _latest_overlays_dir() -> Path:
@@ -79,34 +80,10 @@ def main() -> None:
 
         with pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[page_idx]
-            page_w, page_h = float(page.width), float(page.height)
-            words = page.extract_words(
-                x_tolerance=cfg.tocr_x_tolerance,
-                y_tolerance=cfg.tocr_y_tolerance,
-                extra_attrs=["fontname", "size"] if cfg.tocr_extra_attrs else None,
-            )
-            tokens: list[GlyphBox] = []
-            for w in words:
-                x0 = max(0.0, min(page_w, float(w.get("x0", 0))))
-                x1 = max(0.0, min(page_w, float(w.get("x1", 0))))
-                y0 = max(0.0, min(page_h, float(w.get("top", 0))))
-                y1 = max(0.0, min(page_h, float(w.get("bottom", 0))))
-                text = w.get("text", "")
-                if x1 <= x0 or y1 <= y0:
-                    continue
-                tokens.append(
-                    GlyphBox(
-                        page=page_idx,
-                        x0=x0,
-                        y0=y0,
-                        x1=x1,
-                        y1=y1,
-                        text=text,
-                        origin="text",
-                        fontname=w.get("fontname", ""),
-                        font_size=float(w["size"]) if "size" in w else 0.0,
-                    )
-                )
+            result = extract_tocr_from_page(page, page_idx, cfg, mode="minimal")
+            tokens = result.tokens
+            page_w = result.page_width
+            page_h = result.page_height
 
         tokens = nms_prune(tokens, cfg.iou_prune)
         blocks = build_clusters_v2(tokens, page_h, cfg)
@@ -145,7 +122,7 @@ def main() -> None:
     ]
 
     # Build display labels using header-derived prefix (same as notes columns)
-    from plancheck.overlay import _header_to_prefix
+    from plancheck.export.overlay import _header_to_prefix
 
     prefix_counters: dict[str, int] = {}  # prefix → running count
     parent_label: dict[int, str] = {}  # block list index → prefix label

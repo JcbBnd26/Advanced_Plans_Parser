@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from conftest import make_block, make_box, make_graphic
 
-from plancheck._region_helpers import (
+from plancheck.analysis.region_helpers import (
     _bboxes_overlap,
     _extract_text_rows_from_blocks,
     _find_enclosing_rect,

@@ -60,6 +60,7 @@ from .pipeline import (
     input_fingerprint,
     run_stage,
 )
+from .tocr.extract import TocrPageResult, extract_tocr_from_page, extract_tocr_page
 from .tocr.preprocess import estimate_skew_degrees, nms_prune, rotate_boxes
 from .vocrpp import OcrPreprocessConfig, OcrPreprocessResult, preprocess_image_for_ocr
 
@@ -119,4 +120,7 @@ __all__ = [
     "create_synthetic_regions",
     "detect_semantic_regions",
     "mask_blocks_by_structural_boxes",
+    "TocrPageResult",
+    "extract_tocr_page",
+    "extract_tocr_from_page",
 ]

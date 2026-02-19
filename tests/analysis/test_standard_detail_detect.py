@@ -12,7 +12,7 @@ import logging
 import pytest
 from conftest import make_block, make_box, make_graphic
 
-from plancheck._standard_detail_detect import (
+from plancheck.analysis.standard_details import (
     _has_inline_entries,
     _is_standard_detail_header,
     _parse_standard_detail_entries,

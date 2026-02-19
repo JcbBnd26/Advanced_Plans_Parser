@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from plancheck.ocr_preprocess_pipeline import (
+from plancheck.vocrpp.preprocess import (
     OcrPreprocessConfig,
     _measure_metrics,
     _require_odd,

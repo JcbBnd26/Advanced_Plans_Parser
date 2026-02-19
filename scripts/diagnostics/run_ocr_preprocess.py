@@ -10,7 +10,7 @@ import pdfplumber
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from plancheck.ocr_preprocess_pipeline import (  # noqa: E402
+from plancheck.vocrpp.preprocess import (  # noqa: E402
     OcrPreprocessConfig,
     preprocess_image_for_ocr,
 )

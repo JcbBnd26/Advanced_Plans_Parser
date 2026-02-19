@@ -10,7 +10,7 @@ import logging
 import pytest
 from conftest import make_block, make_box, make_graphic
 
-from plancheck._misc_title_detect import _is_misc_title_text, detect_misc_title_regions
+from plancheck.analysis.misc_titles import _is_misc_title_text, detect_misc_title_regions
 
 
 class TestIsMiscTitleText:

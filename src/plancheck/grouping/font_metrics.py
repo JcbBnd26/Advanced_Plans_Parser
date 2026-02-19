@@ -10,7 +10,7 @@ Two detection methods:
 2. Visual: Compare rendered pixel extent to reported bbox (accurate, slower)
 
 Usage:
-    from plancheck.font_metrics import FontMetricsAnalyzer, VisualMetricsAnalyzer
+    from plancheck.grouping.font_metrics import FontMetricsAnalyzer, VisualMetricsAnalyzer
 
     # Fast heuristic check
     analyzer = FontMetricsAnalyzer()

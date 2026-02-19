@@ -34,7 +34,7 @@ from plancheck.models import (
     StandardDetailEntry,
     StandardDetailRegion,
 )
-from plancheck.overlay import (
+from plancheck.export.overlay import (
     COLOR_KEYS,
     COLUMN_COLORS,
     DEFAULT_COLOR,

@@ -85,19 +85,7 @@ from plancheck import (
     run_stage,
     zone_summary,
 )
-from plancheck._structural_boxes import (
-    BoxType,
-    detect_semantic_regions,
-    mask_blocks_by_structural_boxes,
-)
-from plancheck.export import export_page_results
-from plancheck.grouping import (
-    compute_median_space_gap,
-    group_notes_columns,
-    link_continued_columns,
-    mark_headers,
-)
-from plancheck.legends import (
+from plancheck.analysis.legends import (
     detect_abbreviation_regions,
     detect_legend_regions,
     detect_misc_title_regions,
@@ -106,20 +94,30 @@ from plancheck.legends import (
     extract_graphics,
     filter_graphics_outside_regions,
 )
+from plancheck.analysis.structural_boxes import (
+    BoxType,
+    detect_semantic_regions,
+    mask_blocks_by_structural_boxes,
+)
+from plancheck.checks.semantic_checks import run_all_checks
+from plancheck.export import export_page_results
+from plancheck.export.overlay import draw_columns_overlay, draw_lines_overlay
+from plancheck.grouping import (
+    compute_median_space_gap,
+    group_notes_columns,
+    link_continued_columns,
+    mark_headers,
+)
 from plancheck.models import (
     AbbreviationRegion,
     LegendRegion,
     RevisionRegion,
     StandardDetailRegion,
 )
+from plancheck.tocr.extract import extract_tocr_page
 
 # OCR image preprocessing
-from plancheck.ocr_preprocess_pipeline import (
-    OcrPreprocessConfig,
-    preprocess_image_for_ocr,
-)
-from plancheck.overlay import draw_columns_overlay, draw_lines_overlay
-from plancheck.semantic_checks import run_all_checks
+from plancheck.vocrpp.preprocess import OcrPreprocessConfig, preprocess_image_for_ocr
 
 
 def make_run_dir(base: Path, name: str) -> Path:
@@ -146,327 +144,16 @@ def page_boxes(
 ) -> tuple[list[GlyphBox], float, float, dict]:
     """Extract word boxes from PDF text layer with full diagnostics.
 
+    Delegates to :func:`plancheck.tocr.extract.extract_tocr_page` (full mode)
+    and returns the legacy 4-tuple.
+
     Returns
     -------
     (boxes, page_width, page_height, diagnostics)
         diagnostics dict contains font distribution, token stats, quality
         signals, and extraction parameters for the manifest.
     """
-    import logging
-    import re
-    import traceback
-    from collections import Counter
-
-    log = logging.getLogger(__name__)
-
-    if cfg is None:
-        cfg = GroupingConfig()
-
-    diag: dict = {
-        "extraction_params": {
-            "x_tolerance": cfg.tocr_x_tolerance,
-            "y_tolerance": cfg.tocr_y_tolerance,
-            "extra_attrs": cfg.tocr_extra_attrs,
-            "filter_control_chars": cfg.tocr_filter_control_chars,
-            "dedup_iou": cfg.tocr_dedup_iou,
-            "min_word_length": cfg.tocr_min_word_length,
-            "min_font_size": cfg.tocr_min_font_size,
-            "max_font_size": cfg.tocr_max_font_size,
-            "strip_whitespace_tokens": cfg.tocr_strip_whitespace_tokens,
-            "clip_to_page": cfg.tocr_clip_to_page,
-            "margin_pts": cfg.tocr_margin_pts,
-            "keep_rotated": cfg.tocr_keep_rotated,
-            "normalize_unicode": cfg.tocr_normalize_unicode,
-            "case_fold": cfg.tocr_case_fold,
-            "collapse_whitespace": cfg.tocr_collapse_whitespace,
-            "min_token_density": cfg.tocr_min_token_density,
-            "mojibake_threshold": cfg.tocr_mojibake_threshold,
-            "use_text_flow": cfg.tocr_use_text_flow,
-            "keep_blank_chars": cfg.tocr_keep_blank_chars,
-        },
-        "tokens_total": 0,
-        "tokens_raw": 0,
-        "tokens_degenerate_skipped": 0,
-        "tokens_control_char_cleaned": 0,
-        "tokens_empty_after_clean": 0,
-        "tokens_duplicate_removed": 0,
-        "tokens_font_size_filtered": 0,
-        "tokens_rotated_dropped": 0,
-        "tokens_margin_filtered": 0,
-        "tokens_short_filtered": 0,
-        "tokens_whitespace_filtered": 0,
-        "tokens_unicode_normalized": 0,
-        "tokens_case_folded": 0,
-        "tokens_whitespace_collapsed": 0,
-        "font_names": {},
-        "font_sizes": {},
-        "has_rotated_text": False,
-        "upright_count": 0,
-        "non_upright_count": 0,
-        "char_encoding_issues": 0,
-        "mojibake_fraction": 0.0,
-        "below_min_density": False,
-        "page_area_sqin": 0.0,
-        "token_density_per_sqin": 0.0,
-        "error": None,
-    }
-
-    # Control-character regex: U+0000–U+001F (except \t \n \r) plus BOM
-    _RE_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufeff]")
-    # Mojibake detector: replacement char or common encoding artifacts
-    _RE_MOJIBAKE = re.compile(r"[\ufffd\ufffc]|Ã.|â€.")
-
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            page = pdf.pages[page_num]
-            page_w, page_h = float(page.width), float(page.height)
-
-            # Page area in square inches (assuming pts; 72 pts/inch)
-            diag["page_area_sqin"] = round((page_w / 72.0) * (page_h / 72.0), 2)
-
-            # Build extract_words kwargs from config
-            extract_kwargs: dict = {
-                "x_tolerance": cfg.tocr_x_tolerance,
-                "y_tolerance": cfg.tocr_y_tolerance,
-            }
-            if cfg.tocr_use_text_flow:
-                extract_kwargs["use_text_flow"] = True
-            if cfg.tocr_keep_blank_chars:
-                extract_kwargs["keep_blank_chars"] = True
-            if cfg.tocr_extra_attrs:
-                extract_kwargs["extra_attrs"] = ["fontname", "size", "upright"]
-
-            words = page.extract_words(**extract_kwargs)
-            diag["tokens_raw"] = len(words)
-
-            font_name_counter: Counter = Counter()
-            font_size_counter: Counter = Counter()
-            boxes: list[GlyphBox] = []
-
-            for w in words:
-                # Coordinate extraction — optionally clip to page bounds
-                raw_x0 = float(w.get("x0", 0.0))
-                raw_x1 = float(w.get("x1", 0.0))
-                raw_y0 = float(w.get("top", 0.0))
-                raw_y1 = float(w.get("bottom", 0.0))
-                if cfg.tocr_clip_to_page:
-                    x0 = max(0.0, min(page_w, raw_x0))
-                    x1 = max(0.0, min(page_w, raw_x1))
-                    y0 = max(0.0, min(page_h, raw_y0))
-                    y1 = max(0.0, min(page_h, raw_y1))
-                else:
-                    x0, x1, y0, y1 = raw_x0, raw_x1, raw_y0, raw_y1
-                text = w.get("text", "")
-
-                # Skip degenerate boxes (zero-area)
-                if x1 <= x0 or y1 <= y0:
-                    diag["tokens_degenerate_skipped"] += 1
-                    continue
-
-                # Margin filter — drop words whose centre is within margin of edge
-                if cfg.tocr_margin_pts > 0:
-                    cx = (x0 + x1) / 2.0
-                    cy = (y0 + y1) / 2.0
-                    m = cfg.tocr_margin_pts
-                    if cx < m or cx > page_w - m or cy < m or cy > page_h - m:
-                        diag["tokens_margin_filtered"] += 1
-                        continue
-
-                # Track font info if available
-                fsize_val: float | None = None
-                fname: str = ""
-                if cfg.tocr_extra_attrs:
-                    fname = w.get("fontname", "unknown")
-                    fsize = w.get("size")
-                    font_name_counter[fname] += 1
-                    if fsize is not None:
-                        fsize_val = float(fsize)
-                        # Round to 1 decimal for grouping
-                        font_size_counter[str(round(fsize_val, 1))] += 1
-                    # Track rotated text
-                    upright = w.get("upright")
-                    if upright is not None:
-                        if upright:
-                            diag["upright_count"] += 1
-                        else:
-                            diag["non_upright_count"] += 1
-                            diag["has_rotated_text"] = True
-
-                # Font-size filter (requires extra_attrs)
-                if fsize_val is not None:
-                    if (
-                        cfg.tocr_min_font_size > 0
-                        and fsize_val < cfg.tocr_min_font_size
-                    ):
-                        diag["tokens_font_size_filtered"] += 1
-                        continue
-                    if (
-                        cfg.tocr_max_font_size > 0
-                        and fsize_val > cfg.tocr_max_font_size
-                    ):
-                        diag["tokens_font_size_filtered"] += 1
-                        continue
-
-                # Drop rotated text if configured
-                if not cfg.tocr_keep_rotated and cfg.tocr_extra_attrs:
-                    upright = w.get("upright")
-                    if upright is not None and not upright:
-                        diag["tokens_rotated_dropped"] += 1
-                        continue
-
-                # Filter control characters
-                if cfg.tocr_filter_control_chars and _RE_CONTROL.search(text):
-                    text = _RE_CONTROL.sub("", text)
-                    diag["tokens_control_char_cleaned"] += 1
-                    if not text.strip():
-                        diag["tokens_empty_after_clean"] += 1
-                        continue
-
-                # Detect encoding issues
-                if _RE_MOJIBAKE.search(text):
-                    diag["char_encoding_issues"] += 1
-
-                # Unicode normalisation (NFKC: ligatures, fullwidth, etc.)
-                if cfg.tocr_normalize_unicode:
-                    import unicodedata
-
-                    normed = unicodedata.normalize("NFKC", text)
-                    if normed != text:
-                        diag["tokens_unicode_normalized"] += 1
-                        text = normed
-
-                # Collapse internal whitespace runs to single space
-                if cfg.tocr_collapse_whitespace:
-                    collapsed = re.sub(r"\s+", " ", text)
-                    if collapsed != text:
-                        diag["tokens_whitespace_collapsed"] += 1
-                        text = collapsed
-
-                # Case folding
-                if cfg.tocr_case_fold:
-                    folded = text.lower()
-                    if folded != text:
-                        diag["tokens_case_folded"] += 1
-                        text = folded
-
-                # Strip whitespace-only tokens
-                if cfg.tocr_strip_whitespace_tokens and not text.strip():
-                    diag["tokens_whitespace_filtered"] += 1
-                    continue
-
-                # Minimum word length
-                if (
-                    cfg.tocr_min_word_length > 0
-                    and len(text.strip()) < cfg.tocr_min_word_length
-                ):
-                    diag["tokens_short_filtered"] += 1
-                    continue
-
-                boxes.append(
-                    GlyphBox(
-                        page=page_num,
-                        x0=x0,
-                        y0=y0,
-                        x1=x1,
-                        y1=y1,
-                        text=text,
-                        origin="text",
-                        fontname=fname,
-                        font_size=fsize_val or 0.0,
-                    )
-                )
-
-            # Deduplicate overlapping identical-text boxes
-            if cfg.tocr_dedup_iou > 0 and len(boxes) > 1:
-                keep = [True] * len(boxes)
-                for i in range(len(boxes)):
-                    if not keep[i]:
-                        continue
-                    for j in range(i + 1, len(boxes)):
-                        if not keep[j]:
-                            continue
-                        if boxes[i].text != boxes[j].text:
-                            continue
-                        # Compute IoU
-                        ix0 = max(boxes[i].x0, boxes[j].x0)
-                        iy0 = max(boxes[i].y0, boxes[j].y0)
-                        ix1 = min(boxes[i].x1, boxes[j].x1)
-                        iy1 = min(boxes[i].y1, boxes[j].y1)
-                        inter = max(0, ix1 - ix0) * max(0, iy1 - iy0)
-                        a1 = boxes[i].area()
-                        a2 = boxes[j].area()
-                        union = a1 + a2 - inter
-                        if union > 0 and inter / union >= cfg.tocr_dedup_iou:
-                            keep[j] = False
-                            diag["tokens_duplicate_removed"] += 1
-                boxes = [b for b, k in zip(boxes, keep) if k]
-
-            diag["tokens_total"] = len(boxes)
-            diag["font_names"] = dict(font_name_counter.most_common(20))
-            diag["font_sizes"] = dict(font_size_counter.most_common(20))
-
-            # Token density
-            if diag["page_area_sqin"] > 0:
-                diag["token_density_per_sqin"] = round(
-                    len(boxes) / diag["page_area_sqin"], 1
-                )
-
-            # Mojibake fraction
-            if diag["tokens_raw"] > 0:
-                diag["mojibake_fraction"] = round(
-                    diag["char_encoding_issues"] / diag["tokens_raw"], 4
-                )
-
-            # Min-density flag
-            if (
-                cfg.tocr_min_token_density > 0
-                and diag["token_density_per_sqin"] < cfg.tocr_min_token_density
-            ):
-                diag["below_min_density"] = True
-
-            # Quality warnings
-            if len(boxes) == 0:
-                log.warning(
-                    "TOCR page %d: zero tokens extracted (blank or image-only page)",
-                    page_num,
-                )
-            if diag["char_encoding_issues"] > 0:
-                log.warning(
-                    "TOCR page %d: %d tokens with encoding issues (mojibake)",
-                    page_num,
-                    diag["char_encoding_issues"],
-                )
-            if (
-                cfg.tocr_mojibake_threshold > 0
-                and diag["mojibake_fraction"] > cfg.tocr_mojibake_threshold
-            ):
-                log.warning(
-                    "TOCR page %d: mojibake fraction %.1f%% exceeds threshold %.1f%%",
-                    page_num,
-                    diag["mojibake_fraction"] * 100,
-                    cfg.tocr_mojibake_threshold * 100,
-                )
-            if diag["below_min_density"]:
-                log.warning(
-                    "TOCR page %d: token density %.1f/sq-in below minimum %.1f",
-                    page_num,
-                    diag["token_density_per_sqin"],
-                    cfg.tocr_min_token_density,
-                )
-            if diag["has_rotated_text"]:
-                log.info(
-                    "TOCR page %d: %d non-upright (rotated) words detected",
-                    page_num,
-                    diag["non_upright_count"],
-                )
-
-    except Exception as e:
-        log.error("TOCR page %d: extraction failed: %s", page_num, e)
-        traceback.print_exc()
-        diag["error"] = str(e)
-        return [], 0.0, 0.0, diag
-
-    return boxes, page_w, page_h, diag
+    return extract_tocr_page(pdf_path, page_num, cfg, mode="full").to_legacy_tuple()
 
 
 def render_page_image(pdf_path: Path, page_num: int, resolution: int = 200):

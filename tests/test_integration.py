@@ -12,7 +12,7 @@ import pytest
 from conftest import make_box
 
 from plancheck.config import GroupingConfig
-from plancheck.export import export_blocks_csv, export_notes_csv
+from plancheck.export.csv_export import export_blocks_csv, export_notes_csv
 from plancheck.grouping import (
     build_clusters_v2,
     group_notes_columns,
@@ -20,7 +20,7 @@ from plancheck.grouping import (
     mark_headers,
     mark_notes,
 )
-from plancheck.zoning import classify_blocks, detect_zones
+from plancheck.analysis.zoning import classify_blocks, detect_zones
 
 # ── Synthetic page layout ─────────────────────────────────────────────
 

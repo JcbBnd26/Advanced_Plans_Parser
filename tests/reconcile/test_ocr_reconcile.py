@@ -4,12 +4,11 @@ import pytest
 from conftest import make_box
 
 from plancheck.config import GroupingConfig
-from plancheck.ocr_reconcile import (
+from plancheck.reconcile.reconcile import (
     SymbolCandidate,
     _accept_candidates,
     _build_match_index,
     _center,
-    _dedup_tiles,
     _estimate_char_width,
     _extra_symbols,
     _find_line_neighbours,
@@ -17,11 +16,11 @@ from plancheck.ocr_reconcile import (
     _has_allowed_symbol,
     _has_digit_neighbour_left,
     _has_numeric_symbol_context,
-    _iou,
     _is_digit_group,
     _overlap_ratio,
     _overlaps_existing,
 )
+from plancheck.vocr.extract import _dedup_tiles, _iou
 
 
 class TestHasAllowedSymbol:

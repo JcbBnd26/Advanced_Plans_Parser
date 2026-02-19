@@ -22,7 +22,7 @@ from plancheck.grouping import (
     mark_headers,
     mark_notes,
 )
-from plancheck.overlay import draw_lines_overlay
+from plancheck.export.overlay import draw_lines_overlay
 
 
 def make_run_dir(name: str | None = None) -> Path:

@@ -11,7 +11,7 @@ import logging
 import pytest
 from conftest import make_block, make_box, make_graphic
 
-from plancheck._abbreviation_detect import (
+from plancheck.analysis.abbreviations import (
     _is_abbreviation_header,
     _parse_abbreviation_entries,
     _parse_abbreviation_entries_two_column,

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from plancheck._structural_boxes import (
+from plancheck.analysis.structural_boxes import (
     BoxType,
     SemanticRegion,
     StructuralBox,

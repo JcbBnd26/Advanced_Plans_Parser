@@ -11,7 +11,7 @@ import logging
 import pytest
 from conftest import make_block, make_box, make_graphic
 
-from plancheck._revision_detect import (
+from plancheck.analysis.revisions import (
     _has_revision_column_headers,
     _is_column_header_row,
     _is_revision_header,

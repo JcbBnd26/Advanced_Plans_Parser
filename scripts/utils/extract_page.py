@@ -24,9 +24,10 @@ import json
 
 import pdfplumber
 
-from plancheck import GlyphBox, GroupingConfig, build_clusters_v2, nms_prune
+from plancheck import GroupingConfig, build_clusters_v2, nms_prune
+from plancheck.export.page_data import serialize_page
 from plancheck.grouping import group_notes_columns, link_continued_columns
-from plancheck.page_data import serialize_page
+from plancheck.tocr.extract import extract_tocr_from_page
 
 
 def _latest_overlays_dir() -> Path:
@@ -60,33 +61,10 @@ def main() -> None:
     # ── Extract tokens from PDF ────────────────────────────────────────────
     with pdfplumber.open(args.pdf) as pdf:
         page = pdf.pages[args.page]
-        page_w, page_h = float(page.width), float(page.height)
-        words = page.extract_words(
-            x_tolerance=cfg.tocr_x_tolerance,
-            y_tolerance=cfg.tocr_y_tolerance,
-            extra_attrs=["fontname", "size"] if cfg.tocr_extra_attrs else None,
-        )
-        tokens: list[GlyphBox] = []
-        for w in words:
-            x0 = max(0.0, min(page_w, float(w.get("x0", 0))))
-            x1 = max(0.0, min(page_w, float(w.get("x1", 0))))
-            y0 = max(0.0, min(page_h, float(w.get("top", 0))))
-            y1 = max(0.0, min(page_h, float(w.get("bottom", 0))))
-            if x1 <= x0 or y1 <= y0:
-                continue
-            tokens.append(
-                GlyphBox(
-                    page=args.page,
-                    x0=x0,
-                    y0=y0,
-                    x1=x1,
-                    y1=y1,
-                    text=w.get("text", ""),
-                    origin="text",
-                    fontname=w.get("fontname", ""),
-                    font_size=float(w["size"]) if "size" in w else 0.0,
-                )
-            )
+        result = extract_tocr_from_page(page, args.page, cfg, mode="minimal")
+        tokens = result.tokens
+        page_w = result.page_width
+        page_h = result.page_height
 
     # ── Run grouping pipeline ─────────────────────────────────────────────
     tokens = nms_prune(tokens, cfg.iou_prune)

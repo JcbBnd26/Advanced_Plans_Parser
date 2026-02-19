@@ -11,7 +11,7 @@ import logging
 import pytest
 from conftest import make_block, make_box, make_graphic
 
-from plancheck.legends import (
+from plancheck.analysis.legends import (
     _detect_legend_columns,
     _is_legend_header,
     _pair_symbols_with_text,
