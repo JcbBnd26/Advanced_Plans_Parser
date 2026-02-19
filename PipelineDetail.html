@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Detail — Advanced Plans Parser</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 28px;
+            margin-bottom: 6px;
+            background: linear-gradient(135deg, #38bdf8, #818cf8);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .subtitle { color: #94a3b8; margin-bottom: 40px; font-size: 14px; }
+
+        /* ── timeline spine ─────────────────────────────── */
+        .timeline {
+            position: relative;
+            padding-left: 48px;
+        }
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 18px;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: linear-gradient(to bottom, #38bdf8, #818cf8, #c084fc, #f472b6, #facc15);
+            border-radius: 2px;
+        }
+
+        /* ── step card ──────────────────────────────────── */
+        .step {
+            position: relative;
+            margin-bottom: 36px;
+        }
+
+        .step-dot {
+            position: absolute;
+            left: -38px;
+            top: 14px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 3px solid var(--dot-color, #38bdf8);
+            background: #0f172a;
+            z-index: 2;
+        }
+
+        .step-card {
+            background: #1e293b;
+            border-radius: 12px;
+            border-left: 4px solid var(--dot-color, #38bdf8);
+            padding: 22px 26px;
+            box-shadow: 0 4px 20px rgba(0,0,0,.3);
+        }
+
+        .step-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .step-number {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--dot-color, #38bdf8);
+            background: rgba(56,189,248,.12);
+            padding: 3px 10px;
+            border-radius: 20px;
+            white-space: nowrap;
+        }
+
+        .step-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #f1f5f9;
+        }
+
+        .step-summary {
+            font-size: 14px;
+            color: #94a3b8;
+            margin-bottom: 14px;
+            line-height: 1.6;
+        }
+
+        .detail-list {
+            list-style: none;
+            padding: 0;
+        }
+        .detail-list li {
+            position: relative;
+            padding-left: 22px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #cbd5e1;
+            line-height: 1.55;
+        }
+        .detail-list li::before {
+            content: '→';
+            position: absolute;
+            left: 0;
+            color: var(--dot-color, #38bdf8);
+            font-weight: bold;
+        }
+
+        .badge-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .badge {
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+        .badge-input  { background: rgba(56,189,248,.15); color: #7dd3fc; }
+        .badge-output { background: rgba(74,222,128,.15); color: #86efac; }
+        .badge-lib    { background: rgba(196,181,253,.15); color: #c4b5fd; }
+        .badge-file   { background: rgba(251,191,36,.15);  color: #fde68a; }
+
+        /* ── parallel fork ──────────────────────────────── */
+        .parallel-wrapper {
+            position: relative;
+            margin-bottom: 36px;
+        }
+        .parallel-label {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        .parallel-label span {
+            background: rgba(251,191,36,.15);
+            color: #fbbf24;
+            padding: 5px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            border: 1px solid rgba(251,191,36,.35);
+        }
+        .parallel-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 700px) {
+            .parallel-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ── section divider ────────────────────────────── */
+        .phase-divider {
+            text-align: center;
+            margin: 50px 0 30px;
+            position: relative;
+        }
+        .phase-divider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: #334155;
+        }
+        .phase-divider span {
+            position: relative;
+            background: #0f172a;
+            padding: 0 20px;
+            color: #94a3b8;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        /* ── collapsible sub-steps ──────────────────────── */
+        details {
+            margin-top: 10px;
+        }
+        details summary {
+            cursor: pointer;
+            font-size: 13px;
+            color: #7dd3fc;
+            font-weight: 600;
+            padding: 4px 0;
+            user-select: none;
+        }
+        details summary:hover { color: #bae6fd; }
+        details[open] summary { margin-bottom: 8px; }
+
+        /* ── footer ─────────────────────────────────────── */
+        .footer {
+            margin-top: 60px;
+            text-align: center;
+            color: #475569;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Advanced Plans Parser — Full Pipeline Detail</h1>
+    <p class="subtitle">Every step the system takes from a raw PDF to structured JSON output, explained in sequence.</p>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Pre-Pipeline Setup</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="timeline">
+
+        <!-- STEP 0 -->
+        <div class="step" style="--dot-color: #94a3b8;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STEP 0</span>
+                    <span class="step-title">Create Settings (GroupingConfig)</span>
+                </div>
+                <p class="step-summary">
+                    Before anything runs, the system creates a single settings object called <strong>GroupingConfig</strong>.
+                    Think of it as a control panel with ~100 knobs — every later stage reads the knobs it cares about.
+                    If you don't customize anything, sensible defaults are used automatically.
+                </p>
+                <details>
+                    <summary>What kinds of settings live here?</summary>
+                    <ul class="detail-list">
+                        <li>How close characters must be to count as one word (x/y tolerance)</li>
+                        <li>Minimum / maximum font size to keep</li>
+                        <li>Whether to keep rotated (sideways) text</li>
+                        <li>Page-edge margin to ignore (title blocks, borders)</li>
+                        <li>Quality thresholds — garbled-text detection, word-density minimums</li>
+                        <li>OCR engine settings — confidence thresholds, allowed symbols, tiling</li>
+                        <li>Image preprocessing toggles — grayscale, contrast, sharpening, denoising</li>
+                        <li>Grouping geometry — row spacing, column gap detection, block height limits</li>
+                        <li>Region detection parameters for legends, abbreviations, revisions, etc.</li>
+                    </ul>
+                </details>
+                <div class="badge-row">
+                    <span class="badge badge-file">📄 src/plancheck/config.py</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 0b -->
+        <div class="step" style="--dot-color: #94a3b8;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STEP 0b</span>
+                    <span class="step-title">Create Run Folder</span>
+                </div>
+                <p class="step-summary">
+                    A timestamped folder is created under <code>runs/</code> (e.g. <code>run_20260215_103528_IFC_Operations_Facil</code>).
+                    Every file the pipeline produces — images, JSON, overlays, logs — goes into sub-folders here.
+                    Old runs are automatically cleaned up (default: keep the last 50).
+                </p>
+                <div class="badge-row">
+                    <span class="badge badge-output">📁 runs/run_&lt;timestamp&gt;_&lt;name&gt;/</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Stage 1 — INGEST</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="timeline">
+        <div class="step" style="--dot-color: #3b82f6;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 1</span>
+                    <span class="step-title">INGEST — Open & Render the PDF</span>
+                </div>
+                <p class="step-summary">
+                    The pipeline opens the PDF file and renders the requested page into a picture (like taking a screenshot of the page).
+                    The rendering resolution (DPI) controls how sharp the image is — higher means more detail but slower.
+                    This image is used later for visual OCR. The page dimensions (width × height in PDF points) are also recorded.
+                </p>
+                <ul class="detail-list">
+                    <li>Open the PDF using pdfplumber</li>
+                    <li>Render the target page at the configured DPI (default 200)</li>
+                    <li>Store the resulting image in memory — this becomes the "background image" for overlays later</li>
+                    <li>Record page dimensions (width × height in points, where 72 points = 1 inch)</li>
+                    <li>This stage always runs — it cannot be skipped</li>
+                </ul>
+                <div class="badge-row">
+                    <span class="badge badge-input">PDF file + page number</span>
+                    <span class="badge badge-output">Page image + dimensions</span>
+                    <span class="badge badge-lib">pdfplumber · Pillow</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Stages 2a &amp; 2b — Run in Parallel</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="parallel-wrapper">
+        <div class="parallel-label"><span>⚡ These two stages run at the same time to save time</span></div>
+
+        <div class="parallel-grid">
+
+            <!-- TOCR -->
+            <div class="step-card" style="--dot-color: #10b981; border-left: 4px solid #10b981;">
+                <div class="step-header">
+                    <span class="step-number" style="color:#10b981; background:rgba(16,185,129,.12);">STAGE 2a</span>
+                    <span class="step-title">TOCR — Read Text from PDF</span>
+                </div>
+                <p class="step-summary">
+                    Every PDF has a hidden text layer that describes the words printed on the page (put there by the CAD software that created the drawing).
+                    TOCR reads that layer, cleans up the raw data, removes junk, and packages each word into a tidy box with its position, font name, and font size.
+                </p>
+                <ul class="detail-list">
+                    <li>Ask pdfplumber for every word on the page, along with its position and font info</li>
+                    <li>Convert each word into a standard "GlyphBox" — a rectangle with text and metadata attached</li>
+                    <li>Clip boxes so none extend outside the page boundaries</li>
+                    <li>Filter out words too close to the page edge (title blocks, borders)</li>
+                    <li>Filter out words with unusually large or small font sizes</li>
+                    <li>Optionally drop rotated / sideways text</li>
+                    <li>Strip invisible control characters; discard words that become empty afterward</li>
+                    <li>Normalize text — fix unusual Unicode forms, collapse extra spaces</li>
+                    <li>Remove duplicate boxes — if two boxes have the same text and overlap heavily, keep only one</li>
+                    <li>Calculate quality metrics: words per square inch (density), percentage of garbled text (mojibake), font distribution</li>
+                    <li>Flag warnings if the page looks blank, has too many garbled characters, or falls below minimum density</li>
+                </ul>
+                <details>
+                    <summary>What comes out?</summary>
+                    <ul class="detail-list">
+                        <li>A list of GlyphBox tokens — each with position, text, font name, font size, and origin = "text"</li>
+                        <li>Page width and height in PDF points</li>
+                        <li>A diagnostics report: token counts at every filter step, font distributions, density, quality flags</li>
+                        <li>If extraction fails, an error message is returned and the pipeline gets an empty list so it can continue</li>
+                    </ul>
+                </details>
+                <details>
+                    <summary>Two modes</summary>
+                    <ul class="detail-list">
+                        <li><strong>Full</strong> — all filtering, normalization, dedup, and diagnostics. Used by the batch pipeline.</li>
+                        <li><strong>Minimal</strong> — only clips coordinates and skips zero-area boxes. Used by viewers/overlays where speed matters.</li>
+                    </ul>
+                </details>
+                <div class="badge-row">
+                    <span class="badge badge-lib">pdfplumber</span>
+                    <span class="badge badge-file">📄 src/plancheck/tocr/extract.py</span>
+                </div>
+            </div>
+
+            <!-- VOCRPP -->
+            <div class="step-card" style="--dot-color: #f59e0b; border-left: 4px solid #f59e0b;">
+                <div class="step-header">
+                    <span class="step-number" style="color:#f59e0b; background:rgba(245,158,11,.12);">STAGE 2b</span>
+                    <span class="step-title">VOCRPP — Prepare Image for OCR</span>
+                </div>
+                <p class="step-summary">
+                    Construction drawings are often faint, noisy, or low-contrast. Before the OCR engine looks at the page image,
+                    this stage enhances it — making text sharper, backgrounds cleaner, and lines crisper so the OCR can read more accurately.
+                    Each enhancement step is optional and controlled by the settings.
+                </p>
+                <ul class="detail-list">
+                    <li>Render a separate copy of the page at the OCR resolution (may differ from the overlay resolution)</li>
+                    <li><strong>Grayscale</strong> — convert from color to black-and-white shades (removes color noise)</li>
+                    <li><strong>Auto-contrast</strong> — stretch the brightness range so faint text stands out</li>
+                    <li><strong>CLAHE</strong> — locally adaptive contrast enhancement (brightens dark corners without blowing out light areas)</li>
+                    <li><strong>Median denoise</strong> — smooth out speckle noise while keeping edges sharp</li>
+                    <li><strong>Adaptive binarize</strong> — convert to pure black-and-white, adjusting the threshold for each small region of the image</li>
+                    <li><strong>Sharpen</strong> — boost edge definition so letters are crisper</li>
+                    <li>Save the processed image as <code>page_XXXX_ocr_input.png</code> in the run folder</li>
+                    <li>Record which steps were actually applied and quality metrics (mean brightness, contrast)</li>
+                </ul>
+                <details>
+                    <summary>Can be skipped?</summary>
+                    <ul class="detail-list">
+                        <li>Yes — if OCR reconciliation is disabled in the settings, this stage is gated off and doesn't run at all</li>
+                        <li>If it doesn't run, the next stage (VOCR) uses the raw unprocessed image instead</li>
+                    </ul>
+                </details>
+                <div class="badge-row">
+                    <span class="badge badge-lib">OpenCV · Pillow</span>
+                    <span class="badge badge-file">📄 src/plancheck/vocrpp/preprocess.py</span>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Between Stages — Quick Cleanup</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="timeline">
+        <div class="step" style="--dot-color: #64748b;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">CLEANUP</span>
+                    <span class="step-title">NMS Prune & Skew Correction</span>
+                </div>
+                <p class="step-summary">
+                    Before moving to visual OCR, the text boxes from TOCR get a quick cleanup pass.
+                </p>
+                <ul class="detail-list">
+                    <li><strong>NMS prune</strong> — "Non-Maximum Suppression." If two boxes overlap a lot (above a threshold),
+                        the smaller / lower-confidence one is removed. Prevents the same word from being counted twice.</li>
+                    <li><strong>Skew correction</strong> (optional) — if the page was scanned crooked, estimate the rotation angle and
+                        rotate all the boxes to straighten them out. Only runs if enabled in settings.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Stage 3 — VOCR</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="timeline">
+        <div class="step" style="--dot-color: #8b5cf6;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 3</span>
+                    <span class="step-title">VOCR — Visual OCR (PaddleOCR)</span>
+                </div>
+                <p class="step-summary">
+                    The hidden text layer from TOCR misses certain characters — particularly symbols like <strong>/</strong>,
+                    <strong>%</strong>, <strong>°</strong>, and <strong>±</strong> that CAD software renders as vector graphics
+                    instead of real text characters. VOCR runs a deep-learning OCR engine (PaddleOCR) on the page <em>image</em>
+                    to find those missing symbols by "reading" the picture the way a human would.
+                </p>
+                <ul class="detail-list">
+                    <li>Pick the best image: use the preprocessed image from VOCRPP if available, otherwise use the raw rendered image</li>
+                    <li>Convert to RGB (PaddleOCR needs 3-channel images)</li>
+                    <li>If the image is very large, split it into overlapping tiles so PaddleOCR doesn't exceed its memory limit</li>
+                    <li>Run PaddleOCR on each tile (or the whole image if it fits) — this is the slowest step in the pipeline</li>
+                    <li>A heartbeat message prints every 15 seconds so you know it's still working</li>
+                    <li>Convert each OCR detection from pixel coordinates back to PDF-point coordinates</li>
+                    <li>Apply confidence threshold — discard readings below minimum confidence (default 0.5)</li>
+                    <li>Filter out very short text and whitespace-only detections</li>
+                    <li>If tiling was used, deduplicate tokens from overlapping tile regions using IoU</li>
+                    <li>Record stats: total tokens, confidence min / max / mean, image source, effective DPI</li>
+                </ul>
+                <details>
+                    <summary>Can be skipped?</summary>
+                    <ul class="detail-list">
+                        <li>Yes — gated by the settings. If visual OCR is disabled, this stage is skipped entirely</li>
+                        <li>When skipped, the RECONCILE stage also skips (no OCR tokens to merge)</li>
+                    </ul>
+                </details>
+                <div class="badge-row">
+                    <span class="badge badge-input">Preprocessed or raw page image</span>
+                    <span class="badge badge-output">OCR tokens + confidence scores</span>
+                    <span class="badge badge-lib">PaddleOCR · NumPy</span>
+                    <span class="badge badge-file">📄 src/plancheck/vocr/extract.py</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Stage 4 — RECONCILE</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="timeline">
+        <div class="step" style="--dot-color: #ec4899;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 4</span>
+                    <span class="step-title">RECONCILE — Merge OCR Symbols into Text</span>
+                </div>
+                <p class="step-summary">
+                    This is where the two worlds meet. TOCR gave us the words from the PDF text layer.
+                    VOCR gave us what the OCR engine saw in the image. RECONCILE compares them,
+                    finds symbols that the text layer missed, and carefully injects them into the right positions.
+                    It uses a multi-phase approach to avoid false positives.
+                </p>
+                <ul class="detail-list">
+                    <li><strong>Match OCR tokens to PDF tokens</strong> — for each OCR detection, find the closest PDF text box using spatial overlap (IoU) or center proximity</li>
+                    <li><strong>Phase 0: Numeric context gate</strong> — only consider symbols that appear near numbers (e.g., "12/4" or "45%"). Random slashes in headings are ignored.</li>
+                    <li><strong>Case C: Composite match</strong> (tried first) — the OCR token spans multiple PDF tokens. Use digit anchoring and slot-based placement to figure out exactly where the symbol goes between words.</li>
+                    <li><strong>Case A: Matched extra symbols</strong> — the OCR token overlaps a PDF token but contains symbols the PDF token doesn't have. Place the extra symbol right after the existing word.</li>
+                    <li><strong>Case B: Unmatched symbol</strong> — the OCR found a symbol in empty space (no PDF token nearby). Check if a digit neighbour exists to the left; if so, inject it.</li>
+                    <li><strong>Phase 2: Composite deferral</strong> — if the OCR text looks like "12/4" (digits separated by symbols), defer to the smarter Case C logic instead of blindly appending.</li>
+                    <li><strong>Overlap guard</strong> — before injecting any symbol, check it doesn't overlap an existing token. If it does, reject it.</li>
+                    <li>Accepted symbols become new GlyphBox tokens with <code>origin = "ocr"</code></li>
+                    <li>After injection, run NMS prune again to catch any new overlaps</li>
+                    <li>Build a detailed debug log showing every OCR token, which path it took, and why it was accepted or rejected</li>
+                </ul>
+                <details>
+                    <summary>What symbols does it look for?</summary>
+                    <ul class="detail-list">
+                        <li>Configured via <code>ocr_reconcile_allowed_symbols</code> — default is: <strong>/ % ° ±</strong></li>
+                        <li>These are the characters most commonly lost when CAD software converts drawings to PDF</li>
+                    </ul>
+                </details>
+                <div class="badge-row">
+                    <span class="badge badge-input">TOCR tokens + VOCR tokens + page image</span>
+                    <span class="badge badge-output">Merged token list + injection log</span>
+                    <span class="badge badge-lib">NumPy · Regex</span>
+                    <span class="badge badge-file">📄 src/plancheck/reconcile/reconcile.py</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Stage 5 — GROUPING</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="timeline">
+        <div class="step" style="--dot-color: #06b6d4;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 5</span>
+                    <span class="step-title">GROUPING — Organize Words into Structure</span>
+                </div>
+                <p class="step-summary">
+                    At this point we have a flat pile of word boxes. Grouping turns that pile into something structured —
+                    rows, lines, paragraphs, tables, and note sections — purely based on the geometry (positions and spacing)
+                    of the words on the page.
+                </p>
+                <ul class="detail-list">
+                    <li><strong>Group rows</strong> — sort words by vertical position and cluster them into horizontal rows (words that sit on the same line)</li>
+                    <li><strong>Split wide rows</strong> — if a row stretches too far across the page, it probably spans multiple columns; split it at the largest horizontal gaps</li>
+                    <li><strong>Detect columns</strong> — look for consistent vertical gaps (gutters) across many rows to identify page columns. Uses histogram analysis.</li>
+                    <li><strong>Build lines</strong> — within each column, combine rows into structured lines with proper left-to-right reading order</li>
+                    <li><strong>Split line spans</strong> — break lines into sub-groups (spans) when there are large gaps between words (like table columns)</li>
+                    <li><strong>Group blocks</strong> — stack nearby lines into blocks (think: paragraphs or table sections) based on vertical spacing</li>
+                    <li><strong>Mark tables</strong> — look at each block and flag it as a table if its rows have evenly-spaced columns (low variation in alignment)</li>
+                    <li><strong>Mark headers</strong> — identify block-level headers (bold or larger text at the top of a block)</li>
+                    <li><strong>Mark notes</strong> — detect numbered-note blocks (e.g., "1. Do this…", "2. Do that…")</li>
+                    <li><strong>Group notes columns</strong> — combine consecutive note blocks under a shared header into a notes column</li>
+                    <li><strong>Link continued columns</strong> — connect notes that continue from one area of the page to another (e.g., "NOTES" → "NOTES (CONT'D)")</li>
+                </ul>
+                <details>
+                    <summary>What comes out?</summary>
+                    <ul class="detail-list">
+                        <li><strong>BlockCluster[]</strong> — a list of blocks, each containing rows, lines, and spans</li>
+                        <li>Each block knows if it's a table, a notes section, or a header</li>
+                        <li><strong>NotesColumn[]</strong> — groups of note blocks with their headers and continuation links</li>
+                    </ul>
+                </details>
+                <div class="badge-row">
+                    <span class="badge badge-input">Merged token list</span>
+                    <span class="badge badge-output">Blocks · Lines · Spans · Notes columns</span>
+                    <span class="badge badge-lib">NumPy · custom algorithms</span>
+                    <span class="badge badge-file">📄 src/plancheck/grouping/clustering.py</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Stage 6 — ZONING &amp; REGION DETECTION</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="timeline">
+
+        <div class="step" style="--dot-color: #14b8a6;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 6a</span>
+                    <span class="step-title">Extract Graphics</span>
+                </div>
+                <p class="step-summary">
+                    Pull all drawn shapes (rectangles, lines, paths) from the PDF's vector graphics layer.
+                    These are the boxes and borders that surround legends, title blocks, revision tables, etc.
+                    They help the detectors below figure out which areas of the page are enclosed in boxes.
+                </p>
+                <div class="badge-row">
+                    <span class="badge badge-lib">pdfplumber</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="step" style="--dot-color: #14b8a6;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 6b</span>
+                    <span class="step-title">Structural Box & Semantic Region Detection</span>
+                </div>
+                <p class="step-summary">
+                    Find large enclosing rectangles on the page (boxes drawn around groups of text) and classify them
+                    as title blocks, legend boxes, etc. Also identify semantic regions — meaningful areas anchored by header text.
+                </p>
+            </div>
+        </div>
+
+        <div class="step" style="--dot-color: #14b8a6;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 6c</span>
+                    <span class="step-title">Region Detectors (run in sequence)</span>
+                </div>
+                <p class="step-summary">
+                    A series of specialized detectors run one after another. Each detector finds a specific type of content
+                    on the page and adds its area to an "exclusion zone" so later detectors don't double-count the same region.
+                </p>
+                <ul class="detail-list">
+                    <li><strong>① Abbreviation regions</strong> — find two-column lists of abbreviations (e.g., "CONC = CONCRETE"). Pure text pattern, no graphics needed.</li>
+                    <li><strong>② Misc title regions</strong> — detect page-level titles like "OKLAHOMA DEPARTMENT OF TRANSPORTATION." Added to exclusion zones.</li>
+                    <li><strong>③ Revision regions</strong> — find revision tables (title block elements with revision numbers, dates, and descriptions). Added to exclusion zones.</li>
+                    <li><strong>④ Filter graphics</strong> — remove any drawn shapes that fall inside already-detected regions (abbreviations, revisions) to avoid confusing the legend detector.</li>
+                    <li><strong>⑤ Legend regions</strong> — detect map/drawing legends that pair graphic symbols with text descriptions. Uses filtered graphics + exclusion zones.</li>
+                    <li><strong>⑥ Standard detail regions</strong> — find sheet-number / description tables (like abbreviations but listing drawing references).</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="step" style="--dot-color: #14b8a6;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 6d</span>
+                    <span class="step-title">Page Zoning & Block Classification</span>
+                </div>
+                <p class="step-summary">
+                    Divide the page into named zones (e.g., "notes area", "legend area", "title block area", "drawing area")
+                    based on where all the detected regions and notes columns are. Then tag every block with the zone it belongs to.
+                </p>
+                <div class="badge-row">
+                    <span class="badge badge-file">📄 src/plancheck/analysis/</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Stage 7 — SEMANTIC CHECKS</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="timeline">
+        <div class="step" style="--dot-color: #f472b6;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 7</span>
+                    <span class="step-title">Semantic Checks — Validate Content</span>
+                </div>
+                <p class="step-summary">
+                    Now that we know what's on the page and where everything is, run a battery of automated checks.
+                    These look at the detected notes, abbreviations, revisions, legends, and other regions to see if anything
+                    looks wrong or incomplete — like a "NOTES" header with no notes underneath.
+                </p>
+                <ul class="detail-list">
+                    <li>Each check produces "findings" — structured records describing what was found and its severity</li>
+                    <li>Findings are saved to a JSON file for downstream review</li>
+                </ul>
+                <div class="badge-row">
+                    <span class="badge badge-file">📄 src/plancheck/checks/</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+    <div class="phase-divider"><span>Stage 8 — EXPORT</span></div>
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="timeline">
+
+        <div class="step" style="--dot-color: #6366f1;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 8a</span>
+                    <span class="step-title">Save JSON Artifacts</span>
+                </div>
+                <p class="step-summary">
+                    All the structured data produced by earlier stages is serialized to JSON files in the run folder.
+                    Each file captures a different aspect of what was found on the page.
+                </p>
+                <ul class="detail-list">
+                    <li><strong>boxes.json</strong> — every word/token with its position, text, and origin</li>
+                    <li><strong>blocks.json</strong> — the grouped blocks with their rows, lines, spans, labels, and table/notes flags</li>
+                    <li><strong>columns.json</strong> — notes columns with header text, continuation links, and bounding boxes</li>
+                    <li><strong>abbreviations.json</strong> — detected abbreviation regions with their parsed code → meaning entries</li>
+                    <li><strong>legends.json</strong> — legend regions with symbol → description entries</li>
+                    <li><strong>revisions.json</strong> — revision tables with number, description, and date per row</li>
+                    <li><strong>misc_titles.json</strong> — page-level title text detections</li>
+                    <li><strong>standard_details.json</strong> — sheet reference tables</li>
+                    <li><strong>structural_boxes.json</strong> — large enclosing rectangles and their classification</li>
+                    <li><strong>semantic_regions.json</strong> — labeled content regions with confidence scores</li>
+                    <li><strong>zones.json</strong> — the page zone map</li>
+                    <li><strong>findings.json</strong> — semantic check results (if any findings)</li>
+                </ul>
+                <div class="badge-row">
+                    <span class="badge badge-output">📁 runs/…/artifacts/</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="step" style="--dot-color: #6366f1;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 8b</span>
+                    <span class="step-title">Generate Debug Overlays</span>
+                </div>
+                <p class="step-summary">
+                    Visual debug images are drawn on top of the original page rendering. These let you visually verify
+                    what the pipeline detected — colored boxes around lines, blocks, columns, and injected symbols.
+                </p>
+                <ul class="detail-list">
+                    <li><strong>Lines overlay</strong> — shows every detected line and span with colored boxes on the page image</li>
+                    <li><strong>Columns overlay</strong> — shows blocks colored by type: header, notes, table, regular</li>
+                    <li><strong>OCR reconcile overlay</strong> — shows accepted and rejected symbol injections (green = accepted, red = rejected)</li>
+                    <li><strong>Symbol overlay</strong> — highlights just the symbol-bearing tokens with green boxes (when debug mode is on)</li>
+                </ul>
+                <div class="badge-row">
+                    <span class="badge badge-output">📁 runs/…/overlays/</span>
+                    <span class="badge badge-lib">Pillow</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="step" style="--dot-color: #6366f1;">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-header">
+                    <span class="step-number">STAGE 8c</span>
+                    <span class="step-title">Compute Quality Score & Build Manifest</span>
+                </div>
+                <p class="step-summary">
+                    A page-level quality score (0 to 1) is calculated by combining token density, region coverage, and error signals.
+                    Then all results — stage timings, counts, artifacts, zones, quality score, and findings — are assembled into
+                    a page result dictionary that gets written into the run's <strong>manifest.json</strong>.
+                </p>
+                <ul class="detail-list">
+                    <li><strong>Density score</strong> — how many words per square inch (2+ tokens/sq-in = full score)</li>
+                    <li><strong>Region score</strong> — how many types of structured content were detected (3+ = full score)</li>
+                    <li><strong>Error penalty</strong> — encoding issues (garbled text) reduce the score</li>
+                    <li><strong>Stage health flags</strong> — notes if VOCR was degraded (0 tokens after 30+ seconds) or if reconcile found no candidates</li>
+                    <li><strong>Region confidences</strong> — per-region confidence scores for all detected areas</li>
+                    <li>Structured CSV exports of key data are also generated</li>
+                </ul>
+                <div class="badge-row">
+                    <span class="badge badge-output">📄 manifest.json</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════ -->
+
+    <div class="footer">
+        Advanced Plans Parser · Pipeline Detail Diagram · Generated February 2026
+    </div>
+</div>
+</body>
+</html>

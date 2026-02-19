@@ -308,8 +308,9 @@
             <div class="parallel-container">
                 <div class="stage-card" style="--color: #10b981; --glow: #34d399;" onclick="showDetails('tocr')">
                     <div class="stage-name">TOCR (Text OCR)</div>
-                    <div class="stage-desc">Text layer extraction from PDF</div>
-                    <div class="badge">⚡ Parallel with vocrpp</div>
+                    <div class="stage-desc">Reads the invisible text embedded inside the PDF — every word the PDF "knows about" — then cleans, filters, and quality-checks the results before passing them on.</div>
+                    <div class="badge">⚡ Runs in parallel with VOCRPP</div>
+                    <div class="badge">🔍 Two modes: Full (batch) &amp; Minimal (viewer)</div>
                     <div class="badge">📚 pdfplumber</div>
                 </div>
                 <div class="stage-card" style="--color: #f59e0b; --glow: #fbbf24;" onclick="showDetails('vocrpp')">
@@ -503,9 +504,28 @@
             tocr: {
                 name: 'TOCR (Text OCR)',
                 color: '#10b981',
-                description: 'Text layer extraction from PDF',
-                inputs: ['PDF file', 'Page number'],
-                outputs: ['Text boxes (GlyphBox[])', 'Font metrics', 'Token diagnostics', 'Quality metrics (density, mojibake)'],
+                description: 'Every PDF has a hidden text layer that describes the words printed on the page. TOCR reads that layer, cleans up the raw data, removes junk, and packages the words into tidy boxes ready for the rest of the pipeline. It runs in two modes: a thorough "Full" mode used during batch processing and a lightweight "Minimal" mode used by interactive viewers.',
+                inputs: [
+                    'The PDF file and the page number to process',
+                    'GroupingConfig — a shared settings object used across the whole pipeline. The TOCR-relevant settings control things like: how close characters must be to form a word, the minimum/maximum font size to keep, whether to ignore text near the page edges, whether to keep rotated text, and quality thresholds for garbled-text detection.'
+                ],
+                steps: [
+                    'Open the PDF page and ask pdfplumber for every word it can find, along with each word\'s position and font information',
+                    'Convert each word into a standard GlyphBox (a rectangle with text and metadata) and make sure its edges don\'t extend outside the page',
+                    'Filter out words that are too close to the page edge (margin filter) or that use unusually large or small fonts',
+                    'Drop rotated / sideways text if the config says to keep only upright text',
+                    'Strip invisible control characters and discard words that become empty after cleaning',
+                    'Normalize the text — fix unusual Unicode forms, collapse extra spaces, and optionally lowercase everything',
+                    'Remove duplicate boxes: if two boxes contain the same text and overlap heavily, keep only one',
+                    'Calculate quality metrics — how many words per square inch (density), what percentage look corrupted (mojibake), and which fonts appear most often',
+                    'Flag warnings if the page looks blank, has too many garbled characters, or falls below the minimum word density'
+                ],
+                outputs: [
+                    'A list of GlyphBox tokens — each one a word with its position, text, font name, and font size',
+                    'The page width and height in PDF points',
+                    'A diagnostics report with token counts at every filter step, font distributions, density, and quality flags',
+                    'If something goes wrong, an error message is returned and the pipeline receives an empty token list so it can continue gracefully'
+                ],
                 algorithms: ['pdfplumber']
             },
             vocrpp: {
