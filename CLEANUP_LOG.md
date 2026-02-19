@@ -2,8 +2,8 @@
 
 ## Summary
 
-Removed **36 files/directories** of vestigial, generated, and dead code.  
-Updated **13 import statements** across **9 script files** to use canonical subpackage paths.  
+Removed **36 files/directories** of vestigial, generated, and dead code.
+Updated **13 import statements** across **9 script files** to use canonical subpackage paths.
 All **528 tests pass** after cleanup.
 
 ---
@@ -43,7 +43,7 @@ Auto-generated Python bytecode cache. Regenerated on next run.
 
 ### 4. Dead re-export wrappers (not imported by anything)
 
-These were backward-compatibility wrappers left from the flat→subpackage restructure.  
+These were backward-compatibility wrappers left from the flat→subpackage restructure.
 No code imported from them.
 
 - `src/plancheck/_abbreviation_detect.py`
@@ -59,7 +59,7 @@ No code imported from them.
 
 ### 5. Still-imported re-export wrappers (imports updated, then deleted)
 
-These wrappers were still imported by scripts. Updated all 13 import statements  
+These wrappers were still imported by scripts. Updated all 13 import statements
 in 9 script files to use canonical subpackage paths, then deleted the wrappers.
 
 - `src/plancheck/_structural_boxes.py` → `plancheck.analysis.structural_boxes`

@@ -18,6 +18,17 @@ import pytest
 from PIL import Image
 
 from plancheck.config import GroupingConfig
+from plancheck.export.overlay import (
+    COLOR_KEYS,
+    COLUMN_COLORS,
+    DEFAULT_COLOR,
+    LABEL_PREFIXES,
+    _draw_label,
+    _get_color,
+    _scale_point,
+    draw_lines_overlay,
+    draw_overlay,
+)
 from plancheck.models import (
     AbbreviationEntry,
     AbbreviationRegion,
@@ -33,17 +44,6 @@ from plancheck.models import (
     Span,
     StandardDetailEntry,
     StandardDetailRegion,
-)
-from plancheck.export.overlay import (
-    COLOR_KEYS,
-    COLUMN_COLORS,
-    DEFAULT_COLOR,
-    LABEL_PREFIXES,
-    _draw_label,
-    _get_color,
-    _scale_point,
-    draw_lines_overlay,
-    draw_overlay,
 )
 
 # ---------------------------------------------------------------------------

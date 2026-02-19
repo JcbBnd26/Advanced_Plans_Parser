@@ -10,8 +10,8 @@ import pdfplumber
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from plancheck.vocrpp.preprocess import (  # noqa: E402
-    OcrPreprocessConfig,
+from plancheck.vocrpp.preprocess import (
+    OcrPreprocessConfig,  # noqa: E402
     preprocess_image_for_ocr,
 )
 

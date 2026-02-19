@@ -16,13 +16,13 @@ from plancheck import (
     nms_prune,
     rotate_boxes,
 )
+from plancheck.export.overlay import draw_lines_overlay
 from plancheck.grouping import (
     group_notes_columns,
     link_continued_columns,
     mark_headers,
     mark_notes,
 )
-from plancheck.export.overlay import draw_lines_overlay
 
 
 def make_run_dir(name: str | None = None) -> Path:

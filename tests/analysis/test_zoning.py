@@ -3,8 +3,6 @@
 import pytest
 from conftest import make_box
 
-from plancheck.config import GroupingConfig
-from plancheck.models import BlockCluster, NotesColumn, RowBand
 from plancheck.analysis.zoning import (
     PageZone,
     ZoneTag,
@@ -12,6 +10,8 @@ from plancheck.analysis.zoning import (
     detect_zones,
     zone_summary,
 )
+from plancheck.config import GroupingConfig
+from plancheck.models import BlockCluster, NotesColumn, RowBand
 
 
 class TestPageZone:

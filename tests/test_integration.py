@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from conftest import make_box
 
+from plancheck.analysis.zoning import classify_blocks, detect_zones
 from plancheck.config import GroupingConfig
 from plancheck.export.csv_export import export_blocks_csv, export_notes_csv
 from plancheck.grouping import (
@@ -20,7 +21,6 @@ from plancheck.grouping import (
     mark_headers,
     mark_notes,
 )
-from plancheck.analysis.zoning import classify_blocks, detect_zones
 
 # ── Synthetic page layout ─────────────────────────────────────────────
 

@@ -19,7 +19,6 @@ from plancheck.analysis.legends import (
 )
 from plancheck.models import BlockCluster
 
-
 # ====================================================================
 # Classifier Tests
 # ====================================================================

@@ -4,6 +4,16 @@ from __future__ import annotations
 
 import pytest
 
+from plancheck.checks.semantic_checks import (
+    CheckResult,
+    _parse_date,
+    check_abbreviation_duplicates,
+    check_abbreviations_undefined,
+    check_notes_numbering,
+    check_revision_date_order,
+    check_standard_detail_duplicates,
+    run_all_checks,
+)
 from plancheck.models import (
     AbbreviationEntry,
     AbbreviationRegion,
@@ -17,16 +27,6 @@ from plancheck.models import (
     RowBand,
     StandardDetailEntry,
     StandardDetailRegion,
-)
-from plancheck.checks.semantic_checks import (
-    CheckResult,
-    _parse_date,
-    check_abbreviation_duplicates,
-    check_abbreviations_undefined,
-    check_notes_numbering,
-    check_revision_date_order,
-    check_standard_detail_duplicates,
-    run_all_checks,
 )
 
 # ── Helpers ────────────────────────────────────────────────────────────
