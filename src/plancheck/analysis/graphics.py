@@ -9,7 +9,7 @@ import pdfplumber
 
 from ..models import GraphicElement
 
-logger = logging.getLogger("plancheck.legends")
+logger = logging.getLogger("plancheck.graphics")
 
 
 def extract_graphics(pdf_path: str, page_num: int) -> List[GraphicElement]:

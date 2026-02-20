@@ -16,7 +16,7 @@ from ..models import (
 )
 from .region_helpers import _find_enclosing_rect, _find_text_blocks_in_region
 
-logger = logging.getLogger("plancheck.legends")
+logger = logging.getLogger("plancheck.revisions")
 
 
 def _is_revision_header(blk: BlockCluster) -> bool:
@@ -74,7 +74,7 @@ def _parse_revision_row(
         return None
 
     # Get texts
-    texts = [b.text for b in sorted_boxes if b.text]
+    texts = [b.text.strip() for b in sorted_boxes if b.text and b.text.strip()]
     if not texts:
         return None
 
@@ -179,7 +179,7 @@ def detect_revision_regions(
     graphics: List[GraphicElement],
     page_width: float,
     page_height: float,
-    exclusion_zones: List[Tuple[float, float, float, float]] = None,
+    exclusion_zones: Optional[List[Tuple[float, float, float, float]]] = None,
     cfg: GroupingConfig | None = None,
 ) -> List[RevisionRegion]:
     """

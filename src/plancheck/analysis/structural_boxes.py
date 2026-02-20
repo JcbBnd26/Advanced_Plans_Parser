@@ -110,18 +110,23 @@ class StructuralBox:
     is_synthetic: bool = False
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box as ``(x0, y0, x1, y1)``."""
         return (self.x0, self.y0, self.x1, self.y1)
 
     def width(self) -> float:
+        """Horizontal extent in points."""
         return self.x1 - self.x0
 
     def height(self) -> float:
+        """Vertical extent in points."""
         return self.y1 - self.y0
 
     def area(self) -> float:
+        """Area in square points, clamped to zero."""
         return max(0.0, self.width()) * max(0.0, self.height())
 
     def contains_point(self, x: float, y: float, pad: float = 0.0) -> bool:
+        """Return True if (x, y) lies inside the box, with optional padding."""
         return (
             self.x0 - pad <= x <= self.x1 + pad and self.y0 - pad <= y <= self.y1 + pad
         )
@@ -148,9 +153,11 @@ class SemanticRegion:
     confidence: float = 0.0
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box as ``(x0, y0, x1, y1)``."""
         return (self.x0, self.y0, self.x1, self.y1)
 
     def area(self) -> float:
+        """Area in square points, clamped to zero."""
         return max(0.0, self.x1 - self.x0) * max(0.0, self.y1 - self.y0)
 
 

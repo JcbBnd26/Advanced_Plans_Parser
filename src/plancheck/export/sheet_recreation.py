@@ -471,7 +471,7 @@ def recreate_sheet(
             import pdfplumber
 
             pdf_handle = pdfplumber.open(source_pdf)
-        except Exception as exc:
+        except (ImportError, OSError, ValueError) as exc:
             logger.warning("Could not open source PDF for watermark: %s", exc)
             pdf_handle = None
 
@@ -515,7 +515,7 @@ def recreate_sheet(
                     alpha = pil_img.split()[3].point(lambda _: alpha_val)
                     pil_img.putalpha(alpha)
                     wm_img = pil_img
-                except Exception as exc:
+                except (IndexError, ValueError, OSError, RuntimeError) as exc:
                     logger.warning(
                         "Could not render watermark for page %d: %s",
                         page_num,

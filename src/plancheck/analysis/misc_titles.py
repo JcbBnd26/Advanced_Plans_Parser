@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from ..config import GroupingConfig
 from ..models import BlockCluster, GraphicElement, MiscTitleRegion
 from .region_helpers import _bboxes_overlap
 
-logger = logging.getLogger("plancheck.legends")
+logger = logging.getLogger("plancheck.misc_titles")
 
 
 def _is_misc_title_text(text: str) -> bool:
@@ -44,7 +44,7 @@ def detect_misc_title_regions(
     graphics: List[GraphicElement],
     page_width: float,
     page_height: float,
-    exclusion_zones: List[Tuple[float, float, float, float]] = None,
+    exclusion_zones: Optional[List[Tuple[float, float, float, float]]] = None,
     cfg: GroupingConfig | None = None,
 ) -> List[MiscTitleRegion]:
     """

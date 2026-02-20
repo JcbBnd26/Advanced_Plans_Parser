@@ -78,12 +78,15 @@ class PageZone:
     children: List[PageZone] = field(default_factory=list)
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box as ``(x0, y0, x1, y1)``."""
         return (self.x0, self.y0, self.x1, self.y1)
 
     def area(self) -> float:
+        """Area in square points, clamped to zero."""
         return max(0.0, self.x1 - self.x0) * max(0.0, self.y1 - self.y0)
 
     def contains_point(self, x: float, y: float) -> bool:
+        """Return True if (x, y) lies inside this zone."""
         return self.x0 <= x <= self.x1 and self.y0 <= y <= self.y1
 
     def overlap_area(self, other_bbox: Tuple[float, float, float, float]) -> float:
@@ -335,6 +338,7 @@ def detect_zones(
         bboxes: Optional[List[Tuple[float, float, float, float]]],
         tag: ZoneTag,
     ) -> None:
+        """Create PageZone entries for each bbox in *bboxes*."""
         if not bboxes:
             return
         for bb in bboxes:

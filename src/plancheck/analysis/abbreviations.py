@@ -8,9 +8,14 @@ from typing import List, Optional, Tuple
 
 from ..config import GroupingConfig
 from ..models import AbbreviationEntry, AbbreviationRegion, BlockCluster, GraphicElement
-from .region_helpers import _find_enclosing_rect, _find_text_blocks_in_region
+from .region_helpers import (
+    _find_enclosing_rect,
+    _find_text_blocks_in_region,
+    collect_rows_with_y,
+    match_rows_by_y,
+)
 
-logger = logging.getLogger("plancheck.legends")
+logger = logging.getLogger("plancheck.abbreviations")
 
 
 def _is_abbreviation_header(block: BlockCluster) -> bool:
@@ -43,60 +48,26 @@ def _parse_abbreviation_entries_two_column(
     """
     entries = []
 
-    # Collect all code rows with y-positions
-    code_rows = []  # (y_center, row_text, row_bbox, block)
-    for blk in code_blocks:
-        for row in blk.rows:
-            row_bbox = row.bbox()
-            y_center = (row_bbox[1] + row_bbox[3]) / 2
-            row_text = " ".join(b.text for b in row.boxes if b.text).strip()
-            if row_text:
-                code_rows.append((y_center, row_text, row_bbox, blk))
+    code_rows = collect_rows_with_y(code_blocks)
+    meaning_rows = collect_rows_with_y(meaning_blocks)
 
-    # Collect all meaning rows with y-positions
-    meaning_rows = []  # (y_center, row_text, row_bbox, block)
-    for blk in meaning_blocks:
-        for row in blk.rows:
-            row_bbox = row.bbox()
-            y_center = (row_bbox[1] + row_bbox[3]) / 2
-            row_text = " ".join(b.text for b in row.boxes if b.text).strip()
-            if row_text:
-                meaning_rows.append((y_center, row_text, row_bbox, blk))
-
-    # Sort both by y-position
     code_rows.sort(key=lambda x: x[0])
     meaning_rows.sort(key=lambda x: x[0])
 
-    # Match code rows to meaning rows by y-position
-    y_tolerance = 5.0
-    used_meaning_indices = set()
-
-    for c_y, c_text, c_bbox, c_blk in code_rows:
-        best_meaning = None
-        best_y_diff = float("inf")
-        best_idx = -1
-
-        for idx, (m_y, m_text, m_bbox, m_blk) in enumerate(meaning_rows):
-            if idx in used_meaning_indices:
-                continue
-            y_diff = abs(m_y - c_y)
-            if y_diff < y_tolerance and y_diff < best_y_diff:
-                best_y_diff = y_diff
-                best_meaning = (m_text, m_bbox)
-                best_idx = idx
-
-        if best_meaning:
-            used_meaning_indices.add(best_idx)
-            meaning_text, meaning_bbox = best_meaning
-            entries.append(
-                AbbreviationEntry(
-                    page=page,
-                    code=c_text,
-                    meaning=meaning_text,
-                    code_bbox=c_bbox,
-                    meaning_bbox=meaning_bbox,
-                )
+    for li, ri in match_rows_by_y(
+        code_rows, meaning_rows, y_tolerance=5.0, exclusive=True
+    ):
+        c_y, c_text, c_bbox, _ = code_rows[li]
+        m_y, m_text, m_bbox, _ = meaning_rows[ri]
+        entries.append(
+            AbbreviationEntry(
+                page=page,
+                code=c_text,
+                meaning=m_text,
+                code_bbox=c_bbox,
+                meaning_bbox=m_bbox,
             )
+        )
 
     return entries
 
@@ -163,35 +134,20 @@ def _parse_abbreviation_entries(
 
         if left_looks_like_codes:
             # Match left (codes) with right (meanings) by y-position
-            y_tolerance = 5.0
-            used_right = set()
-
-            for y_center, code_text, code_bbox in left_rows:
-                best_meaning = None
-                best_y_diff = float("inf")
-                best_idx = -1
-
-                for idx, (r_y, r_text, r_bbox) in enumerate(right_rows):
-                    if idx in used_right:
-                        continue
-                    y_diff = abs(r_y - y_center)
-                    if y_diff < y_tolerance and y_diff < best_y_diff:
-                        best_y_diff = y_diff
-                        best_meaning = (r_text, r_bbox)
-                        best_idx = idx
-
-                if best_meaning:
-                    used_right.add(best_idx)
-                    meaning_text, meaning_bbox = best_meaning
-                    entries.append(
-                        AbbreviationEntry(
-                            page=page,
-                            code=code_text,
-                            meaning=meaning_text,
-                            code_bbox=code_bbox,
-                            meaning_bbox=meaning_bbox,
-                        )
+            for li, ri in match_rows_by_y(
+                left_rows, right_rows, y_tolerance=5.0, exclusive=True
+            ):
+                _, code_text, code_bbox = left_rows[li]
+                _, meaning_text, meaning_bbox = right_rows[ri]
+                entries.append(
+                    AbbreviationEntry(
+                        page=page,
+                        code=code_text,
+                        meaning=meaning_text,
+                        code_bbox=code_bbox,
+                        meaning_bbox=meaning_bbox,
                     )
+                )
 
             return entries
 

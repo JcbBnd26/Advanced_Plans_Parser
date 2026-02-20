@@ -8,6 +8,7 @@ from ..models import GlyphBox
 
 
 def intersection_over_union(a: GlyphBox, b: GlyphBox) -> float:
+    """Compute IoU (intersection-over-union) of two glyph boxes."""
     ax0, ay0, ax1, ay1 = a.bbox()
     bx0, by0, bx1, by1 = b.bbox()
     ix0 = max(ax0, bx0)
@@ -24,14 +25,22 @@ def intersection_over_union(a: GlyphBox, b: GlyphBox) -> float:
 
 
 def nms_prune(boxes: Iterable[GlyphBox], iou_threshold: float) -> List[GlyphBox]:
-    remaining = sorted(boxes, key=lambda b: b.area(), reverse=True)
+    """Non-maximum suppression: remove overlapping boxes above *iou_threshold*."""
+    sorted_boxes = sorted(boxes, key=lambda b: b.area(), reverse=True)
+    n = len(sorted_boxes)
+    suppressed = [False] * n
     kept: List[GlyphBox] = []
-    while remaining:
-        current = remaining.pop(0)
-        kept.append(current)
-        remaining = [
-            b for b in remaining if intersection_over_union(current, b) < iou_threshold
-        ]
+    for i in range(n):
+        if suppressed[i]:
+            continue
+        kept.append(sorted_boxes[i])
+        for j in range(i + 1, n):
+            if (
+                not suppressed[j]
+                and intersection_over_union(sorted_boxes[i], sorted_boxes[j])
+                >= iou_threshold
+            ):
+                suppressed[j] = True
     return kept
 
 
@@ -242,6 +251,7 @@ def rotate_boxes(
     page_height: float,
     min_rotation: float = 0.01,
 ) -> List[GlyphBox]:
+    """Rotate glyph boxes around the page centre by *degrees*."""
     if abs(degrees) < min_rotation:
         return list(boxes)
     radians = math.radians(degrees)

@@ -8,10 +8,20 @@ from plancheck.checks.semantic_checks import (
     CheckResult,
     _parse_date,
     check_abbreviation_duplicates,
+    check_abbreviation_empty,
     check_abbreviations_undefined,
+    check_legend_empty,
+    check_legend_no_header,
+    check_notes_cross_references,
+    check_notes_no_header,
     check_notes_numbering,
     check_revision_date_order,
+    check_revision_empty,
+    check_revision_missing_number,
     check_standard_detail_duplicates,
+    check_standard_detail_missing_desc,
+    check_title_block_fields,
+    check_title_block_missing,
     run_all_checks,
 )
 from plancheck.models import (
@@ -457,7 +467,10 @@ class TestDateParsing:
 class TestRunAllChecks:
     def test_empty_inputs_produce_no_findings(self):
         findings = run_all_checks(page=1)
-        assert findings == []
+        # With no structural boxes at all, the only finding should be
+        # TITLE_MISSING (warns that title block may be absent).
+        assert len(findings) == 1
+        assert findings[0].check_id == "TITLE_MISSING"
 
     def test_combines_findings(self):
         """Multiple checks produce combined findings."""
@@ -491,3 +504,300 @@ class TestRunAllChecks:
         d = r.to_dict()
         assert "bbox" not in d
         assert "details" not in d
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 8. New checks: legend_empty, legend_no_header
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestCheckLegendEmpty:
+    def test_legend_with_entries_no_finding(self):
+        region = LegendRegion(
+            page=0,
+            entries=[LegendEntry(page=0, description="Item A")],
+        )
+        assert check_legend_empty([region]) == []
+
+    def test_legend_empty_flagged(self):
+        region = LegendRegion(page=0, entries=[])
+        findings = check_legend_empty([region])
+        assert len(findings) == 1
+        assert findings[0].check_id == "LEGEND_EMPTY"
+
+    def test_multiple_legends_mixed(self):
+        good = LegendRegion(page=0, entries=[LegendEntry(page=0, description="X")])
+        empty = LegendRegion(page=0, entries=[])
+        findings = check_legend_empty([good, empty])
+        assert len(findings) == 1
+
+
+class TestCheckLegendNoHeader:
+    def test_legend_with_header_ok(self):
+        blk = _block([(10, 10, 100, 22, "LEGEND")])
+        region = LegendRegion(
+            page=0,
+            header=blk,
+            entries=[LegendEntry(page=0, description="X")],
+        )
+        assert check_legend_no_header([region]) == []
+
+    def test_legend_no_header_flagged(self):
+        region = LegendRegion(
+            page=0,
+            header=None,
+            entries=[LegendEntry(page=0, description="X")],
+        )
+        findings = check_legend_no_header([region])
+        assert len(findings) == 1
+        assert findings[0].check_id == "LEGEND_NO_HEADER"
+
+    def test_legend_no_header_no_entries_ok(self):
+        """No entries + no header → not flagged (already caught by LEGEND_EMPTY)."""
+        region = LegendRegion(page=0, header=None, entries=[])
+        assert check_legend_no_header([region]) == []
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 9. Notes column no header
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestCheckNotesNoHeader:
+    def test_notes_with_header_ok(self):
+        hdr = _block([(10, 10, 100, 22, "GENERAL NOTES")])
+        nblk = _block([(10, 30, 100, 42, "1. Do stuff")])
+        col = NotesColumn(page=0, header=hdr, notes_blocks=[nblk])
+        assert check_notes_no_header([col]) == []
+
+    def test_notes_no_header_flagged(self):
+        nblk = _block([(10, 30, 100, 42, "1. Do stuff")])
+        col = NotesColumn(page=0, header=None, notes_blocks=[nblk])
+        findings = check_notes_no_header([col])
+        assert len(findings) == 1
+        assert findings[0].check_id == "NOTES_NO_HEADER"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 10. Revision empty, revision missing number
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestCheckRevisionEmpty:
+    def test_revision_with_entries_ok(self):
+        region = RevisionRegion(
+            page=0,
+            entries=[
+                RevisionEntry(page=0, number="1", description="Init", date="01/01/2024")
+            ],
+        )
+        assert check_revision_empty([region]) == []
+
+    def test_revision_empty_flagged(self):
+        region = RevisionRegion(page=0, entries=[])
+        findings = check_revision_empty([region])
+        assert len(findings) == 1
+        assert findings[0].check_id == "REV_EMPTY"
+
+
+class TestCheckRevisionMissingNumber:
+    def test_entries_with_numbers_ok(self):
+        region = RevisionRegion(
+            page=0,
+            entries=[
+                RevisionEntry(
+                    page=0, number="1", description="Init", date="01/01/2024"
+                ),
+            ],
+        )
+        assert check_revision_missing_number([region]) == []
+
+    def test_entry_missing_number_flagged(self):
+        region = RevisionRegion(
+            page=0,
+            entries=[
+                RevisionEntry(
+                    page=0, number="", description="Added stuff", date="02/02/2024"
+                ),
+            ],
+        )
+        findings = check_revision_missing_number([region])
+        assert len(findings) == 1
+        assert findings[0].check_id == "REV_NO_NUMBER"
+
+    def test_entry_only_whitespace_number(self):
+        region = RevisionRegion(
+            page=0,
+            entries=[
+                RevisionEntry(page=0, number="  ", description="Fix", date=""),
+            ],
+        )
+        findings = check_revision_missing_number([region])
+        assert len(findings) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 11. Abbreviation empty
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestCheckAbbreviationEmpty:
+    def test_region_with_entries_ok(self):
+        region = _abbrev_region({"AI": "AREA INLET"})
+        assert check_abbreviation_empty([region]) == []
+
+    def test_region_empty_flagged(self):
+        region = AbbreviationRegion(page=0, entries=[])
+        findings = check_abbreviation_empty([region])
+        assert len(findings) == 1
+        assert findings[0].check_id == "ABBREV_EMPTY"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 12. Standard detail missing description
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestCheckStandardDetailMissingDesc:
+    def test_entries_with_descriptions_ok(self):
+        region = StandardDetailRegion(
+            page=0,
+            entries=[
+                StandardDetailEntry(
+                    page=0, sheet_number="SS-1", description="Steel detail"
+                ),
+            ],
+        )
+        assert check_standard_detail_missing_desc([region]) == []
+
+    def test_entry_missing_description_flagged(self):
+        region = StandardDetailRegion(
+            page=0,
+            entries=[
+                StandardDetailEntry(page=0, sheet_number="SS-1", description=""),
+            ],
+        )
+        findings = check_standard_detail_missing_desc([region])
+        assert len(findings) == 1
+        assert findings[0].check_id == "STDDET_NO_DESC"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 13. Title block checks
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestCheckTitleBlockMissing:
+    def test_no_boxes_at_all(self):
+        findings = check_title_block_missing(None, page=0)
+        assert len(findings) == 1
+        assert findings[0].check_id == "TITLE_MISSING"
+
+    def test_boxes_but_no_title_block(self):
+        class _Box:
+            box_type = "unknown"
+
+        findings = check_title_block_missing([_Box()], page=0)
+        assert len(findings) == 1
+
+    def test_title_block_present(self):
+        from plancheck.analysis.structural_boxes import BoxType
+
+        class _Box:
+            box_type = BoxType.title_block
+
+        findings = check_title_block_missing([_Box()], page=0)
+        assert findings == []
+
+
+class TestCheckTitleBlockFields:
+    def test_no_title_blocks_ok(self):
+        assert check_title_block_fields(None) == []
+
+    def test_complete_title_block_ok(self):
+        from plancheck.analysis.title_block import TitleBlockField, TitleBlockInfo
+
+        tb = TitleBlockInfo(
+            page=0,
+            fields=[
+                TitleBlockField(label="sheet_number", value="C-1"),
+                TitleBlockField(label="date", value="01/01/2024"),
+            ],
+        )
+        assert check_title_block_fields([tb]) == []
+
+    def test_missing_sheet_number(self):
+        from plancheck.analysis.title_block import TitleBlockField, TitleBlockInfo
+
+        tb = TitleBlockInfo(
+            page=0,
+            bbox=(0, 0, 100, 100),
+            fields=[
+                TitleBlockField(label="date", value="01/01/2024"),
+            ],
+        )
+        findings = check_title_block_fields([tb])
+        ids = {f.check_id for f in findings}
+        assert "TITLE_NO_SHEET_NUMBER" in ids
+
+    def test_missing_date(self):
+        from plancheck.analysis.title_block import TitleBlockField, TitleBlockInfo
+
+        tb = TitleBlockInfo(
+            page=0,
+            bbox=(0, 0, 100, 100),
+            fields=[
+                TitleBlockField(label="sheet_number", value="C-1"),
+            ],
+        )
+        findings = check_title_block_fields([tb])
+        ids = {f.check_id for f in findings}
+        assert "TITLE_NO_DATE" in ids
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 14. Notes cross-references
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestCheckNotesCrossReferences:
+    def test_valid_reference(self):
+        col = _notes_column([1, 2, 3])
+        blk = _block([(10, 200, 200, 212, "SEE NOTE 2")])
+        findings = check_notes_cross_references([col], [blk])
+        assert findings == []
+
+    def test_undefined_reference(self):
+        col = _notes_column([1, 2, 3])
+        blk = _block([(10, 200, 200, 212, "SEE NOTE 5")])
+        findings = check_notes_cross_references([col], [blk])
+        assert len(findings) == 1
+        assert findings[0].check_id == "NOTES_XREF"
+        assert findings[0].details["referenced_note"] == 5
+
+    def test_no_columns_no_findings(self):
+        blk = _block([(10, 200, 200, 212, "SEE NOTE 5")])
+        findings = check_notes_cross_references([], [blk])
+        assert findings == []
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 15. run_all_checks with new params
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestRunAllChecksExtended:
+    def test_title_block_missing_included(self):
+        """run_all_checks should report TITLE_MISSING when no boxes."""
+        findings = run_all_checks(
+            structural_boxes=[],
+            page=1,
+        )
+        ids = {f.check_id for f in findings}
+        assert "TITLE_MISSING" in ids
+
+    def test_legend_empty_included(self):
+        region = LegendRegion(page=0, entries=[])
+        findings = run_all_checks(legend_regions=[region])
+        ids = {f.check_id for f in findings}
+        assert "LEGEND_EMPTY" in ids

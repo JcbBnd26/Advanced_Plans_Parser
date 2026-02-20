@@ -20,4 +20,10 @@ from .structural_boxes import (
     detect_structural_boxes,
     mask_blocks_by_structural_boxes,
 )
+from .title_block import (
+    TitleBlockField,
+    TitleBlockInfo,
+    extract_title_blocks,
+    parse_title_block,
+)
 from .zoning import PageZone, ZoneTag, classify_blocks, detect_zones, zone_summary

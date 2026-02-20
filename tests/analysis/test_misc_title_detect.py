@@ -102,7 +102,7 @@ class TestDetectMiscTitleRegions:
         blk = make_block(
             [(100, 100, 450, 112, "OKLAHOMA DEPARTMENT OF TRANSPORTATION")],
         )
-        with caplog.at_level(logging.DEBUG, logger="plancheck.legends"):
+        with caplog.at_level(logging.DEBUG, logger="plancheck.misc_titles"):
             detect_misc_title_regions(
                 blocks=[blk],
                 graphics=[],

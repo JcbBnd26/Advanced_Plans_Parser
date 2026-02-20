@@ -9,7 +9,7 @@ The OCR reconciliation pipeline recovers symbols (`/`, `%`, `°`, `±`) that CAD
 
 ## Architecture of the Fix
 
-Four phases were implemented simultaneously across `src/plancheck/ocr_reconcile.py` and `scripts/run_pdf_batch.py`.
+Four phases were implemented simultaneously across `src/plancheck/reconcile/reconcile.py` and `scripts/runners/run_pdf_batch.py`.
 
 ---
 
@@ -142,8 +142,9 @@ In the Case A branch, if the OCR text matches `_RE_COMPOSITE`:
 
 | File | Changes |
 |---|---|
-| `src/plancheck/ocr_reconcile.py` | Added `import re`, 2 compiled regexes, `_has_numeric_symbol_context()`, `_is_digit_group()`, multi-slash logic in `_generate_symbol_candidates()`, numeric-context gate + composite deferral in `_inject_symbols()`, 3-tuple return, updated `reconcile_ocr()` stats, updated `draw_reconcile_debug()` |
-| `scripts/run_pdf_batch.py` | Added `ocr_reconcile_filtered_non_numeric` to manifest counts |
+| `src/plancheck/reconcile/reconcile.py` | Added `import re`, 2 compiled regexes, `_has_numeric_symbol_context()`, `_is_digit_group()`, multi-slash logic in `_generate_symbol_candidates()`, numeric-context gate + composite deferral in `_inject_symbols()`, 3-tuple return, updated `reconcile_ocr()` stats |
+| `src/plancheck/export/reconcile_overlay.py` | Updated `draw_reconcile_debug()` Layer 2 to use `_has_numeric_symbol_context` |
+| `scripts/runners/run_pdf_batch.py` | Added `ocr_reconcile_filtered_non_numeric` to manifest counts |
 
 ---
 

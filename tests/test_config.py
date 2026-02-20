@@ -155,3 +155,105 @@ class TestConfigValidation:
     def test_dark_threshold_above_255(self):
         with pytest.raises(ConfigValidationError, match="font_metrics_dark_threshold"):
             GroupingConfig(font_metrics_dark_threshold=256)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Config file loading tests
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestConfigFromDict:
+    def test_from_dict_round_trip(self):
+        cfg = GroupingConfig(iou_prune=0.7, enable_vocr=True)
+        d = cfg.to_dict()
+        cfg2 = GroupingConfig.from_dict(d)
+        assert cfg2.iou_prune == 0.7
+        assert cfg2.enable_vocr is True
+
+    def test_from_dict_ignores_unknown_keys(self):
+        d = {"iou_prune": 0.6, "unknown_field": 42}
+        cfg = GroupingConfig.from_dict(d)
+        assert cfg.iou_prune == 0.6
+
+    def test_to_dict_no_private(self):
+        cfg = GroupingConfig()
+        d = cfg.to_dict()
+        assert all(not k.startswith("_") for k in d)
+
+
+class TestConfigFromYaml:
+    def test_load_yaml(self, tmp_path):
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("iou_prune: 0.75\nenable_vocr: true\n")
+        cfg = GroupingConfig.from_yaml(yaml_file)
+        assert cfg.iou_prune == 0.75
+        assert cfg.enable_vocr is True
+
+    def test_load_yaml_ignores_unknown(self, tmp_path):
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("iou_prune: 0.6\nunknown_key: hello\n")
+        cfg = GroupingConfig.from_yaml(yaml_file)
+        assert cfg.iou_prune == 0.6
+
+    def test_yaml_invalid_content(self, tmp_path):
+        from plancheck.config import ConfigLoadError
+
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("- list\n- not mapping\n")
+        with pytest.raises(ConfigLoadError, match="mapping"):
+            GroupingConfig.from_yaml(yaml_file)
+
+    def test_yaml_missing_file(self, tmp_path):
+        from plancheck.config import ConfigLoadError
+
+        with pytest.raises(ConfigLoadError):
+            GroupingConfig.from_yaml(tmp_path / "nonexistent.yaml")
+
+
+class TestConfigFromToml:
+    def test_load_toml(self, tmp_path):
+        toml_file = tmp_path / "config.toml"
+        toml_file.write_text("iou_prune = 0.8\nenable_vocr = true\n")
+        cfg = GroupingConfig.from_toml(toml_file)
+        assert cfg.iou_prune == 0.8
+        assert cfg.enable_vocr is True
+
+    def test_load_toml_subtable(self, tmp_path):
+        toml_file = tmp_path / "config.toml"
+        toml_file.write_text("[plancheck]\niou_prune = 0.65\n")
+        cfg = GroupingConfig.from_toml(toml_file)
+        assert cfg.iou_prune == 0.65
+
+    def test_load_toml_grouping_subtable(self, tmp_path):
+        toml_file = tmp_path / "config.toml"
+        toml_file.write_text("[grouping]\niou_prune = 0.55\n")
+        cfg = GroupingConfig.from_toml(toml_file)
+        assert cfg.iou_prune == 0.55
+
+    def test_toml_missing_file(self, tmp_path):
+        from plancheck.config import ConfigLoadError
+
+        with pytest.raises(ConfigLoadError):
+            GroupingConfig.from_toml(tmp_path / "nonexistent.toml")
+
+
+class TestConfigFromFile:
+    def test_auto_detect_yaml(self, tmp_path):
+        f = tmp_path / "config.yml"
+        f.write_text("iou_prune: 0.9\n")
+        cfg = GroupingConfig.from_file(f)
+        assert cfg.iou_prune == 0.9
+
+    def test_auto_detect_toml(self, tmp_path):
+        f = tmp_path / "config.toml"
+        f.write_text("iou_prune = 0.85\n")
+        cfg = GroupingConfig.from_file(f)
+        assert cfg.iou_prune == 0.85
+
+    def test_unsupported_extension(self, tmp_path):
+        from plancheck.config import ConfigLoadError
+
+        f = tmp_path / "config.json"
+        f.write_text("{}")
+        with pytest.raises(ConfigLoadError, match="Unsupported"):
+            GroupingConfig.from_file(f)

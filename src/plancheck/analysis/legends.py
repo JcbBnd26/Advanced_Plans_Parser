@@ -165,7 +165,7 @@ def detect_legend_regions(
     graphics: List[GraphicElement],
     page_width: float,
     page_height: float,
-    exclusion_zones: List[Tuple[float, float, float, float]] = None,
+    exclusion_zones: Optional[List[Tuple[float, float, float, float]]] = None,
     cfg: GroupingConfig | None = None,
 ) -> List[LegendRegion]:
     """

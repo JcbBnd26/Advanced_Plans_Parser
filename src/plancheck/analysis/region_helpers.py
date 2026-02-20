@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
-from ..models import BlockCluster, GlyphBox, GraphicElement
+from ..models import BlockCluster, GlyphBox, GraphicElement, RowBand
 
-logger = logging.getLogger("plancheck.legends")
+logger = logging.getLogger("plancheck.region_helpers")
 
 
 # ---------------------------------------------------------------------------
@@ -242,3 +242,81 @@ def filter_graphics_outside_regions(
         if not is_excluded:
             result.append(g)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Row collection & y-matching helpers (shared by abbreviations / std-details)
+# ---------------------------------------------------------------------------
+
+# Row tuple: (y_center, row_text, row_bbox, source_block)
+RowTuple = Tuple[float, str, Tuple[float, float, float, float], BlockCluster]
+
+
+def collect_rows_with_y(
+    blocks: Sequence[BlockCluster],
+    *,
+    skip_empty_boxes: bool = False,
+) -> List[RowTuple]:
+    """Collect ``(y_center, text, bbox, block)`` for every row in *blocks*.
+
+    Parameters
+    ----------
+    blocks:
+        Source block clusters.
+    skip_empty_boxes:
+        When ``True``, skip rows that have no boxes (used by standard-
+        details which guards ``if not row.boxes``).
+    """
+    rows: List[RowTuple] = []
+    for blk in blocks:
+        for row in blk.rows:
+            if skip_empty_boxes and not row.boxes:
+                continue
+            row_bbox = row.bbox()
+            y_center = (row_bbox[1] + row_bbox[3]) / 2
+            row_text = " ".join(b.text for b in row.boxes if b.text).strip()
+            if not skip_empty_boxes and not row_text:
+                continue
+            rows.append((y_center, row_text, row_bbox, blk))
+    return rows
+
+
+def match_rows_by_y(
+    left_rows: Sequence[Tuple[float, ...]],
+    right_rows: Sequence[Tuple[float, ...]],
+    y_tolerance: float = 5.0,
+    *,
+    exclusive: bool = True,
+) -> List[Tuple[int, int]]:
+    """Return ``(left_idx, right_idx)`` pairs matched by nearest y-centre.
+
+    Parameters
+    ----------
+    left_rows / right_rows:
+        Sequences whose first element is the *y_center* value.
+    y_tolerance:
+        Maximum allowed vertical distance.
+    exclusive:
+        When ``True`` each right row may be matched at most once (greedy
+        nearest-neighbour with exclusion tracking, matching the
+        abbreviations pattern).  When ``False`` a right row may be reused
+        (matching the standard-details pattern).
+    """
+    used: set[int] = set()
+    pairs: List[Tuple[int, int]] = []
+    for li, left in enumerate(left_rows):
+        best_ri = -1
+        best_dist = float("inf")
+        l_y = left[0]
+        for ri, right in enumerate(right_rows):
+            if exclusive and ri in used:
+                continue
+            dist = abs(right[0] - l_y)
+            if dist < y_tolerance and dist < best_dist:
+                best_dist = dist
+                best_ri = ri
+        if best_ri >= 0:
+            if exclusive:
+                used.add(best_ri)
+            pairs.append((li, best_ri))
+    return pairs

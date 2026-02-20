@@ -1,14 +1,42 @@
 from __future__ import annotations
 
+import io
+import logging
 import re
+from contextlib import contextmanager
 from statistics import mean, median, pstdev
-from typing import Iterable, List, Optional, Tuple
+from typing import IO, Iterable, List, Optional, Tuple
 
 from ..config import GroupingConfig
 from ..models import BlockCluster, GlyphBox, Line, NotesColumn, RowBand, Span
 
+logger = logging.getLogger("plancheck.clustering")
+
+# ── Pre-compiled note-start patterns ───────────────────────────────────
+_NOTE_SIMPLE_RE = re.compile(r"^\d+\.")
+_NOTE_BROAD_RE = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
+_NOTE_CAPTURE_RE = re.compile(r"^(\d+)\.")
+
+
+@contextmanager
+def _open_debug(path: str | None) -> IO[str]:  # type: ignore[type-arg]
+    """Yield a writable text stream for debug output.
+
+    When *path* is ``None``, yields an in-memory no-op sink so callers
+    can unconditionally call ``dbg.write()`` without touching the filesystem.
+    """
+    if path is None:
+        yield io.StringIO()
+    else:
+        f = open(path, "a", encoding="utf-8")
+        try:
+            yield f
+        finally:
+            f.close()
+
 
 def _median_size(boxes: Iterable[GlyphBox]) -> Tuple[float, float]:
+    """Return (median_width, median_height) of the given glyph boxes."""
     widths = [b.width() for b in boxes]
     heights = [b.height() for b in boxes]
     if not widths or not heights:
@@ -94,6 +122,7 @@ def build_lines(tokens: List[GlyphBox], settings: GroupingConfig) -> List[Line]:
 
     # Sort lines by (baseline_y, min_x) for reading order
     def line_sort_key(line: Line) -> Tuple[float, float]:
+        """Sort key: (baseline_y, min_x) for reading order."""
         if not line.token_indices:
             return (0.0, 0.0)
         min_x = min(tokens[i].x0 for i in line.token_indices)
@@ -105,6 +134,13 @@ def build_lines(tokens: List[GlyphBox], settings: GroupingConfig) -> List[Line]:
     for i, line in enumerate(lines):
         line.line_id = i
 
+    logger.debug(
+        "build_lines: %d tokens → %d lines (median_h=%.1f, vert_tol=%.1f)",
+        len(tokens),
+        len(lines),
+        median_h,
+        vert_tol,
+    )
     return lines
 
 
@@ -337,6 +373,7 @@ def split_wide_lines(
 
     # Re-sort by (baseline_y, min_x) for reading order
     def _sort_key(ln: Line) -> tuple:
+        """Sort key: (baseline_y, min_x) for reading order."""
         if not ln.token_indices:
             return (0.0, 0.0)
         return (ln.baseline_y, min(tokens[i].x0 for i in ln.token_indices))
@@ -345,6 +382,12 @@ def split_wide_lines(
     for idx, ln in enumerate(result):
         ln.line_id = idx
 
+    logger.debug(
+        "split_wide_lines: %d lines → %d lines (gap_thresh=%.1f)",
+        len(lines),
+        len(result),
+        gap_thresh,
+    )
     return result
 
 
@@ -367,6 +410,7 @@ def _partition_columns(
         return [(boxes, span_min, span_max)]
 
     def segments_for_thresh(thresh: float) -> List[tuple[List[GlyphBox], float, float]]:
+        """Return column segments by splitting at gaps wider than *thresh*."""
         breaks = []
         for a, b in zip(centers[:-1], centers[1:]):
             if b - a > thresh:
@@ -489,6 +533,7 @@ def _merge_note_number_columns(
 def _split_row_by_width(
     row: RowBand, median_w: float, max_width: float
 ) -> List[RowBand]:
+    """Split an over-wide row at its largest horizontal gap."""
     if not row.boxes:
         return []
     x0, y0, x1, y1 = row.bbox()
@@ -541,6 +586,7 @@ def _is_note_number(box: GlyphBox) -> bool:
 
 
 def _split_row_on_gaps(row: RowBand, median_w: float, gap_mult: float) -> List[RowBand]:
+    """Split a row wherever horizontal gaps exceed the threshold."""
     if not row.boxes:
         return []
     if median_w <= 0:
@@ -563,6 +609,7 @@ def _split_row_on_gaps(row: RowBand, median_w: float, gap_mult: float) -> List[R
 
 
 def group_rows(boxes: List[GlyphBox], settings: GroupingConfig) -> List[RowBand]:
+    """Group glyph boxes into horizontal row bands per column."""
     if not boxes:
         return []
 
@@ -613,6 +660,7 @@ def group_rows(boxes: List[GlyphBox], settings: GroupingConfig) -> List[RowBand]
 
 
 def group_blocks(rows: List[RowBand], settings: GroupingConfig) -> List[BlockCluster]:
+    """Merge adjacent rows into logical block clusters."""
     if not rows:
         return []
     row_heights = []
@@ -626,7 +674,7 @@ def group_blocks(rows: List[RowBand], settings: GroupingConfig) -> List[BlockClu
     median_row_w = float(median(row_widths)) if row_widths else 1.0
     block_gap = median_row_h * settings.block_gap_mult
     max_block_height = median_row_h * settings.max_block_height_mult
-    note_re = re.compile(r"^\d+\.")
+    note_re = _NOTE_SIMPLE_RE
 
     if any(r.column_id is not None for r in rows):
         col_index = [r.column_id if r.column_id is not None else 0 for r in rows]
@@ -649,6 +697,7 @@ def group_blocks(rows: List[RowBand], settings: GroupingConfig) -> List[BlockClu
                 prev_c = c
 
     def _group_band(rows_band: List[RowBand]) -> List[BlockCluster]:
+        """Group vertically consecutive rows into block clusters."""
         if not rows_band:
             return []
         rows_band = sorted(rows_band, key=lambda r: r.bbox()[1])
@@ -754,9 +803,15 @@ def group_blocks_from_lines(
     median_line_h = float(median(line_heights)) if line_heights else 1.0
     block_gap = median_line_h * settings.block_gap_mult
     max_block_height = median_line_h * settings.max_block_height_mult
+    logger.debug(
+        "group_blocks_from_lines: %d lines, median_h=%.1f, block_gap=%.1f",
+        len(lines),
+        median_line_h,
+        block_gap,
+    )
     # Match the same note-start patterns recognised by mark_notes():
     #   1.  12.  A.  a.  (1)  (A)  (a)
-    note_re = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
+    note_re = _NOTE_BROAD_RE
 
     # Column gap: the same threshold that separated spans within a line.
     col_gap = (
@@ -787,6 +842,7 @@ def group_blocks_from_lines(
 
     # --- Pass 2: within each cluster, group by vertical gap ---
     def _group_column(col_lines: List[Line]) -> List[BlockCluster]:
+        """Group vertically consecutive lines into block clusters."""
         if not col_lines:
             return []
         col_lines = sorted(col_lines, key=lambda ln: ln.baseline_y)
@@ -882,6 +938,7 @@ def group_blocks_from_lines(
 
 
 def mark_tables(blocks: List[BlockCluster], settings: GroupingConfig) -> None:
+    """Flag blocks whose row structure resembles a table."""
     for blk in blocks:
         if len(blk.rows) < 2:
             blk.is_table = False
@@ -946,7 +1003,7 @@ def flag_suspect_header_words(
     Returns:
         List of SuspectRegion, one per suspicious word.
     """
-    from .models import SuspectRegion
+    from plancheck.models import SuspectRegion
 
     # Common long all-caps words that are NOT fused compounds
     _allowed_long = {
@@ -984,9 +1041,8 @@ def flag_suspect_header_words(
     }
 
     suspects: list[SuspectRegion] = []
-    debug_path = debug_path or "debug_headers.txt"
 
-    with open(debug_path, "a", encoding="utf-8") as dbg:
+    with _open_debug(debug_path) as dbg:
         dbg.write("\n[SUSPECT] --- Suspect header word scan ---\n")
         for i, blk in enumerate(blocks):
             if not getattr(blk, "is_header", False):
@@ -1069,8 +1125,7 @@ def mark_headers(
                     all_sizes.append(sz)
     median_size = sorted(all_sizes)[len(all_sizes) // 2] if all_sizes else 0.0
 
-    debug_path = debug_path or "debug_headers.txt"
-    with open(debug_path, "a", encoding="utf-8") as dbg:
+    with _open_debug(debug_path) as dbg:
         for i, blk in enumerate(blocks):
             # Preserve subheader labels from a prior split pass
             if getattr(blk, "label", None) == "note_column_subheader":
@@ -1162,7 +1217,7 @@ def mark_headers(
                 parent_block_index=i,
             )
             inserts.append((i, sub_block))
-            with open(debug_path, "a", encoding="utf-8") as dbg:
+            with _open_debug(debug_path) as dbg:
                 sub_text = " ".join(b.text for row in subtitle_rows for b in row.boxes)
                 dbg.write(
                     f"[DEBUG] Split header B{i}: subtitle row(s) "
@@ -1183,9 +1238,8 @@ def mark_notes(blocks: List[BlockCluster], debug_path: str = None) -> None:
       - ``A.``, ``B.``   — lettered notes
       - ``(1)``, ``(A)`` — parenthesised numbered/lettered notes
     """
-    note_re = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
-    debug_path = debug_path or "debug_headers.txt"
-    with open(debug_path, "a", encoding="utf-8") as dbg:
+    note_re = _NOTE_BROAD_RE
+    with _open_debug(debug_path) as dbg:
         for i, blk in enumerate(blocks):
             blk.is_notes = False
             if getattr(blk, "is_header", False):
@@ -1240,8 +1294,6 @@ def group_notes_columns(
     if cfg is not None:
         x_tolerance = cfg.grouping_notes_x_tolerance
         y_gap_max = cfg.grouping_notes_y_gap_max
-    debug_path = debug_path or "debug_headers.txt"
-
     # Collect labeled blocks
     headers = [b for b in blocks if getattr(b, "is_header", False)]
     notes = [b for b in blocks if getattr(b, "is_notes", False)]
@@ -1250,7 +1302,14 @@ def group_notes_columns(
     # Build list of all labeled blocks with their x0 positions
     labeled_blocks = [b for b in blocks if id(b) in labeled]
     if not labeled_blocks:
+        logger.debug("group_notes_columns: no labeled blocks found")
         return []
+
+    logger.debug(
+        "group_notes_columns: %d headers, %d notes blocks",
+        len(headers),
+        len(notes),
+    )
 
     # Sort by x0 for clustering
     labeled_blocks.sort(key=lambda b: b.bbox()[0])
@@ -1282,7 +1341,7 @@ def group_notes_columns(
                 x0_clusters[-1].append(blk)
                 x0_sums[-1] += cur_x0
 
-    with open(debug_path, "a", encoding="utf-8") as dbg:
+    with _open_debug(debug_path) as dbg:
         dbg.write(
             f"\n[DEBUG] group_notes_columns (visual-column + reading-order): "
             f"{len(headers)} headers, {len(notes)} notes blocks, "
@@ -1415,7 +1474,7 @@ def _get_first_block_text(col: NotesColumn) -> str:
 
 def _extract_note_numbers(col: NotesColumn) -> list[int]:
     """Extract all note numbers from a column's notes blocks."""
-    note_re = re.compile(r"^(\d+)\.")
+    note_re = _NOTE_CAPTURE_RE
     numbers = []
     for block in col.notes_blocks:
         if not block.rows:
@@ -1454,7 +1513,7 @@ def _text_starts_as_continuation(text: str) -> bool:
     if not text:
         return False
     text = text.strip().upper()
-    note_re = re.compile(r"^\d+\.")
+    note_re = _NOTE_SIMPLE_RE
     # If it starts with a note number, it's not a continuation
     if note_re.match(text):
         return False
@@ -1462,6 +1521,285 @@ def _text_starts_as_continuation(text: str) -> bool:
     # (Since all our text is uppercase, we check for sentence-continuation patterns)
     # A continuation typically won't start with note-like patterns
     return True
+
+
+def _link_explicit_continuations(
+    columns: List[NotesColumn],
+    base_to_columns: dict,
+    dbg,
+) -> int:
+    """Link columns sharing the same base header (e.g. SITE NOTES / SITE NOTES (CONT'D)).
+
+    Returns the next available group_id_counter value.
+    """
+    group_id_counter = 0
+    for base, cols in base_to_columns.items():
+        if len(cols) < 2:
+            continue
+
+        cols.sort(key=lambda c: c.bbox()[1] if c.header else float("inf"))
+
+        group_id = f"notes_group_{group_id_counter}"
+        group_id_counter += 1
+
+        dbg.write(f"[DEBUG] Found column group '{base}' with {len(cols)} columns:\n")
+
+        parent_header_text = None
+        for i, col in enumerate(cols):
+            col.column_group_id = group_id
+            header_text = col.header_text()
+
+            if col.is_continuation():
+                col.continues_from = parent_header_text
+                dbg.write(
+                    f"[DEBUG]   [{i}] '{header_text}' (continues from '{parent_header_text}')\n"
+                )
+            else:
+                parent_header_text = header_text
+                dbg.write(f"[DEBUG]   [{i}] '{header_text}' (primary)\n")
+
+    linked_count = sum(1 for c in columns if c.column_group_id is not None)
+    continuation_count = sum(1 for c in columns if c.continues_from is not None)
+    dbg.write(
+        f"[DEBUG] Explicit linking: {linked_count} columns in groups, {continuation_count} continuations\n"
+    )
+    return group_id_counter
+
+
+def _link_snake_continuations(
+    named_columns: List[NotesColumn],
+    orphan_columns: List[NotesColumn],
+    group_id_counter: int,
+    dbg,
+) -> int:
+    """Link orphan columns that continue a named column's incomplete text (snake layout).
+
+    Returns the updated group_id_counter.
+    """
+    dbg.write(f"\n[DEBUG] Checking for implicit snake-column continuations...\n")
+
+    for named_col in named_columns:
+        if not named_col.notes_blocks:
+            continue
+
+        named_bbox = named_col.bbox()
+        named_x0, named_y0, named_x1, named_y1 = named_bbox
+        last_text = _get_last_block_text(named_col)
+
+        dbg.write(
+            f"[DEBUG] Checking '{named_col.header_text()}' for snake continuation\n"
+        )
+        dbg.write(
+            f"[DEBUG]   Last text: '{last_text[-80:] if len(last_text) > 80 else last_text}'\n"
+        )
+
+        if not _text_ends_incomplete(last_text):
+            dbg.write(f"[DEBUG]   Last text ends complete, skipping\n")
+            continue
+
+        dbg.write(f"[DEBUG]   Last text ends incomplete, looking for continuation\n")
+
+        best_orphan = None
+        best_score = float("inf")
+
+        for orphan in orphan_columns:
+            if orphan.column_group_id is not None:
+                continue
+
+            orphan_bbox = orphan.bbox()
+            orphan_x0, orphan_y0, orphan_x1, orphan_y1 = orphan_bbox
+
+            x_gap = orphan_x0 - named_x1
+            is_right_of = x_gap > -50
+            is_above = orphan_y0 < named_y0
+
+            dbg.write(
+                f"[DEBUG]   Orphan at x0={orphan_x0:.1f}, y0={orphan_y0:.1f}: "
+                f"x_gap={x_gap:.1f}, is_right={is_right_of}, is_above={is_above}\n"
+            )
+
+            if not is_right_of:
+                continue
+
+            first_text = _get_first_block_text(orphan)
+            if not _text_starts_as_continuation(first_text):
+                dbg.write(
+                    f"[DEBUG]   Orphan first text doesn't look like continuation: '{first_text[:50]}...'\n"
+                )
+                continue
+
+            score = x_gap + orphan_y0 / 10
+            if score < best_score:
+                best_score = score
+                best_orphan = orphan
+
+        if best_orphan is not None:
+            if named_col.column_group_id is None:
+                named_col.column_group_id = f"notes_group_{group_id_counter}"
+                group_id_counter += 1
+
+            best_orphan.column_group_id = named_col.column_group_id
+            best_orphan.continues_from = named_col.header_text()
+
+            dbg.write(
+                f"[DEBUG]   LINKED orphan to '{named_col.header_text()}' "
+                f"(group={named_col.column_group_id})\n"
+            )
+
+    return group_id_counter
+
+
+def _link_by_note_numbering(
+    named_columns: List[NotesColumn],
+    orphan_columns: List[NotesColumn],
+    group_id_counter: int,
+    dbg,
+) -> int:
+    """Link orphan columns whose note numbers continue a named column's sequence.
+
+    Returns the updated group_id_counter.
+    """
+    dbg.write(f"\n[DEBUG] Checking note numbering sequences...\n")
+
+    named_with_notes = []
+    for named_col in named_columns:
+        if not named_col.notes_blocks:
+            continue
+        named_numbers = _extract_note_numbers(named_col)
+        if not named_numbers:
+            continue
+        named_with_notes.append((named_col, max(named_numbers), named_numbers))
+        dbg.write(
+            f"[DEBUG] '{named_col.header_text()}' has notes: {named_numbers}, max={max(named_numbers)}\n"
+        )
+
+    for orphan in orphan_columns:
+        if orphan.column_group_id is not None:
+            continue
+
+        orphan_numbers = _extract_note_numbers(orphan)
+        if not orphan_numbers:
+            continue
+
+        min_orphan_note = min(orphan_numbers)
+        orphan_bbox = orphan.bbox()
+        orphan_x0 = orphan_bbox[0]
+
+        dbg.write(
+            f"[DEBUG]   Orphan has notes: {orphan_numbers}, min={min_orphan_note}\n"
+        )
+
+        best_match = None
+        best_gap = float("inf")
+
+        for named_col, max_named_note, named_numbers in named_with_notes:
+            named_bbox = named_col.bbox()
+            named_x1 = named_bbox[2]
+
+            if min_orphan_note <= max_named_note:
+                continue
+
+            note_gap = min_orphan_note - max_named_note
+
+            if note_gap > 3:
+                continue
+
+            x_gap = orphan_x0 - named_x1
+            is_right_or_similar = x_gap > -100
+
+            if not is_right_or_similar:
+                continue
+
+            dbg.write(
+                f"[DEBUG]     Candidate '{named_col.header_text()}' max={max_named_note}, "
+                f"note_gap={note_gap}, x_gap={x_gap:.1f}\n"
+            )
+
+            if note_gap < best_gap:
+                best_gap = note_gap
+                best_match = named_col
+
+        if best_match is not None:
+            if best_match.column_group_id is None:
+                best_match.column_group_id = f"notes_group_{group_id_counter}"
+                group_id_counter += 1
+
+            orphan.column_group_id = best_match.column_group_id
+            orphan.continues_from = best_match.header_text()
+
+            dbg.write(
+                f"[DEBUG]   LINKED by sequence: orphan notes {orphan_numbers} "
+                f"continue '{best_match.header_text()}' (gap={best_gap})\n"
+            )
+
+    return group_id_counter
+
+
+def _capture_leading_text(
+    columns: List[NotesColumn],
+    orphan_columns: List[NotesColumn],
+    blocks: List[BlockCluster],
+    x_tolerance: float,
+    dbg,
+) -> None:
+    """Attach unassigned text blocks above orphan columns' first note as leading text."""
+    dbg.write(f"\n[DEBUG] Checking for leading continuation text in linked orphans\n")
+
+    assigned_block_ids = set()
+    for col in columns:
+        for blk in col.notes_blocks:
+            assigned_block_ids.add(id(blk))
+        if col.header is not None:
+            assigned_block_ids.add(id(col.header))
+
+    for orphan in orphan_columns:
+        if orphan.continues_from is None:
+            continue
+        if not orphan.notes_blocks:
+            continue
+
+        first_notes_block = orphan.notes_blocks[0]
+        fnb_x0, fnb_y0, fnb_x1, fnb_y1 = first_notes_block.bbox()
+        orphan_bbox = orphan.bbox()
+        orphan_x0 = orphan_bbox[0]
+
+        dbg.write(
+            f"[DEBUG]   Orphan continuing '{orphan.continues_from}': "
+            f"first note at y={fnb_y0:.1f}, x={orphan_x0:.1f}\n"
+        )
+
+        leading_blocks = []
+        for blk in blocks:
+            if id(blk) in assigned_block_ids:
+                continue
+            if getattr(blk, "is_header", False):
+                continue
+            if blk.is_table:
+                continue
+
+            bx0, by0, bx1, by1 = blk.bbox()
+
+            if by1 >= fnb_y0:
+                continue
+
+            if abs(bx0 - orphan_x0) > x_tolerance:
+                continue
+
+            if not blk.rows:
+                continue
+
+            dbg.write(
+                f"[DEBUG]     Found leading text at y={by0:.1f}-{by1:.1f}: "
+                f"'{_get_first_row_text(blk)[:50]}...'\n"
+            )
+            leading_blocks.append(blk)
+
+        if leading_blocks:
+            leading_blocks.sort(key=lambda b: b.bbox()[1])
+            orphan.notes_blocks = leading_blocks + orphan.notes_blocks
+            dbg.write(
+                f"[DEBUG]     Added {len(leading_blocks)} leading text block(s) to orphan\n"
+            )
 
 
 def link_continued_columns(
@@ -1489,7 +1827,6 @@ def link_continued_columns(
     """
     if cfg is not None:
         x_tolerance = cfg.grouping_link_x_tolerance
-    debug_path = debug_path or "debug_headers.txt"
 
     # Build a map of base header text -> list of columns
     base_to_columns: dict = {}
@@ -1502,305 +1839,21 @@ def link_continued_columns(
                 base_to_columns[base] = []
             base_to_columns[base].append(col)
 
-    with open(debug_path, "a", encoding="utf-8") as dbg:
+    with _open_debug(debug_path) as dbg:
         dbg.write(
             f"\n[DEBUG] link_continued_columns: checking {len(columns)} columns\n"
         )
 
-        group_id_counter = 0
-        for base, cols in base_to_columns.items():
-            if len(cols) < 2:
-                # Only one column with this base name, no continuation
-                continue
-
-            # Sort by y position to determine order
-            cols.sort(key=lambda c: c.bbox()[1] if c.header else float("inf"))
-
-            # Assign a shared group ID
-            group_id = f"notes_group_{group_id_counter}"
-            group_id_counter += 1
-
-            dbg.write(
-                f"[DEBUG] Found column group '{base}' with {len(cols)} columns:\n"
-            )
-
-            parent_header_text = None
-            for i, col in enumerate(cols):
-                col.column_group_id = group_id
-                header_text = col.header_text()
-
-                if col.is_continuation():
-                    # This is a continuation column
-                    col.continues_from = parent_header_text
-                    dbg.write(
-                        f"[DEBUG]   [{i}] '{header_text}' (continues from '{parent_header_text}')\n"
-                    )
-                else:
-                    # This is a primary column
-                    parent_header_text = header_text
-                    dbg.write(f"[DEBUG]   [{i}] '{header_text}' (primary)\n")
-
-        # Log summary for explicit continuations
-        linked_count = sum(1 for c in columns if c.column_group_id is not None)
-        continuation_count = sum(1 for c in columns if c.continues_from is not None)
-        dbg.write(
-            f"[DEBUG] Explicit linking: {linked_count} columns in groups, {continuation_count} continuations\n"
-        )
-
-        # --- IMPLICIT CONTINUATION DETECTION (snake columns) ---
-        # Find columns with headers whose last block ends mid-sentence
-        # and orphan columns that could be their continuation
-        dbg.write(f"\n[DEBUG] Checking for implicit snake-column continuations...\n")
+        gid = _link_explicit_continuations(columns, base_to_columns, dbg)
 
         named_columns = [c for c in columns if c.header is not None]
         orphan_columns = [c for c in columns if c.header is None]
 
-        for named_col in named_columns:
-            if not named_col.notes_blocks:
-                continue
+        gid = _link_snake_continuations(named_columns, orphan_columns, gid, dbg)
+        gid = _link_by_note_numbering(named_columns, orphan_columns, gid, dbg)
 
-            # Get the bounding box and text of the named column
-            named_bbox = named_col.bbox()
-            named_x0, named_y0, named_x1, named_y1 = named_bbox
-            last_text = _get_last_block_text(named_col)
-
-            dbg.write(
-                f"[DEBUG] Checking '{named_col.header_text()}' for snake continuation\n"
-            )
-            dbg.write(
-                f"[DEBUG]   Last text: '{last_text[-80:] if len(last_text) > 80 else last_text}'\n"
-            )
-
-            # Check if the last block ends incomplete
-            if not _text_ends_incomplete(last_text):
-                dbg.write(f"[DEBUG]   Last text ends complete, skipping\n")
-                continue
-
-            dbg.write(
-                f"[DEBUG]   Last text ends incomplete, looking for continuation\n"
-            )
-
-            # Look for an orphan column that could be a continuation
-            # Must be to the right of the named column and have text that continues
-            best_orphan = None
-            best_score = float("inf")
-
-            for orphan in orphan_columns:
-                if orphan.column_group_id is not None:
-                    # Already linked
-                    continue
-
-                orphan_bbox = orphan.bbox()
-                orphan_x0, orphan_y0, orphan_x1, orphan_y1 = orphan_bbox
-
-                # Orphan should be to the right (its x0 > named column's x1 - tolerance)
-                # or at similar x but starting at top of page (y0 is small)
-                x_gap = orphan_x0 - named_x1
-
-                # For snake columns, the orphan typically is:
-                # - To the right of the named column (x_gap > -50)
-                # - Starts near top of page (orphan_y0 < named_y0) OR
-                # - Has similar x to named column but different y range
-
-                is_right_of = x_gap > -50  # Allow some overlap tolerance
-                is_above = orphan_y0 < named_y0
-
-                dbg.write(
-                    f"[DEBUG]   Orphan at x0={orphan_x0:.1f}, y0={orphan_y0:.1f}: "
-                    f"x_gap={x_gap:.1f}, is_right={is_right_of}, is_above={is_above}\n"
-                )
-
-                if not is_right_of:
-                    continue
-
-                # Check if orphan's first block looks like a continuation
-                first_text = _get_first_block_text(orphan)
-                if not _text_starts_as_continuation(first_text):
-                    dbg.write(
-                        f"[DEBUG]   Orphan first text doesn't look like continuation: '{first_text[:50]}...'\n"
-                    )
-                    continue
-
-                # Score by proximity: prefer orphans closer to the right edge
-                # and that start higher on the page (snake pattern)
-                score = x_gap + orphan_y0 / 10  # Weight towards close + high
-                if score < best_score:
-                    best_score = score
-                    best_orphan = orphan
-
-            if best_orphan is not None:
-                # Link the orphan to the named column
-                if named_col.column_group_id is None:
-                    named_col.column_group_id = f"notes_group_{group_id_counter}"
-                    group_id_counter += 1
-
-                best_orphan.column_group_id = named_col.column_group_id
-                best_orphan.continues_from = named_col.header_text()
-
-                dbg.write(
-                    f"[DEBUG]   LINKED orphan to '{named_col.header_text()}' "
-                    f"(group={named_col.column_group_id})\n"
-                )
-
-        # --- NOTE NUMBERING SEQUENCE DETECTION ---
-        # Link orphan columns that continue the note numbering sequence
-        # Use best-match algorithm: prefer columns where orphan's min note = named's max + 1
-        dbg.write(f"\n[DEBUG] Checking note numbering sequences...\n")
-
-        # Build a list of (named_col, max_note) for columns with notes
-        named_with_notes = []
-        for named_col in named_columns:
-            if not named_col.notes_blocks:
-                continue
-            named_numbers = _extract_note_numbers(named_col)
-            if not named_numbers:
-                continue
-            named_with_notes.append((named_col, max(named_numbers), named_numbers))
-            dbg.write(
-                f"[DEBUG] '{named_col.header_text()}' has notes: {named_numbers}, max={max(named_numbers)}\n"
-            )
-
-        # For each orphan, find the best matching named column
-        for orphan in orphan_columns:
-            if orphan.column_group_id is not None:
-                # Already linked
-                continue
-
-            orphan_numbers = _extract_note_numbers(orphan)
-            if not orphan_numbers:
-                continue
-
-            min_orphan_note = min(orphan_numbers)
-            orphan_bbox = orphan.bbox()
-            orphan_x0 = orphan_bbox[0]
-
-            dbg.write(
-                f"[DEBUG]   Orphan has notes: {orphan_numbers}, min={min_orphan_note}\n"
-            )
-
-            # Find the best matching named column
-            best_match = None
-            best_gap = float("inf")
-
-            for named_col, max_named_note, named_numbers in named_with_notes:
-                named_bbox = named_col.bbox()
-                named_x1 = named_bbox[2]
-
-                # Orphan's min must be greater than named's max
-                if min_orphan_note <= max_named_note:
-                    continue
-
-                # Calculate the gap in note numbers
-                note_gap = min_orphan_note - max_named_note
-
-                # Prefer gaps of 1 (immediate continuation) but allow up to 3
-                if note_gap > 3:
-                    continue
-
-                # Check spatial relationship - orphan should be to the right or similar x
-                x_gap = orphan_x0 - named_x1
-                is_right_or_similar = x_gap > -100
-
-                if not is_right_or_similar:
-                    continue
-
-                dbg.write(
-                    f"[DEBUG]     Candidate '{named_col.header_text()}' max={max_named_note}, "
-                    f"note_gap={note_gap}, x_gap={x_gap:.1f}\n"
-                )
-
-                # Prefer the closest match (smallest note_gap)
-                if note_gap < best_gap:
-                    best_gap = note_gap
-                    best_match = named_col
-
-            if best_match is not None:
-                # Link them!
-                if best_match.column_group_id is None:
-                    best_match.column_group_id = f"notes_group_{group_id_counter}"
-                    group_id_counter += 1
-
-                orphan.column_group_id = best_match.column_group_id
-                orphan.continues_from = best_match.header_text()
-
-                dbg.write(
-                    f"[DEBUG]   LINKED by sequence: orphan notes {orphan_numbers} "
-                    f"continue '{best_match.header_text()}' (gap={best_gap})\n"
-                )
-
-        # --- Capture leading continuation text ---
-        # For orphan columns that have been linked, look for text blocks that appear
-        # ABOVE the first numbered note in the column. These are continuations of
-        # the previous column's last note.
         if blocks is not None:
-            dbg.write(
-                f"\n[DEBUG] Checking for leading continuation text in linked orphans\n"
-            )
-
-            # Build set of blocks already assigned to columns
-            assigned_block_ids = set()
-            for col in columns:
-                for blk in col.notes_blocks:
-                    assigned_block_ids.add(id(blk))
-                if col.header is not None:
-                    assigned_block_ids.add(id(col.header))
-
-            # Find orphan columns that were just linked
-            for orphan in orphan_columns:
-                if orphan.continues_from is None:
-                    continue  # Not linked
-                if not orphan.notes_blocks:
-                    continue
-
-                # Get the first notes block (numbered note) in the orphan
-                first_notes_block = orphan.notes_blocks[0]
-                fnb_x0, fnb_y0, fnb_x1, fnb_y1 = first_notes_block.bbox()
-                orphan_bbox = orphan.bbox()
-                orphan_x0 = orphan_bbox[0]
-
-                dbg.write(
-                    f"[DEBUG]   Orphan continuing '{orphan.continues_from}': "
-                    f"first note at y={fnb_y0:.1f}, x={orphan_x0:.1f}\n"
-                )
-
-                # Look for text blocks above the first numbered note
-                leading_blocks = []
-                for blk in blocks:
-                    if id(blk) in assigned_block_ids:
-                        continue
-                    if getattr(blk, "is_header", False):
-                        continue
-                    if blk.is_table:
-                        continue
-
-                    bx0, by0, bx1, by1 = blk.bbox()
-
-                    # Must be above the first notes block
-                    if by1 >= fnb_y0:
-                        continue
-
-                    # Must be x-aligned with the orphan column
-                    if abs(bx0 - orphan_x0) > x_tolerance:
-                        continue
-
-                    # Check that the block has some text content
-                    if not blk.rows:
-                        continue
-
-                    dbg.write(
-                        f"[DEBUG]     Found leading text at y={by0:.1f}-{by1:.1f}: "
-                        f"'{_get_first_row_text(blk)[:50]}...'\n"
-                    )
-                    leading_blocks.append(blk)
-
-                # Add leading blocks to the orphan's notes_blocks (at the beginning)
-                if leading_blocks:
-                    # Sort by y position
-                    leading_blocks.sort(key=lambda b: b.bbox()[1])
-                    orphan.notes_blocks = leading_blocks + orphan.notes_blocks
-                    dbg.write(
-                        f"[DEBUG]     Added {len(leading_blocks)} leading text block(s) to orphan\n"
-                    )
+            _capture_leading_text(columns, orphan_columns, blocks, x_tolerance, dbg)
 
         # Final summary
         linked_count = sum(1 for c in columns if c.column_group_id is not None)
@@ -1838,7 +1891,7 @@ def _split_wide_blocks(
     gap_thresh = max(median_space_gap * 6.0, 20.0)
 
     # For re-grouping split lines into blocks
-    note_re = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
+    note_re = _NOTE_BROAD_RE
     line_heights = []
     for blk in blocks:
         for ln in blk.lines:
@@ -2009,4 +2062,17 @@ def build_clusters_v2(
     mark_headers(blocks, debug_path=None, cfg=settings)
     mark_notes(blocks, debug_path=None)
 
+    n_headers = sum(1 for b in blocks if b.is_header)
+    n_notes = sum(1 for b in blocks if b.is_notes)
+    n_tables = sum(1 for b in blocks if b.is_table)
+    logger.info(
+        "build_clusters_v2: %d tokens → %d lines → %d blocks "
+        "(headers=%d, notes=%d, tables=%d)",
+        len(tokens),
+        len(lines),
+        len(blocks),
+        n_headers,
+        n_notes,
+        n_tables,
+    )
     return blocks

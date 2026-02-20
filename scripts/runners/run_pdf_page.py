@@ -4,8 +4,6 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-import pdfplumber
-
 from plancheck import (
     BlockCluster,
     GlyphBox,
@@ -13,7 +11,9 @@ from plancheck import (
     build_clusters_v2,
     draw_overlay,
     estimate_skew_degrees,
+    extract_tocr_page,
     nms_prune,
+    render_page_image,
     rotate_boxes,
 )
 from plancheck.export.overlay import draw_lines_overlay
@@ -35,35 +35,9 @@ def make_run_dir(name: str | None = None) -> Path:
 
 
 def page_boxes(pdf_path: Path, page_num: int) -> tuple[list[GlyphBox], float, float]:
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[page_num]
-        page_w, page_h = float(page.width), float(page.height)
-        words = page.extract_words()
-        boxes: list[GlyphBox] = []
-        for w in words:
-            # Clip coordinates to page bounds (PDF content can extend past page edge)
-            x0 = max(0.0, min(page_w, float(w.get("x0", 0.0))))
-            x1 = max(0.0, min(page_w, float(w.get("x1", 0.0))))
-            y0 = max(0.0, min(page_h, float(w.get("top", 0.0))))
-            y1 = max(0.0, min(page_h, float(w.get("bottom", 0.0))))
-            text = w.get("text", "")
-            # Skip degenerate boxes (fully clipped)
-            if x1 <= x0 or y1 <= y0:
-                continue
-            boxes.append(
-                GlyphBox(
-                    page=page_num, x0=x0, y0=y0, x1=x1, y1=y1, text=text, origin="text"
-                )
-            )
-    return boxes, page_w, page_h
-
-
-def render_page_image(pdf_path: Path, page_num: int, resolution: int = 200):
-    """Render a page to a PIL image at given resolution (DPI)."""
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[page_num]
-        img_page = page.to_image(resolution=resolution)
-        return img_page.original.copy()
+    """Extract word boxes via canonical TOCR pipeline (minimal mode)."""
+    result = extract_tocr_page(pdf_path, page_num, mode="minimal")
+    return result.tokens, result.page_width, result.page_height
 
 
 def save_boxes_json(boxes: list[GlyphBox], out_path: Path) -> None:

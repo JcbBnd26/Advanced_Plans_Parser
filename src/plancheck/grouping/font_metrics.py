@@ -48,6 +48,7 @@ class FontMetricsAnomaly:
         return self.inflation_factor > threshold and self.confidence > confidence_min
 
     def to_dict(self) -> dict:
+        """Serialize anomaly data to a JSON-compatible dict."""
         return {
             "fontname": self.fontname,
             "sample_count": self.sample_count,
@@ -70,9 +71,11 @@ class PageMetricsReport:
     anomalous_char_count: int = 0
 
     def has_anomalies(self) -> bool:
+        """Return True if any font in this report is anomalous."""
         return any(a.is_anomalous() for a in self.font_anomalies.values())
 
     def get_anomalous_fonts(self) -> List[str]:
+        """Return list of font names flagged as anomalous."""
         return [name for name, a in self.font_anomalies.items() if a.is_anomalous()]
 
     def get_correction_factor(self, fontname: str) -> float:
@@ -84,6 +87,7 @@ class PageMetricsReport:
         return 1.0
 
     def to_dict(self) -> dict:
+        """Serialize the full page metrics report to a dict."""
         return {
             "page_num": self.page_num,
             "total_chars_analyzed": self.total_chars_analyzed,
@@ -367,9 +371,11 @@ class WordVisualAnomaly:
     overhang_percent: float  # % of reported width that's empty
 
     def is_anomalous(self, threshold: float = 1.3) -> bool:
+        """Return True if inflation factor exceeds *threshold*."""
         return self.inflation_factor > threshold
 
     def to_dict(self) -> dict:
+        """Serialize anomaly data to a JSON-compatible dict."""
         return {
             "text": self.text,
             "fontname": self.fontname,
@@ -393,9 +399,11 @@ class VisualMetricsReport:
     font_inflation_factors: Dict[str, float] = field(default_factory=dict)
 
     def has_anomalies(self, threshold: float = 1.3) -> bool:
+        """Return True if any word anomaly exceeds *threshold*."""
         return any(a.is_anomalous(threshold) for a in self.word_anomalies)
 
     def get_anomalous_fonts(self, threshold: float = 1.3) -> List[str]:
+        """Return deduplicated list of fonts with anomalies above *threshold*."""
         return list(
             set(a.fontname for a in self.word_anomalies if a.is_anomalous(threshold))
         )
@@ -409,6 +417,7 @@ class VisualMetricsReport:
         return 1.0
 
     def to_dict(self) -> dict:
+        """Serialize the visual metrics report to a dict."""
         return {
             "page_num": self.page_num,
             "resolution": self.resolution,

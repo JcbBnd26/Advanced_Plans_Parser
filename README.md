@@ -1,19 +1,75 @@
-# Advanced Plan Parser (Fresh Start)
+# Advanced Plan Parser
 
-Minimal geometry-first grouping skeleton for plan checking. The old backbone codebase lives outside this folder; this is a clean slate with new naming.
+Geometry-first PDF plan-sheet analysis pipeline for automated plan checking.
+Extracts text, graphics, and structural regions from CAD-origin PDFs, then
+runs semantic checks against engineering standards.
+
+## Pipeline
+
+Nine stages, executed per page:
+
+```
+ingest → tocr ‖ vocrpp → vocr → reconcile → grouping → analysis → checks → export
+```
+
+| Stage | Description |
+|-------|-------------|
+| **ingest** | Validate PDF, extract metadata, render page image |
+| **tocr** | Text-layer OCR via pdfplumber (fonts, glyphs, diagnostics) |
+| **vocrpp** | Pre-process page image for visual OCR (grayscale, CLAHE, etc.) |
+| **vocr** | Visual OCR via PaddleOCR 3.x (symbols missing from text layer) |
+| **reconcile** | Merge text-layer and visual-OCR tokens (symbol injection) |
+| **grouping** | Row/line/span clustering → `BlockCluster` / `NotesColumn` |
+| **analysis** | Graphics extraction, structural boxes, legends, abbreviations, revisions, zoning |
+| **checks** | Semantic rule checks (missing notes, numbering gaps, etc.) |
+| **export** | Overlays (PNG), structured CSVs, extraction JSON |
 
 ## Layout
-- src/plancheck: core grouping package (config, models, preprocess, grouping, zoning)
-- scripts/run_grouping.py: CLI to run grouping on JSON boxes
-- samples/demo_boxes.json: toy input to sanity-check grouping
-- requirements.txt: runtime deps (numpy only for now)
+
+```
+src/plancheck/          Core package
+  config.py             GroupingConfig (~130 tunables)
+  models.py             GlyphBox, BlockCluster, NotesColumn, region models
+  pipeline.py           Stage gating, timing, StageResult
+  ingest/               PDF validation & page-image rendering
+  tocr/                 Text-layer extraction & preprocessing
+  vocrpp/               OCR image preprocessing (CLAHE, binarize, sharpen)
+  vocr/                 PaddleOCR engine & token extraction
+  reconcile/            Dual-source OCR reconciliation
+  grouping/             Clustering, font metrics, notes/header detection
+  analysis/             Legends, abbreviations, revisions, zoning, graphics
+  checks/               Semantic rule checks
+  export/               Overlay rendering, CSV export, page serialisation
+scripts/
+  runners/              CLI entry points (run_pdf_batch, run_pdf_page, new_run)
+  diagnostics/          Benchmarking & tuning harnesses
+  gui/                  Tkinter GUI + overlay viewer
+  overlays/             Standalone overlay scripts
+  utils/                Page extraction, tag listing
+tests/                  pytest suite (~745 tests)
+docs/                   Implementation notes & status logs
+```
 
 ## Quick start
-1. Install deps: `pip install -r requirements.txt`
-2. Option A: Create an empty run folder: `python scripts/new_run.py` (creates runs/run_YYYYmmdd_HHMMSS with subfolders)
-3. Option B: Process a PDF page directly (extract boxes, group, overlay, and bundle):
-	`python scripts/run_pdf_page.py input/your.pdf --page 0`
-	This copies the PDF into a new run, saves page boxes JSON, and writes an overlay PNG under runs/.../overlays/.
-4. To run grouping on an existing boxes JSON: `python scripts/run_grouping.py <boxes.json> --overlay <out.png>`
 
-The CLI prints grouped blocks and marks table-like clusters. If you pass `--overlay`, it also saves a PNG overlay so you can see grouping. Coordinates are expected in page space; skew handling is stubbed and limited to small rotations.
+```bash
+pip install -r requirements.txt
+# Process a full PDF (all pages):
+python scripts/runners/run_pdf_batch.py input/your.pdf
+# Process a single page:
+python scripts/runners/run_pdf_page.py input/your.pdf --page 0
+# Launch the GUI:
+launch_gui.bat
+```
+
+## Dependencies
+
+See [requirements.txt](requirements.txt). Key runtime dependencies:
+pdfplumber, Pillow, numpy, reportlab, OpenCV (cv2), PaddleOCR 3.x.
+
+## Testing
+
+```bash
+pip install pytest
+python -m pytest tests/ -q
+```

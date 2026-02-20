@@ -232,6 +232,7 @@ def _extract_ocr_tokens(
         exc_box: list = []
 
         def _worker():
+            """Thread target that executes the OCR function."""
             try:
                 result_box.append(func(*args))
             except Exception as e:
@@ -307,7 +308,7 @@ def _extract_ocr_tokens(
                     flush=True,
                 )
 
-    except Exception as e:
+    except (RuntimeError, ValueError, MemoryError, OSError) as e:
         import traceback
 
         print(f"  OCR Stage 1: EXCEPTION during predict(): {e}", flush=True)

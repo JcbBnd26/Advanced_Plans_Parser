@@ -4,6 +4,64 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 
+def _region_bbox(
+    header: Optional["BlockCluster"],
+    entries: list,
+    box_bbox: Optional[Tuple[float, float, float, float]] = None,
+) -> Tuple[float, float, float, float]:
+    """Compute bbox for a region with an optional header and iterable entries.
+
+    If *box_bbox* is pre-set (e.g. from a detected enclosing rectangle)
+    it is returned directly.  Otherwise the bbox is the union of the
+    header bbox and every entry bbox.  Returns ``(0, 0, 0, 0)`` when
+    there are no components.
+    """
+    if box_bbox:
+        return box_bbox
+    xs0: list[float] = []
+    ys0: list[float] = []
+    xs1: list[float] = []
+    ys1: list[float] = []
+    if header:
+        x0, y0, x1, y1 = header.bbox()
+        xs0.append(x0)
+        ys0.append(y0)
+        xs1.append(x1)
+        ys1.append(y1)
+    for entry in entries:
+        x0, y0, x1, y1 = entry.bbox()
+        xs0.append(x0)
+        ys0.append(y0)
+        xs1.append(x1)
+        ys1.append(y1)
+    if not xs0:
+        return (0, 0, 0, 0)
+    return (min(xs0), min(ys0), max(xs1), max(ys1))
+
+
+def _multi_bbox(
+    bboxes: List[Optional[Tuple[float, float, float, float]]],
+) -> Tuple[float, float, float, float]:
+    """Compute the union bbox from a list of optional bounding boxes.
+
+    ``None`` entries are skipped.  Returns ``(0, 0, 0, 0)`` when no
+    valid bounding boxes are supplied.
+    """
+    xs0: list[float] = []
+    ys0: list[float] = []
+    xs1: list[float] = []
+    ys1: list[float] = []
+    for bb in bboxes:
+        if bb is not None:
+            xs0.append(bb[0])
+            ys0.append(bb[1])
+            xs1.append(bb[2])
+            ys1.append(bb[3])
+    if not xs0:
+        return (0, 0, 0, 0)
+    return (min(xs0), min(ys0), max(xs1), max(ys1))
+
+
 @dataclass
 class GraphicElement:
     """A graphical element extracted from the PDF (line, rect, curve)."""
@@ -20,15 +78,19 @@ class GraphicElement:
     pts: Optional[List[Tuple[float, float]]] = None  # For curves
 
     def width(self) -> float:
+        """Horizontal extent in points."""
         return self.x1 - self.x0
 
     def height(self) -> float:
+        """Vertical extent in points."""
         return self.y1 - self.y0
 
     def area(self) -> float:
+        """Area in square points, clamped to zero."""
         return max(0.0, self.width()) * max(0.0, self.height())
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box as ``(x0, y0, x1, y1)``."""
         return (self.x0, self.y0, self.x1, self.y1)
 
     def is_small_symbol(self, max_size: float = 50.0) -> bool:
@@ -50,20 +112,7 @@ class LegendEntry:
 
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of symbol and description."""
-        xs0, ys0, xs1, ys1 = [], [], [], []
-        if self.symbol_bbox:
-            xs0.append(self.symbol_bbox[0])
-            ys0.append(self.symbol_bbox[1])
-            xs1.append(self.symbol_bbox[2])
-            ys1.append(self.symbol_bbox[3])
-        if self.description_bbox:
-            xs0.append(self.description_bbox[0])
-            ys0.append(self.description_bbox[1])
-            xs1.append(self.description_bbox[2])
-            ys1.append(self.description_bbox[3])
-        if not xs0:
-            return (0, 0, 0, 0)
-        return (min(xs0), min(ys0), max(xs1), max(ys1))
+        return _multi_bbox([self.symbol_bbox, self.description_bbox])
 
 
 @dataclass
@@ -78,30 +127,15 @@ class LegendRegion:
     confidence: float = 0.0  # 0–1 detection confidence
 
     def header_text(self) -> str:
+        """Concatenated text from the first header row."""
         if not self.header or not self.header.rows:
             return ""
         texts = [b.text for b in self.header.rows[0].boxes if b.text]
         return " ".join(texts).strip()
 
     def bbox(self) -> Tuple[float, float, float, float]:
-        if self.box_bbox:
-            return self.box_bbox
-        xs0, ys0, xs1, ys1 = [], [], [], []
-        if self.header:
-            x0, y0, x1, y1 = self.header.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
-        for entry in self.entries:
-            x0, y0, x1, y1 = entry.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
-        if not xs0:
-            return (0, 0, 0, 0)
-        return (min(xs0), min(ys0), max(xs1), max(ys1))
+        """Combined bounding box of header, entries, and enclosing box."""
+        return _region_bbox(self.header, self.entries, self.box_bbox)
 
 
 @dataclass
@@ -116,20 +150,7 @@ class AbbreviationEntry:
 
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of code and meaning."""
-        xs0, ys0, xs1, ys1 = [], [], [], []
-        if self.code_bbox:
-            xs0.append(self.code_bbox[0])
-            ys0.append(self.code_bbox[1])
-            xs1.append(self.code_bbox[2])
-            ys1.append(self.code_bbox[3])
-        if self.meaning_bbox:
-            xs0.append(self.meaning_bbox[0])
-            ys0.append(self.meaning_bbox[1])
-            xs1.append(self.meaning_bbox[2])
-            ys1.append(self.meaning_bbox[3])
-        if not xs0:
-            return (0, 0, 0, 0)
-        return (min(xs0), min(ys0), max(xs1), max(ys1))
+        return _multi_bbox([self.code_bbox, self.meaning_bbox])
 
 
 @dataclass
@@ -144,30 +165,15 @@ class AbbreviationRegion:
     confidence: float = 0.0  # 0–1 detection confidence
 
     def header_text(self) -> str:
+        """Concatenated text from the first header row."""
         if not self.header or not self.header.rows:
             return ""
         texts = [b.text for b in self.header.rows[0].boxes if b.text]
         return " ".join(texts).strip()
 
     def bbox(self) -> Tuple[float, float, float, float]:
-        if self.box_bbox:
-            return self.box_bbox
-        xs0, ys0, xs1, ys1 = [], [], [], []
-        if self.header:
-            x0, y0, x1, y1 = self.header.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
-        for entry in self.entries:
-            x0, y0, x1, y1 = entry.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
-        if not xs0:
-            return (0, 0, 0, 0)
-        return (min(xs0), min(ys0), max(xs1), max(ys1))
+        """Combined bounding box of header, entries, and enclosing box."""
+        return _region_bbox(self.header, self.entries, self.box_bbox)
 
 
 @dataclass
@@ -181,6 +187,7 @@ class RevisionEntry:
     row_bbox: Optional[Tuple[float, float, float, float]] = None
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box of this revision row."""
         if self.row_bbox:
             return self.row_bbox
         return (0, 0, 0, 0)
@@ -198,6 +205,7 @@ class MiscTitleRegion:
     confidence: float = 0.0  # 0–1 detection confidence
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box from enclosing box or text block."""
         if self.box_bbox:
             return self.box_bbox
         if self.text_block:
@@ -217,30 +225,15 @@ class RevisionRegion:
     confidence: float = 0.0  # 0–1 detection confidence
 
     def header_text(self) -> str:
+        """Concatenated text from the first header row."""
         if not self.header or not self.header.rows:
             return ""
         texts = [b.text for b in self.header.rows[0].boxes if b.text]
         return " ".join(texts).strip()
 
     def bbox(self) -> Tuple[float, float, float, float]:
-        if self.box_bbox:
-            return self.box_bbox
-        xs0, ys0, xs1, ys1 = [], [], [], []
-        if self.header:
-            x0, y0, x1, y1 = self.header.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
-        for entry in self.entries:
-            x0, y0, x1, y1 = entry.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
-        if not xs0:
-            return (0, 0, 0, 0)
-        return (min(xs0), min(ys0), max(xs1), max(ys1))
+        """Combined bounding box of header, entries, and enclosing box."""
+        return _region_bbox(self.header, self.entries, self.box_bbox)
 
 
 @dataclass
@@ -255,20 +248,7 @@ class StandardDetailEntry:
 
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of sheet number and description."""
-        xs0, ys0, xs1, ys1 = [], [], [], []
-        if self.sheet_bbox:
-            xs0.append(self.sheet_bbox[0])
-            ys0.append(self.sheet_bbox[1])
-            xs1.append(self.sheet_bbox[2])
-            ys1.append(self.sheet_bbox[3])
-        if self.description_bbox:
-            xs0.append(self.description_bbox[0])
-            ys0.append(self.description_bbox[1])
-            xs1.append(self.description_bbox[2])
-            ys1.append(self.description_bbox[3])
-        if not xs0:
-            return (0, 0, 0, 0)
-        return (min(xs0), min(ys0), max(xs1), max(ys1))
+        return _multi_bbox([self.sheet_bbox, self.description_bbox])
 
 
 @dataclass
@@ -287,30 +267,15 @@ class StandardDetailRegion:
     confidence: float = 0.0  # 0–1 detection confidence
 
     def header_text(self) -> str:
+        """Concatenated text from the first header row."""
         if not self.header or not self.header.rows:
             return ""
         texts = [b.text for b in self.header.rows[0].boxes if b.text]
         return " ".join(texts).strip()
 
     def bbox(self) -> Tuple[float, float, float, float]:
-        if self.box_bbox:
-            return self.box_bbox
-        xs0, ys0, xs1, ys1 = [], [], [], []
-        if self.header:
-            x0, y0, x1, y1 = self.header.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
-        for entry in self.entries:
-            x0, y0, x1, y1 = entry.bbox()
-            xs0.append(x0)
-            ys0.append(y0)
-            xs1.append(x1)
-            ys1.append(y1)
-        if not xs0:
-            return (0, 0, 0, 0)
-        return (min(xs0), min(ys0), max(xs1), max(ys1))
+        """Combined bounding box of header, entries, and enclosing box."""
+        return _region_bbox(self.header, self.entries, self.box_bbox)
 
 
 @dataclass
@@ -328,18 +293,23 @@ class GlyphBox:
     font_size: float = 0.0
 
     def width(self) -> float:
+        """Horizontal extent in points."""
         return self.x1 - self.x0
 
     def height(self) -> float:
+        """Vertical extent in points."""
         return self.y1 - self.y0
 
     def area(self) -> float:
+        """Area in square points, clamped to zero."""
         return max(0.0, self.width()) * max(0.0, self.height())
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box as ``(x0, y0, x1, y1)``."""
         return (self.x0, self.y0, self.x1, self.y1)
 
     def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
         return {
             "page": self.page,
             "x0": round(self.x0, 3),
@@ -354,6 +324,7 @@ class GlyphBox:
 
     @classmethod
     def from_dict(cls, d: dict) -> "GlyphBox":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
         return cls(
             page=d["page"],
             x0=d["x0"],
@@ -395,6 +366,7 @@ class Span:
         return " ".join(tokens[i].text for i in self.token_indices if tokens[i].text)
 
     def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
         return {
             "token_indices": list(self.token_indices),
             "col_id": self.col_id,
@@ -402,6 +374,7 @@ class Span:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Span":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
         return cls(
             token_indices=d.get("token_indices", []),
             col_id=d.get("col_id"),
@@ -443,6 +416,7 @@ class Line:
         return " ".join(tokens[i].text for i in sorted_indices if tokens[i].text)
 
     def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
         return {
             "line_id": self.line_id,
             "page": self.page,
@@ -453,6 +427,7 @@ class Line:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Line":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
         spans = [Span.from_dict(s) for s in d.get("spans", [])]
         return cls(
             line_id=d["line_id"],
@@ -472,6 +447,7 @@ class RowBand:
     column_id: Optional[int] = None
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box enclosing all boxes in this row."""
         xs0 = [b.x0 for b in self.boxes]
         ys0 = [b.y0 for b in self.boxes]
         xs1 = [b.x1 for b in self.boxes]
@@ -501,6 +477,7 @@ class BlockCluster:
     parent_block_index: Optional[int] = None  # subheader → parent header index
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box enclosing all lines or rows in this block."""
         xs0: List[float] = []
         ys0: List[float] = []
         xs1: List[float] = []
@@ -764,6 +741,7 @@ class SuspectRegion:
     block_index: int = -1  # Index into blocks list
 
     def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box as ``(x0, y0, x1, y1)``."""
         return (self.x0, self.y0, self.x1, self.y1)
 
     def to_dict(self) -> dict:

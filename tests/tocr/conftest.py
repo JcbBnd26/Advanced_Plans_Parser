@@ -11,4 +11,6 @@ _spec = importlib.util.spec_from_file_location("_root_conftest", _root_conftest_
 _rc = importlib.util.module_from_spec(_spec)
 sys.modules["_root_conftest"] = _rc
 _spec.loader.exec_module(_rc)
+make_block = _rc.make_block  # noqa: F401
 make_box = _rc.make_box  # noqa: F401
+make_graphic = _rc.make_graphic  # noqa: F401

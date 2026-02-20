@@ -69,6 +69,7 @@ def draw_reconcile_debug(
     allowed = "%" + "/°±"  # default; could pull from stats if wanted
 
     def _rect(b: GlyphBox) -> Tuple[float, float, float, float]:
+        """Scale a glyph box's bbox for overlay rendering."""
         return (b.x0 * scale, b.y0 * scale, b.x1 * scale, b.y1 * scale)
 
     # Layer 1: all OCR tokens in light grey
@@ -191,6 +192,7 @@ def draw_symbol_overlay(
         font = ImageFont.load_default()
 
     def _rect(b: GlyphBox) -> Tuple[float, float, float, float]:
+        """Scale a glyph box's bbox for overlay rendering."""
         return (b.x0 * scale, b.y0 * scale, b.x1 * scale, b.y1 * scale)
 
     # Find all symbol-bearing tokens

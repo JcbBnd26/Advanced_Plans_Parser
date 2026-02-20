@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
@@ -5,9 +7,14 @@ class ConfigValidationError(ValueError):
     """Raised when a GroupingConfig field has an invalid value."""
 
 
+class ConfigLoadError(ValueError):
+    """Raised when a config file cannot be loaded or parsed."""
+
+
 def _check_range(
     name: str, value: float, lo: float, hi: float, *, inclusive: bool = True
 ) -> None:
+    """Raise ConfigValidationError if *value* is outside [lo, hi]."""
     if inclusive:
         if not (lo <= value <= hi):
             raise ConfigValidationError(f"{name}={value} out of range [{lo}, {hi}]")
@@ -17,16 +24,19 @@ def _check_range(
 
 
 def _check_positive(name: str, value: float) -> None:
+    """Raise ConfigValidationError if *value* is not positive."""
     if value <= 0:
         raise ConfigValidationError(f"{name}={value} must be > 0")
 
 
 def _check_non_negative(name: str, value: float) -> None:
+    """Raise ConfigValidationError if *value* is negative."""
     if value < 0:
         raise ConfigValidationError(f"{name}={value} must be >= 0")
 
 
 def _check_odd(name: str, value: int, floor: int = 3) -> None:
+    """Raise ConfigValidationError if *value* is even or below *floor*."""
     if value < floor:
         raise ConfigValidationError(f"{name}={value} must be >= {floor}")
     if value % 2 == 0:
@@ -35,8 +45,31 @@ def _check_odd(name: str, value: int, floor: int = 3) -> None:
 
 @dataclass
 class GroupingConfig:
-    """Tunables for geometry-first grouping."""
+    """Tunables for geometry-first grouping.
 
+    Fields are organised into logical sections:
+
+    * **Core geometry** – IoU pruning, skew, tolerance multipliers,
+      row/block/column splitting, and table detection.
+    * **Text OCR (TOCR)** – pdfplumber text-layer extraction options.
+    * **Visual OCR (VOCR)** – PaddleOCR full-page extraction options.
+    * **OCR reconciliation** – merging VOCR tokens into the TOCR layer.
+    * **OCR image preprocessing (VOCRPP)** – grayscale, CLAHE, denoise,
+      binarise, and sharpen the rendered page before OCR.
+    * **Reconcile-stage tuning** – symbol sizing and candidate acceptance.
+    * **Grouping-stage tuning** – histogram gutters, line overlap, gap
+      fallbacks, column detection, and notes-column linking.
+    * **Semantic region growth** – anchor-based bbox expansion for
+      legends, abbreviations, revisions, and standard details.
+    * **Legend / abbreviation / revision detection** – enclosure
+      tolerance, symbol sizing, and unboxed-region search extents.
+    * **Font metrics** – inflation-factor anomaly detection thresholds.
+    * **Overlay / debug visualisation** – label sizing, outline widths,
+      fill alpha, and same-line overlap tolerance.
+    * **Preprocessing (deskew)** – minimum rotation angle.
+    """
+
+    # ── Core geometry ──────────────────────────────────────────────────
     # IoU threshold for pruning overlapping boxes.
     iou_prune: float = 0.5
     # Skew handling.
@@ -474,4 +507,129 @@ class GroupingConfig:
             raise ConfigValidationError(
                 f"font_metrics_dark_threshold={self.font_metrics_dark_threshold} "
                 f"out of range [0, 255]"
+            )
+
+    # ── Serialisation / deserialisation ────────────────────────────────
+
+    def to_dict(self) -> dict:
+        """Return all config fields as a plain dict."""
+        return {k: v for k, v in vars(self).items() if not k.startswith("_")}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "GroupingConfig":
+        """Create a config from a plain dict, ignoring unknown keys."""
+        import dataclasses
+
+        valid = {f.name for f in dataclasses.fields(cls)}
+        filtered = {k: v for k, v in data.items() if k in valid}
+        return cls(**filtered)
+
+    @classmethod
+    def from_yaml(cls, path: str | "Path") -> "GroupingConfig":  # type: ignore[name-defined]
+        """Load configuration from a YAML file.
+
+        Requires the ``pyyaml`` package.  Only keys matching
+        ``GroupingConfig`` field names are used; unknown keys are
+        silently ignored.
+
+        Raises
+        ------
+        ConfigLoadError
+            If the file cannot be read or parsed.
+        """
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        try:
+            import yaml
+        except ImportError as exc:
+            raise ConfigLoadError(
+                "pyyaml is required for YAML config loading. "
+                "Install it with: pip install pyyaml"
+            ) from exc
+
+        try:
+            text = path.read_text(encoding="utf-8")
+            data = yaml.safe_load(text)
+        except (OSError, yaml.YAMLError) as exc:
+            raise ConfigLoadError(
+                f"Failed to load YAML config from {path}: {exc}"
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise ConfigLoadError(
+                f"Expected a YAML mapping at top level in {path}, got {type(data).__name__}"
+            )
+
+        return cls.from_dict(data)
+
+    @classmethod
+    def from_toml(cls, path: str | "Path") -> "GroupingConfig":  # type: ignore[name-defined]
+        """Load configuration from a TOML file.
+
+        Uses ``tomllib`` (Python 3.11+) or falls back to ``tomli``.
+
+        Raises
+        ------
+        ConfigLoadError
+            If the file cannot be read or parsed.
+        """
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        try:
+            import tomllib  # Python 3.11+
+        except ImportError:
+            try:
+                import tomli as tomllib  # type: ignore[no-redef]
+            except ImportError as exc:
+                raise ConfigLoadError(
+                    "tomllib (Python 3.11+) or tomli is required for TOML config. "
+                    "Install with: pip install tomli"
+                ) from exc
+
+        try:
+            with open(path, "rb") as f:
+                data = tomllib.load(f)
+        except (OSError, ValueError) as exc:
+            raise ConfigLoadError(
+                f"Failed to load TOML config from {path}: {exc}"
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise ConfigLoadError(
+                f"Expected a TOML table at top level in {path}, got {type(data).__name__}"
+            )
+
+        # Support a [plancheck] or [grouping] sub-table
+        if "plancheck" in data and isinstance(data["plancheck"], dict):
+            data = data["plancheck"]
+        elif "grouping" in data and isinstance(data["grouping"], dict):
+            data = data["grouping"]
+
+        return cls.from_dict(data)
+
+    @classmethod
+    def from_file(cls, path: str | "Path") -> "GroupingConfig":  # type: ignore[name-defined]
+        """Load configuration from a YAML or TOML file (auto-detected by extension).
+
+        Supported extensions: ``.yaml``, ``.yml``, ``.toml``.
+
+        Raises
+        ------
+        ConfigLoadError
+            If the extension is unsupported or the file cannot be read.
+        """
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        suffix = path.suffix.lower()
+        if suffix in (".yaml", ".yml"):
+            return cls.from_yaml(path)
+        elif suffix == ".toml":
+            return cls.from_toml(path)
+        else:
+            raise ConfigLoadError(
+                f"Unsupported config file extension '{suffix}'. "
+                f"Use .yaml, .yml, or .toml"
             )

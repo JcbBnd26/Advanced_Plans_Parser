@@ -1,124 +1,34 @@
 from __future__ import annotations
 
-import re
-
-
-def detect_headers_from_words(boxes: list[GlyphBox]) -> list[GlyphBox]:
-    """Tag header candidates directly from word boxes (before grouping)."""
-    # Improved: group words into lines by y0 and horizontal proximity
-    from collections import defaultdict
-
-    header_re = re.compile(r"^[A-Z0-9\s\-\(\)\'\.]+: *$", re.ASCII)
-    # Step 1: group by y0 (row)
-    y_tol = 2.0  # tolerance for y alignment in points
-    rows = defaultdict(list)
-    for b in boxes:
-        found = False
-        for y in rows:
-            if abs(b.y0 - y) < y_tol:
-                rows[y].append(b)
-                found = True
-                break
-        if not found:
-            rows[b.y0].append(b)
-    header_boxes = []
-    for row in rows.values():
-        # Step 2: sort by x0 and group horizontally close words into lines
-        row = sorted(row, key=lambda b: b.x0)
-        line = []
-        lines = []
-        x_gap_tol = 20.0  # max gap between words in a line (points)
-        for b in row:
-            if not line:
-                line.append(b)
-            else:
-                prev = line[-1]
-                if b.x0 - prev.x1 < x_gap_tol:
-                    line.append(b)
-                else:
-                    lines.append(line)
-                    line = [b]
-        if line:
-            lines.append(line)
-        # Step 3: apply header regex to each line
-        for line_words in lines:
-            line_text = " ".join(b.text for b in line_words if b.text).strip()
-            line_text_norm = re.sub(r"\s+", " ", line_text).upper()
-            if header_re.match(line_text_norm):
-                for b in line_words:
-                    b.origin = "header_candidate"
-                header_boxes.extend(line_words)
-    return header_boxes
-
-
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 import argparse
 import json
-import re
 import shutil
 from datetime import datetime
-
-import pdfplumber
 
 from plancheck import (
     BlockCluster,
     GlyphBox,
     GroupingConfig,
-    Line,
     StageResult,
-    build_clusters_v2,
-    classify_blocks,
-    detect_zones,
-    draw_reconcile_debug,
-    draw_symbol_overlay,
-    estimate_skew_degrees,
-    extract_vocr_tokens,
-    gate,
-    mark_notes,
-    mark_tables,
-    nms_prune,
-    reconcile_ocr,
-    rotate_boxes,
-    run_stage,
+    ingest_pdf,
     zone_summary,
 )
-from plancheck.analysis.legends import (
-    detect_abbreviation_regions,
-    detect_legend_regions,
-    detect_misc_title_regions,
-    detect_revision_regions,
-    detect_standard_detail_regions,
-    extract_graphics,
-    filter_graphics_outside_regions,
-)
-from plancheck.analysis.structural_boxes import (
-    BoxType,
-    detect_semantic_regions,
-    mask_blocks_by_structural_boxes,
-)
-from plancheck.checks.semantic_checks import run_all_checks
+from plancheck.analysis.structural_boxes import BoxType
 from plancheck.export import export_page_results
 from plancheck.export.overlay import draw_columns_overlay, draw_lines_overlay
 from plancheck.export.page_data import serialize_page
-from plancheck.grouping import (
-    compute_median_space_gap,
-    group_notes_columns,
-    link_continued_columns,
-    mark_headers,
+from plancheck.export.report import generate_html_report, generate_json_report
+from plancheck.pipeline import (
+    DocumentResult,
+    PageResult,
+    _run_document_checks,
+    input_fingerprint,
+    run_pipeline,
 )
-from plancheck.models import (
-    AbbreviationRegion,
-    LegendRegion,
-    RevisionRegion,
-    StandardDetailRegion,
-)
-from plancheck.tocr.extract import extract_tocr_page
-
-# OCR image preprocessing
-from plancheck.vocrpp.preprocess import OcrPreprocessConfig, preprocess_image_for_ocr
 
 
 def make_run_dir(base: Path, name: str) -> Path:
@@ -138,30 +48,6 @@ def cleanup_old_runs(run_root: Path, keep: int = 50) -> None:
     for old_dir in run_dirs[keep:]:
         shutil.rmtree(old_dir, ignore_errors=True)
         print(f"Cleaned up old run: {old_dir.name}")
-
-
-def page_boxes(
-    pdf_path: Path, page_num: int, cfg: GroupingConfig | None = None
-) -> tuple[list[GlyphBox], float, float, dict]:
-    """Extract word boxes from PDF text layer with full diagnostics.
-
-    Delegates to :func:`plancheck.tocr.extract.extract_tocr_page` (full mode)
-    and returns the legacy 4-tuple.
-
-    Returns
-    -------
-    (boxes, page_width, page_height, diagnostics)
-        diagnostics dict contains font distribution, token stats, quality
-        signals, and extraction parameters for the manifest.
-    """
-    return extract_tocr_page(pdf_path, page_num, cfg, mode="full").to_legacy_tuple()
-
-
-def render_page_image(pdf_path: Path, page_num: int, resolution: int = 200):
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[page_num]
-        img_page = page.to_image(resolution=resolution)
-        return img_page.original.copy()
 
 
 def save_boxes_json(boxes: list[GlyphBox], out_path: Path) -> None:
@@ -204,329 +90,73 @@ def process_page(
 ) -> dict:
     """Process a single page and return page results for manifest.
 
-    Runs the 5-stage pipeline:
-        ingest → tocr ‖ vocrpp → vocr → reconcile
-    with per-stage timing, gating, and fallback handling.
+    Delegates the full 9-stage pipeline to :func:`plancheck.pipeline.run_pipeline`
+    then materialises all file artefacts (JSON, overlays, CSVs) to *run_dir*.
     """
     import time as _time
-    from concurrent.futures import ThreadPoolExecutor
-
-    pdf_stem = pdf.stem.replace(" ", "_")
 
     if cfg is None:
         cfg = GroupingConfig()
 
-    stage_results: dict[str, StageResult] = {}
+    pdf_stem = pdf.stem.replace(" ", "_")
+    t0 = _time.perf_counter()
 
-    # ── Stage: ingest ──────────────────────────────────────────────────
-    with run_stage("ingest", cfg) as sr_ingest:
-        bg_img = render_page_image(pdf, page_num, resolution=resolution)
-        sr_ingest.counts = {"render_dpi": resolution}
-        sr_ingest.status = "success"
-    stage_results["ingest"] = sr_ingest
+    # ── Run the canonical library pipeline ────────────────────────────
+    pr: PageResult = run_pipeline(pdf, page_num, cfg=cfg, resolution=resolution)
 
-    # ── Parallel: tocr ‖ vocrpp ────────────────────────────────────────
-    _preprocess_img = None
-    _vocrpp_sr = None
-    boxes = []
-    page_w = page_h = 0.0
+    # ── Materialise artefacts to disk ─────────────────────────────────
+    _materialise_page(pr, pdf, run_dir, pdf_stem, resolution, cfg)
 
-    def _run_tocr():
-        nonlocal boxes, page_w, page_h
-        with run_stage("tocr", cfg) as sr:
-            b, pw, ph, tocr_diag = page_boxes(pdf, page_num, cfg=cfg)
-            boxes, page_w, page_h = b, pw, ph
-            sr.counts = {
-                "tokens_total": tocr_diag["tokens_total"],
-                "tokens_raw": tocr_diag["tokens_raw"],
-                "tokens_degenerate_skipped": tocr_diag["tokens_degenerate_skipped"],
-                "tokens_control_char_cleaned": tocr_diag["tokens_control_char_cleaned"],
-                "tokens_empty_after_clean": tocr_diag["tokens_empty_after_clean"],
-                "tokens_duplicate_removed": tocr_diag["tokens_duplicate_removed"],
-                "char_encoding_issues": tocr_diag["char_encoding_issues"],
-                "has_rotated_text": tocr_diag["has_rotated_text"],
-                "upright_count": tocr_diag["upright_count"],
-                "non_upright_count": tocr_diag["non_upright_count"],
-                "page_area_sqin": tocr_diag["page_area_sqin"],
-                "token_density_per_sqin": tocr_diag["token_density_per_sqin"],
-            }
-            sr.outputs = {
-                "font_names": tocr_diag["font_names"],
-                "font_sizes": tocr_diag["font_sizes"],
-                "extraction_params": tocr_diag["extraction_params"],
-            }
-            if tocr_diag.get("error"):
-                sr.status = "failed"
-                sr.error = {"message": tocr_diag["error"]}
-            else:
-                sr.status = "success"
-        return sr
+    elapsed = _time.perf_counter() - t0
+    print(f"  page {page_num}: done ({elapsed:.1f}s)", flush=True)
+    print(summarize(pr.blocks), flush=True)
 
-    def _run_vocrpp():
-        nonlocal _preprocess_img
-        with run_stage("vocrpp", cfg) as sr:
-            if sr.ran:
-                ocr_res = (
-                    cfg.vocr_resolution
-                    if cfg.vocr_resolution > 0
-                    else cfg.ocr_reconcile_resolution
-                )
-                raw_img = render_page_image(pdf, page_num, resolution=ocr_res)
-                pp_cfg = OcrPreprocessConfig(
-                    enabled=True,
-                    grayscale=cfg.vocrpp_grayscale,
-                    autocontrast=cfg.vocrpp_autocontrast,
-                    clahe=cfg.vocrpp_clahe,
-                    clahe_clip_limit=cfg.vocrpp_clahe_clip_limit,
-                    clahe_tile_size=cfg.vocrpp_clahe_grid_size,
-                    median_denoise=cfg.vocrpp_median_denoise,
-                    median_kernel_size=cfg.vocrpp_median_kernel,
-                    adaptive_binarize=cfg.vocrpp_adaptive_binarize,
-                    adaptive_block_size=cfg.vocrpp_binarize_block_size,
-                    adaptive_c=cfg.vocrpp_binarize_constant,
-                    sharpen=cfg.vocrpp_sharpen,
-                    sharpen_radius=cfg.vocrpp_sharpen_radius,
-                    sharpen_percent=cfg.vocrpp_sharpen_percent,
-                    save_intermediate=False,
-                )
-                pp_result = preprocess_image_for_ocr(raw_img, cfg=pp_cfg)
-                pp_dir = run_dir / "ocr_preprocess"
-                pp_dir.mkdir(parents=True, exist_ok=True)
-                out_path = pp_dir / f"page_{page_num:04d}_ocr_input.png"
-                pp_result.image.save(out_path)
-                _preprocess_img = pp_result.image
-                sr.counts = {
-                    "images_out": 1,
-                    "applied_steps": pp_result.applied_steps,
-                    "render_dpi": ocr_res,
-                }
-                sr.outputs = {
-                    "image_path": str(out_path),
-                    "metrics": pp_result.metrics,
-                }
-                sr.status = "success"
-                print(
-                    f"    vocrpp page {page_num}: {pp_result.applied_steps}",
-                    flush=True,
-                )
-        return sr
+    return _build_page_manifest(pr, pdf_stem, run_dir, cfg)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        tocr_future = pool.submit(_run_tocr)
-        vocrpp_future = pool.submit(_run_vocrpp)
-        sr_tocr = tocr_future.result()
-        sr_vocrpp = vocrpp_future.result()
 
-    stage_results["tocr"] = sr_tocr
-    stage_results["vocrpp"] = sr_vocrpp
+# ── Artefact materialisation ──────────────────────────────────────────
 
-    boxes = nms_prune(boxes, cfg.iou_prune)
-    if cfg.enable_skew:
-        skew = estimate_skew_degrees(boxes, cfg.max_skew_degrees)
-        boxes = rotate_boxes(
-            boxes, -skew, page_w, page_h, min_rotation=cfg.preprocess_min_rotation
-        )
-    else:
-        skew = 0.0
 
-    # ── Stage: vocr ────────────────────────────────────────────────────
-    ocr_tokens = None
-    ocr_confs = None
-    vocr_inputs = {
-        "source": "preprocessed" if _preprocess_img is not None else "raw",
-        "vocrpp_ran": sr_vocrpp.ran,
-    }
-    with run_stage("vocr", cfg, inputs=vocr_inputs) as sr_vocr:
-        if sr_vocr.ran:
-            if _preprocess_img is not None:
-                ocr_img = _preprocess_img
-                print(
-                    f"    vocr: using preprocessed image for page {page_num}",
-                    flush=True,
-                )
-            else:
-                _vocr_res = (
-                    cfg.vocr_resolution
-                    if cfg.vocr_resolution > 0
-                    else cfg.ocr_reconcile_resolution
-                )
-                ocr_img = render_page_image(pdf, page_num, resolution=_vocr_res)
-            ocr_tokens, ocr_confs = extract_vocr_tokens(
-                page_image=ocr_img,
-                page_num=page_num,
-                page_width=page_w,
-                page_height=page_h,
-                cfg=cfg,
-            )
-            sr_vocr.counts = {
-                "tokens_total": len(ocr_tokens),
-                "confidence_min": round(min(ocr_confs), 3) if ocr_confs else 0,
-                "confidence_max": round(max(ocr_confs), 3) if ocr_confs else 0,
-                "confidence_mean": (
-                    round(sum(ocr_confs) / len(ocr_confs), 3) if ocr_confs else 0
-                ),
-                "image_source": (
-                    "preprocessed" if _preprocess_img is not None else "raw"
-                ),
-                "render_dpi": (
-                    cfg.vocr_resolution
-                    if cfg.vocr_resolution > 0
-                    else cfg.ocr_reconcile_resolution
-                ),
-            }
-            sr_vocr.inputs = vocr_inputs
-            sr_vocr.status = "success"
-    stage_results["vocr"] = sr_vocr
+def _materialise_page(
+    pr: PageResult,
+    pdf: Path,
+    run_dir: Path,
+    pdf_stem: str,
+    resolution: int,
+    cfg: GroupingConfig,
+) -> None:
+    """Write all JSON artefacts, overlays, and exports for one page."""
+    page_num = pr.page
+    art = run_dir / "artifacts"
 
-    # ── Stage: reconcile ───────────────────────────────────────────────
-    reconcile_result = None
-    recon_inputs = {
-        "vocr_failed": sr_vocr.status == "failed",
-        "tocr_tokens": len(boxes),
-        "vocr_tokens": len(ocr_tokens) if ocr_tokens else 0,
-    }
-    with run_stage("reconcile", cfg, inputs=recon_inputs) as sr_recon:
-        if sr_recon.ran:
-            # Determine the OCR image for reconcile (fallback if vocr had tokens)
-            if _preprocess_img is not None:
-                ocr_img_for_recon = _preprocess_img
-            else:
-                ocr_img_for_recon = render_page_image(
-                    pdf, page_num, resolution=cfg.ocr_reconcile_resolution
-                )
-            reconcile_result = reconcile_ocr(
-                page_image=ocr_img_for_recon,
-                tokens=boxes,
-                page_num=page_num,
-                page_width=page_w,
-                page_height=page_h,
-                cfg=cfg,
-                ocr_tokens=ocr_tokens,
-                ocr_confs=ocr_confs,
-            )
-            if reconcile_result.added_tokens:
-                boxes.extend(reconcile_result.added_tokens)
-                boxes = nms_prune(boxes, cfg.iou_prune)
-            sr_recon.counts = {
-                "accepted": len(reconcile_result.added_tokens),
-                "rejected": reconcile_result.stats.get("candidates_rejected", 0),
-                "filtered_non_numeric": reconcile_result.stats.get(
-                    "filtered_non_numeric", 0
-                ),
-                "candidates_generated": reconcile_result.stats.get(
-                    "candidates_generated", 0
-                ),
-                "ocr_total": reconcile_result.stats.get("ocr_total", 0),
-            }
-            sr_recon.status = "success"
-    stage_results["reconcile"] = sr_recon
+    # Boxes JSON
+    boxes_path = art / f"{pdf_stem}_page_{page_num}_boxes.json"
+    save_boxes_json(pr.tokens, boxes_path)
 
-    # v2 pipeline: row-truth first, then non-destructive column detection
-    blocks = build_clusters_v2(boxes, page_h, cfg)
-
-    # Block-level header detection and debug output
-    debug_path = str(run_dir / "artifacts" / "debug_headers.txt")
-    mark_headers(blocks, debug_path=debug_path)
-    # Notes detection, will skip header blocks
-    mark_notes(blocks, debug_path=debug_path)
-    # Group headers with their notes blocks into columns
-    notes_columns = group_notes_columns(blocks, debug_path=debug_path, cfg=cfg)
-    # Link continued columns (e.g., "NOTES" and "NOTES (CONT'D)")
-    link_continued_columns(notes_columns, blocks=blocks, debug_path=debug_path, cfg=cfg)
-
-    boxes_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_boxes.json"
-    save_boxes_json(boxes, boxes_path)
-
-    # Save block-level clusters with tags
-    blocks_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_blocks.json"
-
-    def serialize_block(blk):
-        x0, y0, x1, y1 = blk.bbox()
-        result = {
-            "page": blk.page,
-            "bbox": [x0, y0, x1, y1],
-            "rows": [
-                {
-                    "bbox": list(row.bbox()),
-                    "texts": [b.text for b in row.boxes],
-                }
-                for row in blk.rows
-            ],
-            "label": blk.label,
-            # Cast to Python bool to avoid numpy.bool_ during JSON dump
-            "is_table": bool(blk.is_table),
-            "is_notes": bool(blk.is_notes),
-        }
-        # Add line-level data if available (v2 pipeline)
-        if blk.lines and blk._tokens:
-            result["lines"] = [
-                {
-                    "line_id": line.line_id,
-                    "baseline_y": line.baseline_y,
-                    "bbox": list(line.bbox(blk._tokens)),
-                    "text": line.text(blk._tokens),
-                    "spans": [
-                        {
-                            "col_id": span.col_id,
-                            "bbox": list(span.bbox(blk._tokens)),
-                            "text": span.text(blk._tokens),
-                        }
-                        for span in line.spans
-                    ],
-                }
-                for line in blk.lines
-            ]
-        return result
-
-    blocks_serialized = [serialize_block(blk) for blk in blocks]
+    # Blocks JSON
+    blocks_path = art / f"{pdf_stem}_page_{page_num}_blocks.json"
+    blocks_serialized = [_serialize_block(blk) for blk in pr.blocks]
     blocks_path.write_text(json.dumps(blocks_serialized, indent=2))
 
-    # Save notes columns with continuation info
-    columns_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_columns.json"
-
-    def serialize_column(col):
-        return {
-            "header_text": col.header_text(),
-            "base_header_text": col.base_header_text(),
-            "is_continuation": col.is_continuation(),
-            "column_group_id": col.column_group_id,
-            "continues_from": col.continues_from,
-            "notes_count": len(col.notes_blocks),
-            "bbox": list(col.bbox()),
-        }
-
-    columns_serialized = [serialize_column(col) for col in notes_columns]
+    # Columns JSON
+    columns_path = art / f"{pdf_stem}_page_{page_num}_columns.json"
+    columns_serialized = [_serialize_column(col) for col in pr.notes_columns]
     columns_path.write_text(json.dumps(columns_serialized, indent=2))
 
-    # Write unified extraction JSON (consumed by sheet recreation export)
-    extraction_path = (
-        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_extraction.json"
-    )
+    # Extraction JSON (consumed by sheet recreation)
+    extraction_path = art / f"{pdf_stem}_page_{page_num}_extraction.json"
     extraction_data = serialize_page(
         page=page_num,
-        page_width=page_w,
-        page_height=page_h,
-        tokens=boxes,
-        blocks=blocks,
-        notes_columns=notes_columns,
+        page_width=pr.page_width,
+        page_height=pr.page_height,
+        tokens=pr.tokens,
+        blocks=pr.blocks,
+        notes_columns=pr.notes_columns,
     )
     extraction_path.write_text(json.dumps(extraction_data, indent=2))
 
-    # Extract graphics and detect legends
-    graphics = extract_graphics(str(pdf), page_num)
-
-    # ── Structural box detection & semantic regions ────────────────────
-    structural_boxes, semantic_regions = detect_semantic_regions(
-        blocks=blocks,
-        graphics=graphics,
-        page_width=page_w,
-        page_height=page_h,
-    )
-
-    # Save structural boxes
-    struct_path = (
-        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_structural_boxes.json"
-    )
+    # Structural boxes JSON
+    struct_path = art / f"{pdf_stem}_page_{page_num}_structural_boxes.json"
     struct_serialized = [
         {
             "box_type": sb.box_type.value,
@@ -538,14 +168,12 @@ def process_page(
                 sb.contained_text[:120] if sb.contained_text else ""
             ),
         }
-        for sb in structural_boxes
+        for sb in pr.structural_boxes
     ]
     struct_path.write_text(json.dumps(struct_serialized, indent=2))
 
-    # Save semantic regions
-    regions_path = (
-        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_semantic_regions.json"
-    )
+    # Semantic regions JSON
+    regions_path = art / f"{pdf_stem}_page_{page_num}_semantic_regions.json"
     regions_serialized = [
         {
             "label": sr.label,
@@ -561,103 +189,20 @@ def process_page(
             ),
             "child_blocks": len(sr.child_blocks),
         }
-        for sr in semantic_regions
+        for sr in pr.semantic_regions
     ]
     regions_path.write_text(json.dumps(regions_serialized, indent=2))
 
-    # Compute masked block indices (blocks inside legend/title_block)
-    masked_indices = mask_blocks_by_structural_boxes(blocks, structural_boxes)
-
-    # Set up file-based logging for legends module (mirrors old debug_path behaviour)
-    import logging as _logging
-
-    _legends_logger = _logging.getLogger("plancheck.legends")
-    _legends_fh = _logging.FileHandler(debug_path, mode="a", encoding="utf-8")
-    _legends_fh.setLevel(_logging.DEBUG)
-    _legends_fh.setFormatter(_logging.Formatter("[DEBUG] %(message)s"))
-    _legends_logger.addHandler(_legends_fh)
-    _legends_logger.setLevel(_logging.DEBUG)
-
-    try:
-        # Detect abbreviation regions FIRST (pure text, no graphics)
-        abbreviation_regions = detect_abbreviation_regions(
-            blocks=blocks,
-            graphics=graphics,
-            page_width=page_w,
-            page_height=page_h,
-            cfg=cfg,
-        )
-
-        # Get exclusion zones from abbreviation regions
-        exclusion_zones = [abbrev.bbox() for abbrev in abbreviation_regions]
-
-        # Detect misc title regions (e.g., 'OKLAHOMA DEPARTMENT OF TRANSPORTATION')
-        misc_title_regions = detect_misc_title_regions(
-            blocks=blocks,
-            graphics=graphics,
-            page_width=page_w,
-            page_height=page_h,
-            exclusion_zones=exclusion_zones,
-            cfg=cfg,
-        )
-
-        # Add misc title regions to exclusion zones
-        for mt in misc_title_regions:
-            exclusion_zones.append(mt.bbox())
-
-        # Detect revision regions BEFORE legends (title block element)
-        revision_regions = detect_revision_regions(
-            blocks=blocks,
-            graphics=graphics,
-            page_width=page_w,
-            page_height=page_h,
-            exclusion_zones=exclusion_zones,
-            cfg=cfg,
-        )
-
-        # Add revision regions to exclusion zones for legend detection
-        for rev in revision_regions:
-            exclusion_zones.append(rev.bbox())
-
-        # Filter graphics to exclude those in abbreviation/revision regions
-        filtered_graphics = filter_graphics_outside_regions(graphics, exclusion_zones)
-
-        # Now detect legend regions with filtered graphics AND exclusion zones for text
-        legend_regions = detect_legend_regions(
-            blocks=blocks,
-            graphics=filtered_graphics,
-            page_width=page_w,
-            page_height=page_h,
-            exclusion_zones=exclusion_zones,
-            cfg=cfg,
-        )
-
-        # Detect standard detail regions (similar to abbreviations - two-column text)
-        standard_detail_regions = detect_standard_detail_regions(
-            blocks=blocks,
-            graphics=graphics,
-            page_width=page_w,
-            page_height=page_h,
-            exclusion_zones=exclusion_zones,
-            cfg=cfg,
-        )
-    finally:
-        _legends_logger.removeHandler(_legends_fh)
-        _legends_fh.close()
-
-    # Save abbreviation regions
-    abbrev_path = (
-        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_abbreviations.json"
-    )
-
-    def serialize_abbreviation(abbrev):
-        return {
-            "header_text": abbrev.header_text(),
-            "is_boxed": abbrev.is_boxed,
-            "box_bbox": list(abbrev.box_bbox) if abbrev.box_bbox else None,
-            "bbox": list(abbrev.bbox()),
-            "confidence": abbrev.confidence,
-            "entries_count": len(abbrev.entries),
+    # Abbreviation regions JSON
+    abbrev_path = art / f"{pdf_stem}_page_{page_num}_abbreviations.json"
+    abbrev_serialized = [
+        {
+            "header_text": ab.header_text(),
+            "is_boxed": ab.is_boxed,
+            "box_bbox": list(ab.box_bbox) if ab.box_bbox else None,
+            "bbox": list(ab.bbox()),
+            "confidence": ab.confidence,
+            "entries_count": len(ab.entries),
             "entries": [
                 {
                     "code": e.code,
@@ -665,24 +210,23 @@ def process_page(
                     "code_bbox": list(e.code_bbox) if e.code_bbox else None,
                     "meaning_bbox": list(e.meaning_bbox) if e.meaning_bbox else None,
                 }
-                for e in abbrev.entries
+                for e in ab.entries
             ],
         }
-
-    abbrev_serialized = [serialize_abbreviation(ab) for ab in abbreviation_regions]
+        for ab in pr.abbreviation_regions
+    ]
     abbrev_path.write_text(json.dumps(abbrev_serialized, indent=2))
 
-    # Save legend regions
-    legends_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_legends.json"
-
-    def serialize_legend(legend):
-        return {
-            "header_text": legend.header_text(),
-            "is_boxed": legend.is_boxed,
-            "box_bbox": list(legend.box_bbox) if legend.box_bbox else None,
-            "bbox": list(legend.bbox()),
-            "confidence": legend.confidence,
-            "entries_count": len(legend.entries),
+    # Legend regions JSON
+    legends_path = art / f"{pdf_stem}_page_{page_num}_legends.json"
+    legends_serialized = [
+        {
+            "header_text": leg.header_text(),
+            "is_boxed": leg.is_boxed,
+            "box_bbox": list(leg.box_bbox) if leg.box_bbox else None,
+            "bbox": list(leg.bbox()),
+            "confidence": leg.confidence,
+            "entries_count": len(leg.entries),
             "entries": [
                 {
                     "symbol_bbox": list(e.symbol_bbox) if e.symbol_bbox else None,
@@ -691,20 +235,17 @@ def process_page(
                         list(e.description_bbox) if e.description_bbox else None
                     ),
                 }
-                for e in legend.entries
+                for e in leg.entries
             ],
         }
-
-    legends_serialized = [serialize_legend(leg) for leg in legend_regions]
+        for leg in pr.legend_regions
+    ]
     legends_path.write_text(json.dumps(legends_serialized, indent=2))
 
-    # Save revision regions
-    revisions_path = (
-        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_revisions.json"
-    )
-
-    def serialize_revision(rev):
-        return {
+    # Revision regions JSON
+    revisions_path = art / f"{pdf_stem}_page_{page_num}_revisions.json"
+    revisions_serialized = [
+        {
             "header_text": rev.header_text(),
             "is_boxed": rev.is_boxed,
             "box_bbox": list(rev.box_bbox) if rev.box_bbox else None,
@@ -721,34 +262,28 @@ def process_page(
                 for e in rev.entries
             ],
         }
-
-    revisions_serialized = [serialize_revision(r) for r in revision_regions]
+        for rev in pr.revision_regions
+    ]
     revisions_path.write_text(json.dumps(revisions_serialized, indent=2))
 
-    # Save misc title regions
-    misc_titles_path = (
-        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_misc_titles.json"
-    )
-
-    def serialize_misc_title(mt):
-        return {
+    # Misc title regions JSON
+    misc_titles_path = art / f"{pdf_stem}_page_{page_num}_misc_titles.json"
+    misc_titles_serialized = [
+        {
             "text": mt.text,
             "is_boxed": mt.is_boxed,
             "box_bbox": list(mt.box_bbox) if mt.box_bbox else None,
             "bbox": list(mt.bbox()),
             "confidence": mt.confidence,
         }
-
-    misc_titles_serialized = [serialize_misc_title(mt) for mt in misc_title_regions]
+        for mt in pr.misc_title_regions
+    ]
     misc_titles_path.write_text(json.dumps(misc_titles_serialized, indent=2))
 
-    # Save standard detail regions
-    std_details_path = (
-        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_standard_details.json"
-    )
-
-    def serialize_standard_detail(sd):
-        return {
+    # Standard detail regions JSON
+    std_details_path = art / f"{pdf_stem}_page_{page_num}_standard_details.json"
+    std_details_serialized = [
+        {
             "header_text": sd.header_text(),
             "subheader": sd.subheader,
             "subheader_bbox": list(sd.subheader_bbox) if sd.subheader_bbox else None,
@@ -769,283 +304,288 @@ def process_page(
                 for e in sd.entries
             ],
         }
-
-    std_details_serialized = [
-        serialize_standard_detail(sd) for sd in standard_detail_regions
+        for sd in pr.standard_detail_regions
     ]
     std_details_path.write_text(json.dumps(std_details_serialized, indent=2))
 
-    # ── Zoning: detect semantic page zones ─────────────────────────────
-    page_zones = detect_zones(
-        page_width=page_w,
-        page_height=page_h,
-        blocks=blocks,
-        notes_columns=notes_columns,
-        legend_bboxes=[leg.bbox() for leg in legend_regions],
-        abbreviation_bboxes=[ab.bbox() for ab in abbreviation_regions],
-        revision_bboxes=[rev.bbox() for rev in revision_regions],
-        detail_bboxes=[sd.bbox() for sd in standard_detail_regions],
-        cfg=cfg,
-    )
-    block_zone_map = classify_blocks(blocks, page_zones)
+    # Zones JSON
+    zones_path = art / f"{pdf_stem}_page_{page_num}_zones.json"
+    zones_path.write_text(json.dumps(zone_summary(pr.page_zones), indent=2))
 
-    zones_path = run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_zones.json"
-    zones_path.write_text(json.dumps(zone_summary(page_zones), indent=2))
-
-    # ── Semantic checks ───────────────────────────────────────────────
-    semantic_findings = run_all_checks(
-        notes_columns=notes_columns,
-        abbreviation_regions=abbreviation_regions,
-        revision_regions=revision_regions,
-        standard_detail_regions=standard_detail_regions,
-        legend_regions=legend_regions,
-        misc_title_regions=misc_title_regions,
-        blocks=blocks,
-        page=page_num,
-    )
-    if semantic_findings:
-        findings_path = (
-            run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_findings.json"
-        )
+    # Semantic findings JSON
+    if pr.semantic_findings:
+        findings_path = art / f"{pdf_stem}_page_{page_num}_findings.json"
         findings_path.write_text(
-            json.dumps([f.to_dict() for f in semantic_findings], indent=2)
+            json.dumps([f.to_dict() for f in pr.semantic_findings], indent=2)
         )
         print(
-            f"  page {page_num}: {len(semantic_findings)} semantic finding(s)",
+            f"  page {page_num}: {len(pr.semantic_findings)} semantic finding(s)",
             flush=True,
         )
 
-    # Build the lines/spans overlay as the primary overlay (v2 pipeline)
-    all_lines = [ln for blk in blocks for ln in (blk.lines or [])]
-    overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
+    # ── Overlays ──────────────────────────────────────────────────────
     scale = resolution / 72.0
+    all_lines = [ln for blk in pr.blocks for ln in (blk.lines or [])]
+    overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
     draw_lines_overlay(
-        page_width=page_w,
-        page_height=page_h,
+        page_width=pr.page_width,
+        page_height=pr.page_height,
         lines=all_lines,
-        tokens=boxes,
+        tokens=pr.tokens,
         out_path=overlay_path,
         scale=scale,
-        background=bg_img,
+        background=pr.background_image,
         cfg=cfg,
     )
 
-    # Blocks overlay (semantic type: header/notes/table/regular)
     col_overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_columns.png"
     draw_columns_overlay(
-        page_width=page_w,
-        page_height=page_h,
-        blocks=blocks,
-        tokens=boxes,
+        page_width=pr.page_width,
+        page_height=pr.page_height,
+        blocks=pr.blocks,
+        tokens=pr.tokens,
         out_path=col_overlay_path,
         scale=scale,
-        background=bg_img,
+        background=pr.background_image,
         cfg=cfg,
     )
 
-    # OCR reconcile debug overlay
-    ocr_reconcile_debug_path = None
-    if reconcile_result is not None and draw_reconcile_debug is not None:
-        if reconcile_result.added_tokens or cfg.ocr_reconcile_debug:
-            ocr_reconcile_debug_path = (
+    # OCR reconcile overlays
+    if pr.reconcile_result is not None:
+        from plancheck import draw_reconcile_debug, draw_symbol_overlay
+
+        if pr.reconcile_result.added_tokens or cfg.ocr_reconcile_debug:
+            recon_path = (
                 run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_ocr_reconcile.png"
             )
             draw_reconcile_debug(
-                result=reconcile_result,
-                page_width=page_w,
-                page_height=page_h,
-                out_path=ocr_reconcile_debug_path,
+                result=pr.reconcile_result,
+                page_width=pr.page_width,
+                page_height=pr.page_height,
+                out_path=recon_path,
                 scale=scale,
-                background=bg_img,
+                background=pr.background_image,
             )
-
-    # OCR symbol overlay (green boxes around symbol-bearing tokens)
-    ocr_symbol_overlay_path = None
-    if reconcile_result is not None and draw_symbol_overlay is not None:
         if cfg.ocr_reconcile_debug:
-            ocr_symbol_overlay_path = (
-                run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_symbols.png"
-            )
+            sym_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_symbols.png"
             draw_symbol_overlay(
-                result=reconcile_result,
-                page_width=page_w,
-                page_height=page_h,
-                out_path=ocr_symbol_overlay_path,
+                result=pr.reconcile_result,
+                page_width=pr.page_width,
+                page_height=pr.page_height,
+                out_path=sym_path,
                 scale=scale,
-                background=bg_img,
+                background=pr.background_image,
             )
 
-    # Return page results for manifest (don't write manifest here)
 
-    # ── Compute page-level quality score ──────────────────────────────
-    # Combines token density, region coverage, and error signals into a
-    # single 0–1 reliability metric that downstream semantic checks can
-    # use to decide how much to trust this page's detections.
-    _tocr_counts = stage_results.get("tocr", StageResult(stage="tocr")).counts or {}
-    _token_density = _tocr_counts.get("token_density_per_sqin", 0.0)
-    _encoding_issues = _tocr_counts.get("char_encoding_issues", 0)
-    _tokens_total = _tocr_counts.get("tokens_total", 0)
+# ── Block / column serialisation helpers ─────────────────────────────
 
-    # Token density score: normalise to 0–1 (2+ tokens/sq-in → full score)
-    _density_score = min(1.0, _token_density / 2.0)
 
-    # Region coverage: at least some structure detected
-    _region_count = (
-        len(notes_columns)
-        + len(abbreviation_regions)
-        + len(legend_regions)
-        + len(revision_regions)
-        + len(standard_detail_regions)
-        + len(misc_title_regions)
+def _serialize_block(blk: BlockCluster) -> dict:
+    x0, y0, x1, y1 = blk.bbox()
+    result = {
+        "page": blk.page,
+        "bbox": [x0, y0, x1, y1],
+        "rows": [
+            {"bbox": list(row.bbox()), "texts": [b.text for b in row.boxes]}
+            for row in blk.rows
+        ],
+        "label": blk.label,
+        "is_table": bool(blk.is_table),
+        "is_notes": bool(blk.is_notes),
+    }
+    if blk.lines and blk._tokens:
+        result["lines"] = [
+            {
+                "line_id": line.line_id,
+                "baseline_y": line.baseline_y,
+                "bbox": list(line.bbox(blk._tokens)),
+                "text": line.text(blk._tokens),
+                "spans": [
+                    {
+                        "col_id": span.col_id,
+                        "bbox": list(span.bbox(blk._tokens)),
+                        "text": span.text(blk._tokens),
+                    }
+                    for span in line.spans
+                ],
+            }
+            for line in blk.lines
+        ]
+    return result
+
+
+def _serialize_column(col) -> dict:
+    return {
+        "header_text": col.header_text(),
+        "base_header_text": col.base_header_text(),
+        "is_continuation": col.is_continuation(),
+        "column_group_id": col.column_group_id,
+        "continues_from": col.continues_from,
+        "notes_count": len(col.notes_blocks),
+        "bbox": list(col.bbox()),
+    }
+
+
+# ── Manifest builder ─────────────────────────────────────────────────
+
+
+def _compute_page_quality(pr: PageResult) -> float:
+    """Compute a 0–1 page quality score from a PageResult."""
+    tocr_counts = pr.stages.get("tocr", StageResult(stage="tocr")).counts or {}
+    token_density = tocr_counts.get("token_density_per_sqin", 0.0)
+    encoding_issues = tocr_counts.get("char_encoding_issues", 0)
+    tokens_total = tocr_counts.get("tokens_total", 0)
+
+    density_score = min(1.0, token_density / 2.0)
+    region_count = (
+        len(pr.notes_columns)
+        + len(pr.abbreviation_regions)
+        + len(pr.legend_regions)
+        + len(pr.revision_regions)
+        + len(pr.standard_detail_regions)
+        + len(pr.misc_title_regions)
     )
-    _region_score = min(1.0, _region_count / 3.0)  # 3+ regions → full score
-
-    # Error penalty: encoding issues relative to total tokens
-    _error_frac = _encoding_issues / _tokens_total if _tokens_total > 0 else 0.0
-    _error_penalty = min(1.0, _error_frac * 10.0)  # 10% issues → full penalty
-
-    _page_quality = round(
+    region_score = min(1.0, region_count / 3.0)
+    error_frac = encoding_issues / tokens_total if tokens_total > 0 else 0.0
+    error_penalty = min(1.0, error_frac * 10.0)
+    return round(
         max(
             0.0,
-            (_density_score * 0.4 + _region_score * 0.4) * (1.0 - _error_penalty) + 0.2,
+            (density_score * 0.4 + region_score * 0.4) * (1.0 - error_penalty) + 0.2,
         ),
         3,
     )
 
-    # ── Stage health flags ────────────────────────────────────────────
-    _stage_health: dict = {}
-    _vocr_sr = stage_results.get("vocr", StageResult(stage="vocr"))
-    if _vocr_sr.ran:
-        _vocr_tokens = (_vocr_sr.counts or {}).get("tokens_total", 0)
-        _vocr_ms = _vocr_sr.duration_ms
-        _stage_health["vocr_degraded"] = _vocr_tokens == 0 and _vocr_ms > 30_000
-    _recon_sr = stage_results.get("reconcile", StageResult(stage="reconcile"))
-    if _recon_sr.ran:
-        _recon_counts = _recon_sr.counts or {}
-        _stage_health["reconcile_no_candidates"] = (
-            _recon_counts.get("ocr_total", 0) == 0
+
+def _build_page_manifest(
+    pr: PageResult, pdf_stem: str, run_dir: Path, cfg: GroupingConfig
+) -> dict:
+    """Build a manifest dict for one page from a PageResult."""
+    page_num = pr.page
+    quality = _compute_page_quality(pr)
+
+    # Stage health flags
+    stage_health: dict = {}
+    vocr_sr = pr.stages.get("vocr", StageResult(stage="vocr"))
+    if vocr_sr.ran:
+        vocr_tokens = (vocr_sr.counts or {}).get("tokens_total", 0)
+        stage_health["vocr_degraded"] = (
+            vocr_tokens == 0 and vocr_sr.duration_ms > 30_000
         )
+    recon_sr = pr.stages.get("reconcile", StageResult(stage="reconcile"))
+    if recon_sr.ran:
+        recon_counts = recon_sr.counts or {}
+        stage_health["reconcile_no_candidates"] = recon_counts.get("ocr_total", 0) == 0
 
-    # ── Per-region confidence summaries ───────────────────────────────
-    _region_confidences: dict = {}
-    if abbreviation_regions:
-        _region_confidences["abbreviation"] = [
-            round(ab.confidence, 2) for ab in abbreviation_regions
+    # Region confidences
+    region_confidences: dict = {}
+    if pr.abbreviation_regions:
+        region_confidences["abbreviation"] = [
+            round(r.confidence, 2) for r in pr.abbreviation_regions
         ]
-    if legend_regions:
-        _region_confidences["legend"] = [
-            round(lg.confidence, 2) for lg in legend_regions
+    if pr.legend_regions:
+        region_confidences["legend"] = [
+            round(r.confidence, 2) for r in pr.legend_regions
         ]
-    if revision_regions:
-        _region_confidences["revision"] = [
-            round(rv.confidence, 2) for rv in revision_regions
+    if pr.revision_regions:
+        region_confidences["revision"] = [
+            round(r.confidence, 2) for r in pr.revision_regions
         ]
-    if standard_detail_regions:
-        _region_confidences["standard_detail"] = [
-            round(sd.confidence, 2) for sd in standard_detail_regions
+    if pr.standard_detail_regions:
+        region_confidences["standard_detail"] = [
+            round(r.confidence, 2) for r in pr.standard_detail_regions
         ]
-    if misc_title_regions:
-        _region_confidences["misc_title"] = [
-            round(mt.confidence, 2) for mt in misc_title_regions
+    if pr.misc_title_regions:
+        region_confidences["misc_title"] = [
+            round(r.confidence, 2) for r in pr.misc_title_regions
         ]
 
-    page_result = {
+    # Build reconcile-related counts
+    rr = pr.reconcile_result
+    recon_counts_dict = {}
+    if rr:
+        recon_counts_dict = {
+            "ocr_reconcile_accepted": len(rr.added_tokens),
+            "ocr_reconcile_total": rr.stats.get("ocr_total", 0),
+            "ocr_reconcile_candidates": rr.stats.get("candidates_generated", 0),
+            "ocr_reconcile_candidates_accepted": rr.stats.get("candidates_accepted", 0),
+            "ocr_reconcile_candidates_rejected": rr.stats.get("candidates_rejected", 0),
+            "ocr_reconcile_filtered_non_numeric": rr.stats.get(
+                "filtered_non_numeric", 0
+            ),
+        }
+
+    art = run_dir / "artifacts"
+    result = {
         "page": page_num,
-        "page_width": page_w,
-        "page_height": page_h,
-        "skew_degrees": skew,
-        "page_quality": _page_quality,
-        "stage_health": _stage_health,
-        "region_confidences": _region_confidences,
-        "semantic_findings": [f.to_dict() for f in semantic_findings],
-        "semantic_findings_count": len(semantic_findings),
-        "stages": {name: sr.to_dict() for name, sr in stage_results.items()},
+        "page_width": pr.page_width,
+        "page_height": pr.page_height,
+        "skew_degrees": pr.skew_degrees,
+        "page_quality": quality,
+        "stage_health": stage_health,
+        "region_confidences": region_confidences,
+        "semantic_findings": [f.to_dict() for f in pr.semantic_findings],
+        "semantic_findings_count": len(pr.semantic_findings),
+        "stages": {name: sr.to_dict() for name, sr in pr.stages.items()},
         "counts": {
-            "boxes": len(boxes),
-            "rows": sum(len(blk.rows) for blk in blocks),
-            "lines": sum(len(blk.lines or []) for blk in blocks),
-            "blocks": len(blocks),
-            "tables": sum(1 for b in blocks if b.is_table),
-            "notes_columns": len(notes_columns),
-            "graphics": len(graphics),
-            "filtered_graphics": len(filtered_graphics),
-            "abbreviation_regions": len(abbreviation_regions),
-            "abbreviation_entries": sum(len(ab.entries) for ab in abbreviation_regions),
-            "legend_regions": len(legend_regions),
-            "legend_entries": sum(len(leg.entries) for leg in legend_regions),
-            "revision_regions": len(revision_regions),
-            "revision_entries": sum(len(r.entries) for r in revision_regions),
-            "misc_title_regions": len(misc_title_regions),
-            "standard_detail_regions": len(standard_detail_regions),
+            "boxes": len(pr.tokens),
+            "rows": sum(len(blk.rows) for blk in pr.blocks),
+            "lines": sum(len(blk.lines or []) for blk in pr.blocks),
+            "blocks": len(pr.blocks),
+            "tables": sum(1 for b in pr.blocks if b.is_table),
+            "notes_columns": len(pr.notes_columns),
+            "graphics": len(pr.graphics),
+            "abbreviation_regions": len(pr.abbreviation_regions),
+            "abbreviation_entries": sum(
+                len(ab.entries) for ab in pr.abbreviation_regions
+            ),
+            "legend_regions": len(pr.legend_regions),
+            "legend_entries": sum(len(leg.entries) for leg in pr.legend_regions),
+            "revision_regions": len(pr.revision_regions),
+            "revision_entries": sum(len(r.entries) for r in pr.revision_regions),
+            "misc_title_regions": len(pr.misc_title_regions),
+            "standard_detail_regions": len(pr.standard_detail_regions),
             "standard_detail_entries": sum(
-                len(sd.entries) for sd in standard_detail_regions
+                len(sd.entries) for sd in pr.standard_detail_regions
             ),
-            "structural_boxes": len(structural_boxes),
+            "structural_boxes": len(pr.structural_boxes),
             "structural_boxes_classified": sum(
-                1 for sb in structural_boxes if sb.box_type != BoxType.unknown
+                1 for sb in pr.structural_boxes if sb.box_type != BoxType.unknown
             ),
-            "semantic_regions": len(semantic_regions),
-            "masked_blocks": len(masked_indices),
-            "ocr_reconcile_accepted": (
-                len(reconcile_result.added_tokens) if reconcile_result else 0
-            ),
-            "ocr_reconcile_total": (
-                reconcile_result.stats.get("ocr_total", 0) if reconcile_result else 0
-            ),
-            "ocr_reconcile_candidates": (
-                reconcile_result.stats.get("candidates_generated", 0)
-                if reconcile_result
-                else 0
-            ),
-            "ocr_reconcile_candidates_accepted": (
-                reconcile_result.stats.get("candidates_accepted", 0)
-                if reconcile_result
-                else 0
-            ),
-            "ocr_reconcile_candidates_rejected": (
-                reconcile_result.stats.get("candidates_rejected", 0)
-                if reconcile_result
-                else 0
-            ),
-            "ocr_reconcile_filtered_non_numeric": (
-                reconcile_result.stats.get("filtered_non_numeric", 0)
-                if reconcile_result
-                else 0
-            ),
+            "semantic_regions": len(pr.semantic_regions),
+            "title_blocks": len(pr.title_blocks),
+            **recon_counts_dict,
         },
         "artifacts": {
-            "boxes_json": str(boxes_path),
-            "overlay_png": str(overlay_path),
-            "legends_json": str(legends_path),
-            "abbreviations_json": str(abbrev_path),
-            "revisions_json": str(revisions_path),
-            "standard_details_json": str(std_details_path),
-            "zones_json": str(zones_path),
+            "boxes_json": str(art / f"{pdf_stem}_page_{page_num}_boxes.json"),
+            "overlay_png": str(
+                run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
+            ),
+            "legends_json": str(art / f"{pdf_stem}_page_{page_num}_legends.json"),
+            "abbreviations_json": str(
+                art / f"{pdf_stem}_page_{page_num}_abbreviations.json"
+            ),
+            "revisions_json": str(art / f"{pdf_stem}_page_{page_num}_revisions.json"),
+            "standard_details_json": str(
+                art / f"{pdf_stem}_page_{page_num}_standard_details.json"
+            ),
+            "zones_json": str(art / f"{pdf_stem}_page_{page_num}_zones.json"),
         },
-        "zones": zone_summary(page_zones),
+        "zones": zone_summary(pr.page_zones),
     }
-    if ocr_reconcile_debug_path:
-        page_result["artifacts"]["ocr_reconcile_png"] = str(ocr_reconcile_debug_path)
 
-    # Include injection_log in manifest when ocr_debug is enabled (truncated)
-    if (
-        reconcile_result is not None
-        and cfg.ocr_reconcile_debug
-        and reconcile_result.stats
-    ):
-        inj_log = reconcile_result.stats.get("injection_log", [])
-        page_result["ocr_injection_log"] = inj_log[:50]
-
-    # ── Export structured CSVs ────────────────────────────────────────
+    # CSV export
     try:
-        page_exports = export_page_results(page_result, run_dir, pdf_stem)
-        page_result["exports"] = page_exports
+        page_exports = export_page_results(result, run_dir, pdf_stem)
+        result["exports"] = page_exports
     except Exception as exc:  # pragma: no cover
         print(f"  page {page_num}: export warning: {exc}", flush=True)
 
-    print(f"  page {page_num}: done", flush=True)
-    print(summarize(blocks), flush=True)
-    return page_result
+    # Stash the PageResult for cross-page checks (stripped before serialisation)
+    result["_page_result"] = pr
+
+    return result
 
 
 def run_pdf(
@@ -1062,8 +602,8 @@ def run_pdf(
     if cfg is None:
         cfg = GroupingConfig()
 
-    with pdfplumber.open(pdf) as pdf_doc:
-        total_pages = len(pdf_doc.pages)
+    pdf_meta = ingest_pdf(pdf)
+    total_pages = pdf_meta.num_pages
     end_page = end if end is not None else total_pages
 
     # Create single run folder for this PDF
@@ -1089,10 +629,28 @@ def run_pdf(
             print(f"  page {page_num}: ERROR {exc}", flush=True)
             page_results.append({"page": page_num, "error": str(exc)})
 
-    # Write single manifest for entire run
-    from plancheck.pipeline import input_fingerprint
+    # ── Cross-page checks ─────────────────────────────────────────────
+    page_result_objects = [
+        pr_obj
+        for pr_obj in page_results
+        if isinstance(pr_obj, dict) and "_page_result" in pr_obj
+    ]
+    cross_page_findings = []
+    if len(page_result_objects) > 1:
+        pr_list = [pr_obj["_page_result"] for pr_obj in page_result_objects]
+        cross_page_findings = _run_document_checks(pr_list)
 
+    # Write single manifest for entire run
     pages_list = list(range(start, end_page))
+    # Strip internal _page_result refs before serialisation
+    clean_results = [
+        (
+            {k: v for k, v in pr.items() if k != "_page_result"}
+            if isinstance(pr, dict)
+            else pr
+        )
+        for pr in page_results
+    ]
     manifest = {
         "run_id": run_dir.name,
         "created_at": datetime.now().isoformat(),
@@ -1105,9 +663,18 @@ def run_pdf(
         # Keep legacy key for backward compat
         "settings": vars(cfg),
         "pages_processed": pages_list,
-        "pages": page_results,
+        "pages": clean_results,
+        "cross_page_findings": [f.to_dict() for f in cross_page_findings],
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    # ── Generate HTML + JSON reports ──────────────────────────────────
+    try:
+        generate_html_report(manifest, run_dir / "report.html")
+        generate_json_report(manifest, run_dir / "report.json")
+    except Exception as exc:  # pragma: no cover
+        print(f"  report generation warning: {exc}", flush=True)
+
     print(f"Run complete: {run_dir}", flush=True)
     return run_dir
 

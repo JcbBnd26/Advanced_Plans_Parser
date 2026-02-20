@@ -126,6 +126,32 @@ class TestParseRevisionRow:
         entry = _parse_revision_row([], page=0, row_bbox=(0, 0, 0, 0))
         assert entry is None
 
+    def test_number_only(self):
+        """Row with just a revision number and no description or date."""
+        boxes = [make_box(10, 40, 30, 52, "5")]
+        entry = _parse_revision_row(boxes, page=0, row_bbox=(10, 40, 30, 52))
+        assert entry is not None
+        assert entry.number == "5"
+        assert entry.description == ""
+        assert entry.date == ""
+
+    def test_dotted_date(self):
+        """Date separated by dots (e.g., 01.15.2025)."""
+        boxes = [
+            make_box(10, 40, 30, 52, "3"),
+            make_box(50, 40, 180, 52, "GRADING CHANGES"),
+            make_box(190, 40, 260, 52, "01.15.2025"),
+        ]
+        entry = _parse_revision_row(boxes, page=0, row_bbox=(10, 40, 260, 52))
+        assert entry is not None
+        assert entry.date == "01.15.2025"
+
+    def test_whitespace_only_boxes(self):
+        """Boxes containing only whitespace should produce None."""
+        boxes = [make_box(10, 40, 30, 52, "   ")]
+        entry = _parse_revision_row(boxes, page=0, row_bbox=(10, 40, 30, 52))
+        assert entry is None
+
 
 class TestParseRevisionEntries:
     """Tests for _parse_revision_entries."""
@@ -191,7 +217,7 @@ class TestDetectRevisionRegions:
 
     def test_emits_debug_logs(self, caplog):
         header = make_block([(100, 100, 200, 112, "REVISIONS")])
-        with caplog.at_level(logging.DEBUG, logger="plancheck.legends"):
+        with caplog.at_level(logging.DEBUG, logger="plancheck.revisions"):
             detect_revision_regions(
                 blocks=[header],
                 graphics=[],

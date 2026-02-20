@@ -1,7 +1,7 @@
 # OCR Reconciliation: Current Status & Investigation Log
 
-**Date:** February 10, 2026  
-**Pipeline version:** Dual-Source OCR Reconciliation (v2)  
+**Date:** February 10, 2026
+**Pipeline version:** Dual-Source OCR Reconciliation (v2)
 **Previous approach:** Gap-based OCR fill (v1) — **removed**
 
 ---
@@ -26,7 +26,7 @@ The original OCR pipeline (`ocr_fill.py`) used a **gap-based approach**: after g
 - `docs/OCR_SESSION_4_STATUS.md`
 - `docs/OCR_CRASH_DIAGNOSIS.md`
 
-**Removed from config:** 8 OCR gap-fill config fields (`enable_ocr_fill`, `ocr_gap_mult`, `ocr_min_gap_pts`, etc.)  
+**Removed from config:** 8 OCR gap-fill config fields (`enable_ocr_fill`, `ocr_gap_mult`, `ocr_min_gap_pts`, etc.)
 **Removed from CLI:** `--ocr-fill`, `--ocr-debug` flags (old versions)
 
 ### Phase 2: Build Dual-Source Reconciliation Pipeline (Feb 9)
@@ -46,8 +46,9 @@ Implemented the new architecture as `src/plancheck/ocr_reconcile.py` — a 4-sta
 4. **Stage 4 — Merge**: Accepted OCR tokens are appended to the main `boxes` list **before** `build_clusters_v2()`, so they participate in natural line grouping.
 
 **New files created:**
-- `src/plancheck/_ocr_engine.py` — shared PaddleOCR singleton
-- `src/plancheck/ocr_reconcile.py` — full reconciliation pipeline + debug overlay
+- `src/plancheck/vocr/engine.py` — shared PaddleOCR singleton
+- `src/plancheck/reconcile/reconcile.py` — full reconciliation pipeline
+- `src/plancheck/export/reconcile_overlay.py` — debug overlay
 
 **New config fields:** `enable_ocr_reconcile`, `ocr_reconcile_allowed_symbols`, `ocr_reconcile_resolution`, `ocr_reconcile_confidence`, `ocr_reconcile_iou_threshold`, `ocr_reconcile_center_tol_x/y`, `ocr_reconcile_proximity_pts`, `ocr_reconcile_debug`
 
@@ -202,10 +203,11 @@ PDF Text Layer (pdfplumber)        Full-Page OCR (PaddleOCR)
 
 | File | Purpose |
 |------|---------|
-| `src/plancheck/_ocr_engine.py` | Shared PaddleOCR singleton (`_get_ocr()`) |
-| `src/plancheck/ocr_reconcile.py` | 4-stage reconciliation pipeline + debug overlay |
+| `src/plancheck/vocr/engine.py` | Shared PaddleOCR singleton (`_get_ocr()`) |
+| `src/plancheck/reconcile/reconcile.py` | 4-stage reconciliation pipeline |
+| `src/plancheck/export/reconcile_overlay.py` | Debug overlay rendering |
 | `src/plancheck/config.py` | `GroupingConfig` with OCR reconcile fields |
-| `scripts/run_pdf_batch.py` | Pipeline entry point, `--ocr-full-reconcile` flag |
+| `scripts/runners/run_pdf_batch.py` | Pipeline entry point, `--ocr-full-reconcile` flag |
 
 ### Config Defaults
 

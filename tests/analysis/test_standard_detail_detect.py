@@ -16,6 +16,7 @@ from plancheck.analysis.standard_details import (
     _has_inline_entries,
     _is_standard_detail_header,
     _parse_standard_detail_entries,
+    _parse_standard_detail_entries_from_inline_blocks,
     _parse_standard_detail_entries_inline,
     _parse_standard_detail_entries_two_column,
     detect_standard_detail_regions,
@@ -217,7 +218,7 @@ class TestDetectStandardDetailRegions:
             [(100, 100, 300, 112, "ODOT STANDARD DETAILS:")],
             is_header=True,
         )
-        with caplog.at_level(logging.DEBUG, logger="plancheck.legends"):
+        with caplog.at_level(logging.DEBUG, logger="plancheck.standard_details"):
             detect_standard_detail_regions(
                 blocks=[header],
                 graphics=[],
@@ -227,3 +228,44 @@ class TestDetectStandardDetailRegions:
         assert any(
             "detect_standard_detail_regions" in r.message for r in caplog.records
         )
+
+
+class TestParseFromInlineBlocks:
+    """Tests for _parse_standard_detail_entries_from_inline_blocks."""
+
+    def test_basic_inline_entry(self):
+        """A block whose row starts with SHEET-NUM followed by description."""
+        blk = make_block(
+            [
+                (10, 100, 60, 112, "BMPR-0"),
+                (70, 100, 400, 112, "BEST MANAGEMENT PRACTICE"),
+            ],
+        )
+        entries = _parse_standard_detail_entries_from_inline_blocks([blk], page=1)
+        assert len(entries) == 1
+        assert entries[0].sheet_number == "BMPR-0"
+        assert entries[0].description == "BEST MANAGEMENT PRACTICE"
+        assert entries[0].page == 1
+
+    def test_multirow_inline_block(self):
+        """Multiple rows inside a single block each produce an entry."""
+        blk = make_block(
+            [
+                (10, 100, 60, 112, "CET6D-4-2"),
+                (70, 100, 300, 112, "CULVERT END TREATMENT"),
+                (10, 120, 60, 132, "PCES-5-1"),
+                (70, 120, 350, 132, "PREFABRICATED CULVERT END"),
+            ],
+        )
+        entries = _parse_standard_detail_entries_from_inline_blocks([blk], page=0)
+        assert len(entries) == 2
+        assert entries[0].sheet_number == "CET6D-4-2"
+        assert entries[1].sheet_number == "PCES-5-1"
+
+    def test_no_match_returns_empty(self):
+        """Rows that don't match the sheet-pattern are skipped."""
+        blk = make_block(
+            [(10, 100, 200, 112, "JUST SOME TEXT WITHOUT SHEET NUM")],
+        )
+        entries = _parse_standard_detail_entries_from_inline_blocks([blk], page=0)
+        assert entries == []

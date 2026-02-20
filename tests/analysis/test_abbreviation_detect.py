@@ -173,7 +173,7 @@ class TestDetectAbbreviationRegions:
 
     def test_emits_debug_logs(self, caplog):
         header = make_block([(100, 100, 250, 112, "ABBREVIATIONS")])
-        with caplog.at_level(logging.DEBUG, logger="plancheck.legends"):
+        with caplog.at_level(logging.DEBUG, logger="plancheck.abbreviations"):
             detect_abbreviation_regions(
                 blocks=[header],
                 graphics=[],

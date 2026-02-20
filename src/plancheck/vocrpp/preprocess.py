@@ -42,11 +42,13 @@ class OcrPreprocessResult:
 
 
 def _require_odd(value: int, floor: int = 3) -> int:
+    """Clamp *value* to at least *floor* and ensure it is odd."""
     value = max(floor, int(value))
     return value if value % 2 == 1 else value + 1
 
 
 def _as_uint8_gray(img: Image.Image):
+    """Convert a PIL image to a uint8 grayscale numpy array."""
     import numpy as np
 
     if img.mode != "L":
@@ -58,6 +60,7 @@ def _as_uint8_gray(img: Image.Image):
 
 
 def _measure_metrics(img: Image.Image) -> Dict[str, float]:
+    """Compute basic image statistics (mean, std, sharpness, etc.)."""
     import numpy as np
 
     arr = _as_uint8_gray(img)
@@ -74,7 +77,7 @@ def _measure_metrics(img: Image.Image) -> Dict[str, float]:
         import cv2
 
         metrics["sharpness_laplacian_var"] = float(cv2.Laplacian(arr, cv2.CV_64F).var())
-    except Exception:
+    except ImportError:
         pass
 
     return metrics
@@ -97,6 +100,7 @@ def preprocess_image_for_ocr(
     steps: List[str] = []
 
     def _save_step(name: str) -> None:
+        """Save the current intermediate image if configured."""
         if not (cfg.save_intermediate and intermediate_dir):
             return
         from pathlib import Path
@@ -140,7 +144,7 @@ def preprocess_image_for_ocr(
             current = Image.fromarray(arr)
             steps.append("clahe")
             _save_step("clahe")
-        except Exception:
+        except ImportError:
             steps.append("clahe_skipped_no_cv2")
 
     if cfg.median_denoise:
@@ -166,7 +170,7 @@ def preprocess_image_for_ocr(
             current = Image.fromarray(binary)
             steps.append("adaptive_binarize")
             _save_step("adaptive_binarize")
-        except Exception:
+        except ImportError:
             steps.append("adaptive_binarize_skipped_no_cv2")
 
     if cfg.sharpen:

@@ -18,9 +18,11 @@ from .region_helpers import (
     _find_enclosing_rect,
     _find_text_blocks_in_region,
     _merge_same_line_rows,
+    collect_rows_with_y,
+    match_rows_by_y,
 )
 
-logger = logging.getLogger("plancheck.legends")
+logger = logging.getLogger("plancheck.standard_details")
 
 
 def _has_inline_entries(block: BlockCluster) -> bool:
@@ -283,69 +285,41 @@ def _parse_standard_detail_entries_two_column(
     """
     entries = []
 
-    # Collect all sheet rows with y-positions
-    sheet_rows = []  # (y_center, row_text, row_bbox, block)
-    for blk in sheet_blocks:
-        for row in blk.rows:
-            if not row.boxes:
-                continue
-            y0, y1 = row.bbox()[1], row.bbox()[3]
-            y_center = (y0 + y1) / 2
-            row_text = " ".join(b.text for b in row.boxes if b.text).strip()
-            row_bbox = row.bbox()
-            sheet_rows.append((y_center, row_text, row_bbox, blk))
+    sheet_rows = collect_rows_with_y(sheet_blocks, skip_empty_boxes=True)
+    desc_rows = collect_rows_with_y(description_blocks, skip_empty_boxes=True)
 
-    # Collect all description rows with y-positions
-    desc_rows = []  # (y_center, row_text, row_bbox, block)
-    for blk in description_blocks:
-        for row in blk.rows:
-            if not row.boxes:
-                continue
-            y0, y1 = row.bbox()[1], row.bbox()[3]
-            y_center = (y0 + y1) / 2
-            row_text = " ".join(b.text for b in row.boxes if b.text).strip()
-            row_bbox = row.bbox()
-            desc_rows.append((y_center, row_text, row_bbox, blk))
+    # Match sheet rows to description rows by y-position (non-exclusive)
+    pairs = match_rows_by_y(sheet_rows, desc_rows, y_tolerance=10.0, exclusive=False)
+    matched_left = {li for li, _ in pairs}
 
-    # Match sheet rows to description rows by y-position
-    y_tolerance = 10.0  # pts
-
-    for sheet_y, sheet_text, sheet_bbox, _ in sheet_rows:
-        if not sheet_text:
+    for li, ri in pairs:
+        s_y, s_text, s_bbox, _ = sheet_rows[li]
+        if not s_text:
             continue
-
-        # Find best matching description row
-        best_match = None
-        best_dist = float("inf")
-
-        for desc_y, desc_text, desc_bbox, _ in desc_rows:
-            dist = abs(sheet_y - desc_y)
-            if dist < y_tolerance and dist < best_dist:
-                best_dist = dist
-                best_match = (desc_text, desc_bbox)
-
-        if best_match:
-            desc_text, desc_bbox = best_match
-            entries.append(
-                StandardDetailEntry(
-                    page=page,
-                    sheet_number=sheet_text,
-                    description=desc_text,
-                    sheet_bbox=sheet_bbox,
-                    description_bbox=desc_bbox,
-                )
+        d_y, d_text, d_bbox, _ = desc_rows[ri]
+        entries.append(
+            StandardDetailEntry(
+                page=page,
+                sheet_number=s_text,
+                description=d_text,
+                sheet_bbox=s_bbox,
+                description_bbox=d_bbox,
             )
-        else:
-            # No matching description found, just add sheet number
-            entries.append(
-                StandardDetailEntry(
-                    page=page,
-                    sheet_number=sheet_text,
-                    description="",
-                    sheet_bbox=sheet_bbox,
-                    description_bbox=None,
-                )
+        )
+
+    # Unmatched sheet rows — add with empty description
+    for li, (s_y, s_text, s_bbox, _) in enumerate(sheet_rows):
+        if li in matched_left or not s_text:
+            continue
+        entries.append(
+            StandardDetailEntry(
+                page=page,
+                sheet_number=s_text,
+                description="",
+                sheet_bbox=s_bbox,
+                description_bbox=None,
             )
+        )
 
     return entries
 
@@ -355,7 +329,7 @@ def detect_standard_detail_regions(
     graphics: List[GraphicElement],
     page_width: float,
     page_height: float,
-    exclusion_zones: List[Tuple[float, float, float, float]] = None,
+    exclusion_zones: Optional[List[Tuple[float, float, float, float]]] = None,
     cfg: GroupingConfig | None = None,
 ) -> List[StandardDetailRegion]:
     """

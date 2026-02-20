@@ -165,7 +165,12 @@ GlyphBox (word)
 | Model | Source File |
 |-------|-------------|
 | Core models | `src/plancheck/models.py` |
-| Zoning | `src/plancheck/zoning.py` |
-| Overlay rendering | `src/plancheck/overlay.py` |
-| Grouping logic | `src/plancheck/grouping.py` |
-| Legend/Abbrev/Details detection | `src/plancheck/legends.py` |
+| Zoning | `src/plancheck/analysis/zoning.py` |
+| Overlay rendering | `src/plancheck/export/overlay.py` |
+| Grouping logic | `src/plancheck/grouping/clustering.py` |
+| Legend detection | `src/plancheck/analysis/legends.py` |
+| Abbreviation detection | `src/plancheck/analysis/abbreviations.py` |
+| Revision detection | `src/plancheck/analysis/revisions.py` |
+| Standard detail detection | `src/plancheck/analysis/standard_details.py` |
+| Graphics extraction | `src/plancheck/analysis/graphics.py` |
+| Structural boxes | `src/plancheck/analysis/structural_boxes.py` |

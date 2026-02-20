@@ -33,6 +33,7 @@ class CheckResult:
     details: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
+        """Serialize check result to a JSON-compatible dict."""
         d: Dict[str, Any] = {
             "check_id": self.check_id,
             "severity": self.severity,
@@ -158,6 +159,7 @@ def check_abbreviation_duplicates(
     """Detect abbreviation codes defined more than once with different meanings.
 
     Processes all abbreviation regions on a page as a single namespace.
+    Same code with identical meanings is fine; different meanings → error.
     """
     findings: List[CheckResult] = []
 
@@ -635,6 +637,313 @@ def check_standard_detail_duplicates(
     return findings
 
 
+# 6. Legend empty (legend region detected but has no entries) ─────────
+
+
+def check_legend_empty(
+    legend_regions: Sequence[Any],
+    page: int = 0,
+) -> List[CheckResult]:
+    """Flag legend regions that have zero entries."""
+    findings: List[CheckResult] = []
+    for region in legend_regions:
+        if not region.entries:
+            findings.append(
+                CheckResult(
+                    check_id="LEGEND_EMPTY",
+                    severity="warning",
+                    message=(
+                        f"Legend '{region.header_text() or 'LEGEND'}' detected "
+                        f"but contains no entries"
+                    ),
+                    page=page,
+                    bbox=region.bbox(),
+                    details={"header": region.header_text()},
+                )
+            )
+    return findings
+
+
+# 7. Legend no header (entries found but header missing) ──────────────
+
+
+def check_legend_no_header(
+    legend_regions: Sequence[Any],
+    page: int = 0,
+) -> List[CheckResult]:
+    """Flag legend regions that have entries but no header block."""
+    findings: List[CheckResult] = []
+    for region in legend_regions:
+        if region.entries and not region.header:
+            findings.append(
+                CheckResult(
+                    check_id="LEGEND_NO_HEADER",
+                    severity="info",
+                    message="Legend has entries but no header block",
+                    page=page,
+                    bbox=region.bbox(),
+                )
+            )
+    return findings
+
+
+# 8. Notes column missing header ─────────────────────────────────────
+
+
+def check_notes_no_header(
+    notes_columns: Sequence[Any],
+    page: int = 0,
+) -> List[CheckResult]:
+    """Flag notes columns without a header block."""
+    findings: List[CheckResult] = []
+    for col in notes_columns:
+        if not col.header and col.notes_blocks:
+            findings.append(
+                CheckResult(
+                    check_id="NOTES_NO_HEADER",
+                    severity="warning",
+                    message="Notes column has notes blocks but no header",
+                    page=page,
+                    bbox=col.bbox(),
+                )
+            )
+    return findings
+
+
+# 9. Revision region empty ────────────────────────────────────────────
+
+
+def check_revision_empty(
+    revision_regions: Sequence[Any],
+    page: int = 0,
+) -> List[CheckResult]:
+    """Flag revision regions detected with no entries."""
+    findings: List[CheckResult] = []
+    for region in revision_regions:
+        if not region.entries:
+            findings.append(
+                CheckResult(
+                    check_id="REV_EMPTY",
+                    severity="info",
+                    message=(
+                        f"Revision region '{region.header_text() or 'REVISIONS'}' "
+                        f"has no entries"
+                    ),
+                    page=page,
+                    bbox=region.bbox(),
+                    details={"header": region.header_text()},
+                )
+            )
+    return findings
+
+
+# 10. Abbreviation table empty ────────────────────────────────────────
+
+
+def check_abbreviation_empty(
+    abbreviation_regions: Sequence[Any],
+    page: int = 0,
+) -> List[CheckResult]:
+    """Flag abbreviation regions with a header but no entries."""
+    findings: List[CheckResult] = []
+    for region in abbreviation_regions:
+        if not region.entries:
+            findings.append(
+                CheckResult(
+                    check_id="ABBREV_EMPTY",
+                    severity="info",
+                    message=(
+                        f"Abbreviation region '{region.header_text() or 'ABBREVIATIONS'}' "
+                        f"has no entries"
+                    ),
+                    page=page,
+                    bbox=region.bbox(),
+                    details={"header": region.header_text()},
+                )
+            )
+    return findings
+
+
+# 11. Standard detail entry missing description ──────────────────────
+
+
+def check_standard_detail_missing_desc(
+    standard_detail_regions: Sequence[Any],
+    page: int = 0,
+) -> List[CheckResult]:
+    """Flag standard detail entries that have a sheet number but no description."""
+    findings: List[CheckResult] = []
+    for region in standard_detail_regions:
+        for entry in region.entries:
+            if entry.sheet_number.strip() and not entry.description.strip():
+                findings.append(
+                    CheckResult(
+                        check_id="STDDET_NO_DESC",
+                        severity="warning",
+                        message=(
+                            f"Standard detail '{entry.sheet_number}' has no description"
+                        ),
+                        page=page,
+                        bbox=entry.bbox(),
+                        details={"sheet_number": entry.sheet_number},
+                    )
+                )
+    return findings
+
+
+# 12. Title block missing ────────────────────────────────────────────
+
+
+def check_title_block_missing(
+    structural_boxes: Sequence[Any] | None = None,
+    page: int = 0,
+) -> List[CheckResult]:
+    """Flag pages with no detected title block."""
+    findings: List[CheckResult] = []
+    if not structural_boxes:
+        findings.append(
+            CheckResult(
+                check_id="TITLE_MISSING",
+                severity="warning",
+                message="No structural boxes detected — title block may be missing",
+                page=page,
+            )
+        )
+        return findings
+
+    from ..analysis.structural_boxes import BoxType
+
+    has_tb = any(
+        getattr(sb, "box_type", None) == BoxType.title_block for sb in structural_boxes
+    )
+    if not has_tb:
+        findings.append(
+            CheckResult(
+                check_id="TITLE_MISSING",
+                severity="warning",
+                message="No title block detected on this page",
+                page=page,
+            )
+        )
+    return findings
+
+
+# 13. Title block field completeness ──────────────────────────────────
+
+
+def check_title_block_fields(
+    title_blocks: Sequence[Any] | None = None,
+    page: int = 0,
+) -> List[CheckResult]:
+    """Flag title blocks missing critical fields (sheet number, date)."""
+    findings: List[CheckResult] = []
+    if not title_blocks:
+        return findings
+
+    required = {"sheet_number", "date"}
+    for tb in title_blocks:
+        present = {f.label for f in tb.fields}
+        for key in required:
+            if key not in present:
+                label_nice = key.replace("_", " ").title()
+                findings.append(
+                    CheckResult(
+                        check_id=f"TITLE_NO_{key.upper()}",
+                        severity="warning",
+                        message=f"Title block is missing '{label_nice}'",
+                        page=page,
+                        bbox=tb.bbox,
+                        details={"missing_field": key},
+                    )
+                )
+    return findings
+
+
+# 14. Notes cross-reference check ─────────────────────────────────────
+
+_NOTE_XREF_RE = re.compile(r"(?:SEE|REFER\s+TO)\s+NOTE\s+#?(\d+)", re.I)
+
+
+def check_notes_cross_references(
+    notes_columns: Sequence[Any],
+    blocks: Sequence[Any],
+    page: int = 0,
+) -> List[CheckResult]:
+    """Detect cross-references to notes that don't exist.
+
+    Scans all blocks for patterns like "SEE NOTE 5" and verifies that
+    note #5 actually exists in a notes column on the same page.
+    """
+    findings: List[CheckResult] = []
+
+    # Collect all defined note numbers
+    defined_notes: set[int] = set()
+    for col in notes_columns:
+        for blk in col.notes_blocks:
+            if not blk.rows:
+                continue
+            first_row = blk.rows[0]
+            texts = [
+                b.text for b in sorted(first_row.boxes, key=lambda b: b.x0) if b.text
+            ]
+            row_text = " ".join(texts).strip()
+            m = _NOTE_NUM_RE.match(row_text)
+            if m:
+                defined_notes.add(int(m.group(1)))
+
+    if not defined_notes and not notes_columns:
+        return findings
+
+    # Scan all blocks for cross-references
+    for blk in blocks:
+        for row in blk.rows:
+            for box in row.boxes:
+                for m in _NOTE_XREF_RE.finditer(box.text):
+                    ref_num = int(m.group(1))
+                    if ref_num not in defined_notes:
+                        findings.append(
+                            CheckResult(
+                                check_id="NOTES_XREF",
+                                severity="warning",
+                                message=f"Reference to note #{ref_num} but note not found",
+                                page=page,
+                                bbox=box.bbox(),
+                                details={"referenced_note": ref_num},
+                            )
+                        )
+
+    return findings
+
+
+# 15. Revision missing number ─────────────────────────────────────────
+
+
+def check_revision_missing_number(
+    revision_regions: Sequence[Any],
+    page: int = 0,
+) -> List[CheckResult]:
+    """Flag revision entries that have a date/description but no revision number."""
+    findings: List[CheckResult] = []
+    for region in revision_regions:
+        for entry in region.entries:
+            has_content = entry.description.strip() or entry.date.strip()
+            if has_content and not entry.number.strip():
+                findings.append(
+                    CheckResult(
+                        check_id="REV_NO_NUMBER",
+                        severity="warning",
+                        message=(f"Revision entry has content but no revision number"),
+                        page=page,
+                        bbox=entry.bbox(),
+                        details={
+                            "description": entry.description,
+                            "date": entry.date,
+                        },
+                    )
+                )
+    return findings
+
+
 # ── Orchestrator ─────────────────────────────────────────────────────
 
 
@@ -646,6 +955,8 @@ def run_all_checks(
     standard_detail_regions: Sequence[Any] | None = None,
     legend_regions: Sequence[Any] | None = None,
     misc_title_regions: Sequence[Any] | None = None,
+    structural_boxes: Sequence[Any] | None = None,
+    title_blocks: Sequence[Any] | None = None,
     blocks: Sequence[Any] | None = None,
     page: int = 0,
 ) -> List[CheckResult]:
@@ -660,6 +971,8 @@ def run_all_checks(
     standard_detail_regions = standard_detail_regions or []
     legend_regions = legend_regions or []
     misc_title_regions = misc_title_regions or []
+    structural_boxes = structural_boxes or []
+    title_blocks = title_blocks or []
     blocks = blocks or []
 
     findings: List[CheckResult] = []
@@ -695,5 +1008,46 @@ def run_all_checks(
                 page=page,
             )
         )
+
+    # 6. Legend empty
+    if legend_regions:
+        findings.extend(check_legend_empty(legend_regions, page=page))
+
+    # 7. Legend no header
+    if legend_regions:
+        findings.extend(check_legend_no_header(legend_regions, page=page))
+
+    # 8. Notes column missing header
+    if notes_columns:
+        findings.extend(check_notes_no_header(notes_columns, page=page))
+
+    # 9. Revision region empty
+    if revision_regions:
+        findings.extend(check_revision_empty(revision_regions, page=page))
+
+    # 10. Abbreviation empty
+    if abbreviation_regions:
+        findings.extend(check_abbreviation_empty(abbreviation_regions, page=page))
+
+    # 11. Standard detail missing description
+    if standard_detail_regions:
+        findings.extend(
+            check_standard_detail_missing_desc(standard_detail_regions, page=page)
+        )
+
+    # 12. Title block missing
+    findings.extend(check_title_block_missing(structural_boxes, page=page))
+
+    # 13. Title block field completeness
+    if title_blocks:
+        findings.extend(check_title_block_fields(title_blocks, page=page))
+
+    # 14. Notes cross-references
+    if notes_columns and blocks:
+        findings.extend(check_notes_cross_references(notes_columns, blocks, page=page))
+
+    # 15. Revision missing number
+    if revision_regions:
+        findings.extend(check_revision_missing_number(revision_regions, page=page))
 
     return findings

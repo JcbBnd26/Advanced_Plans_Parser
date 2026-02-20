@@ -355,3 +355,40 @@ def test_export_from_manifest(tmp_path):
     summary_rows = _read_csv(Path(exported["page_summary"]))
     assert len(summary_rows) == 1
     assert summary_rows[0]["boxes"] == "5"
+
+
+def test_export_from_manifest_multi_page(tmp_path):
+    """export_from_manifest should process every page in the manifest."""
+    run_dir = tmp_path / "run_multi"
+    (run_dir / "exports").mkdir(parents=True)
+    manifest = {
+        "pdf_name": "multipage.pdf",
+        "pages": [
+            {
+                "page": 0,
+                "page_width": 612,
+                "page_height": 792,
+                "counts": {"boxes": 3},
+                "stages": {},
+                "artifacts": {},
+            },
+            {
+                "page": 1,
+                "page_width": 612,
+                "page_height": 792,
+                "counts": {"boxes": 7},
+                "stages": {},
+                "artifacts": {},
+            },
+        ],
+    }
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+
+    exported = export_from_manifest(manifest_path)
+    assert "page_summary" in exported
+    summary_rows = _read_csv(Path(exported["page_summary"]))
+    # Both pages should be in the single appended CSV
+    assert len(summary_rows) == 2
+    assert summary_rows[0]["boxes"] == "3"
+    assert summary_rows[1]["boxes"] == "7"
