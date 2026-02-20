@@ -102,6 +102,7 @@ from plancheck.analysis.structural_boxes import (
 from plancheck.checks.semantic_checks import run_all_checks
 from plancheck.export import export_page_results
 from plancheck.export.overlay import draw_columns_overlay, draw_lines_overlay
+from plancheck.export.page_data import serialize_page
 from plancheck.grouping import (
     compute_median_space_gap,
     group_notes_columns,
@@ -496,6 +497,20 @@ def process_page(
 
     columns_serialized = [serialize_column(col) for col in notes_columns]
     columns_path.write_text(json.dumps(columns_serialized, indent=2))
+
+    # Write unified extraction JSON (consumed by sheet recreation export)
+    extraction_path = (
+        run_dir / "artifacts" / f"{pdf_stem}_page_{page_num}_extraction.json"
+    )
+    extraction_data = serialize_page(
+        page=page_num,
+        page_width=page_w,
+        page_height=page_h,
+        tokens=boxes,
+        blocks=blocks,
+        notes_columns=notes_columns,
+    )
+    extraction_path.write_text(json.dumps(extraction_data, indent=2))
 
     # Extract graphics and detect legends
     graphics = extract_graphics(str(pdf), page_num)

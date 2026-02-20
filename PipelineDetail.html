@@ -293,20 +293,23 @@
                     <span class="step-title">INGEST — Open & Render the PDF</span>
                 </div>
                 <p class="step-summary">
-                    The pipeline opens the PDF file and renders the requested page into a picture (like taking a screenshot of the page).
-                    The rendering resolution (DPI) controls how sharp the image is — higher means more detail but slower.
-                    This image is used later for visual OCR. The page dimensions (width × height in PDF points) are also recorded.
+                    The pipeline opens the PDF file and does two things at once: it renders the page into a picture
+                    (like taking a screenshot) for the image-based OCR path, <strong>and</strong> it passes the raw PDF file
+                    path directly to TOCR so TOCR can open the PDF itself and read its hidden text layer independently.
+                    These two outputs feed the parallel stages below.
                 </p>
                 <ul class="detail-list">
                     <li>Open the PDF using pdfplumber</li>
-                    <li>Render the target page at the configured DPI (default 200)</li>
-                    <li>Store the resulting image in memory — this becomes the "background image" for overlays later</li>
+                    <li>Render the target page at the configured DPI (default 200) — this image feeds into VOCRPP → VOCR</li>
+                    <li>Store the rendered image in memory — it also becomes the background for debug overlays later</li>
+                    <li><strong>The PDF file path is passed directly to TOCR</strong> — TOCR opens the PDF independently to read its hidden text layer; it does not use the rendered image</li>
                     <li>Record page dimensions (width × height in points, where 72 points = 1 inch)</li>
                     <li>This stage always runs — it cannot be skipped</li>
                 </ul>
                 <div class="badge-row">
                     <span class="badge badge-input">PDF file + page number</span>
-                    <span class="badge badge-output">Page image + dimensions</span>
+                    <span class="badge badge-output">➜ Rendered image (→ VOCRPP / VOCR path)</span>
+                    <span class="badge badge-output">➜ PDF file path (→ TOCR text path)</span>
                     <span class="badge badge-lib">pdfplumber · Pillow</span>
                 </div>
             </div>
@@ -314,40 +317,46 @@
     </div>
 
     <!-- ════════════════════════════════════════════════════════════════ -->
-    <div class="phase-divider"><span>Stages 2a &amp; 2b — Run in Parallel</span></div>
+    <div class="phase-divider"><span>Stages 2–3 — Parallel Token Collection</span></div>
     <!-- ════════════════════════════════════════════════════════════════ -->
 
+    <!-- TOCR left | VOCRPP→VOCR right -->
     <div class="parallel-wrapper">
-        <div class="parallel-label"><span>⚡ These two stages run at the same time to save time</span></div>
+        <div class="parallel-label"><span>⚡ Both paths run in parallel — each produces a token list for RECONCILE</span></div>
 
         <div class="parallel-grid">
 
             <!-- TOCR -->
             <div class="step-card" style="--dot-color: #10b981; border-left: 4px solid #10b981;">
                 <div class="step-header">
-                    <span class="step-number" style="color:#10b981; background:rgba(16,185,129,.12);">STAGE 2a</span>
+                    <span class="step-number" style="color:#10b981; background:rgba(16,185,129,.12);">STAGE 2</span>
                     <span class="step-title">TOCR — Read Text from PDF</span>
                 </div>
                 <p class="step-summary">
                     Every PDF has a hidden text layer that describes the words printed on the page (put there by the CAD software that created the drawing).
-                    TOCR reads that layer, cleans up the raw data, removes junk, and packages each word into a tidy box with its position, font name, and font size.
+                    TOCR receives the raw PDF file path from INGEST, opens the PDF independently, and reads that text layer directly —
+                    no image involved. It cleans up the raw data, removes junk, and packages each word into a tidy box with its position, font name, and font size.
                 </p>
-                <ul class="detail-list">
-                    <li>Ask pdfplumber for every word on the page, along with its position and font info</li>
-                    <li>Convert each word into a standard "GlyphBox" — a rectangle with text and metadata attached</li>
-                    <li>Clip boxes so none extend outside the page boundaries</li>
-                    <li>Filter out words too close to the page edge (title blocks, borders)</li>
-                    <li>Filter out words with unusually large or small font sizes</li>
-                    <li>Optionally drop rotated / sideways text</li>
-                    <li>Strip invisible control characters; discard words that become empty afterward</li>
-                    <li>Normalize text — fix unusual Unicode forms, collapse extra spaces</li>
-                    <li>Remove duplicate boxes — if two boxes have the same text and overlap heavily, keep only one</li>
-                    <li>Calculate quality metrics: words per square inch (density), percentage of garbled text (mojibake), font distribution</li>
-                    <li>Flag warnings if the page looks blank, has too many garbled characters, or falls below minimum density</li>
-                </ul>
+                <details>
+                    <summary>Processing steps ▸</summary>
+                    <ul class="detail-list" style="margin-top: 8px;">
+                        <li>Receive the raw PDF file path from INGEST (not the rendered image)</li>
+                        <li>Ask pdfplumber for every word on the page, along with its position and font info</li>
+                        <li>Convert each word into a standard "GlyphBox" — a rectangle with text and metadata attached</li>
+                        <li>Clip boxes so none extend outside the page boundaries</li>
+                        <li>Filter out words too close to the page edge (title blocks, borders)</li>
+                        <li>Filter out words with unusually large or small font sizes</li>
+                        <li>Optionally drop rotated / sideways text</li>
+                        <li>Strip invisible control characters; discard words that become empty afterward</li>
+                        <li>Normalize text — fix unusual Unicode forms, collapse extra spaces</li>
+                        <li>Remove duplicate boxes — if two boxes have the same text and overlap heavily, keep only one</li>
+                        <li>Calculate quality metrics: words per sq inch, garbled-text percentage, font distribution</li>
+                        <li>Flag warnings if the page looks blank, has too many garbled characters, or falls below minimum density</li>
+                    </ul>
+                </details>
                 <details>
                     <summary>What comes out?</summary>
-                    <ul class="detail-list">
+                    <ul class="detail-list" style="margin-top: 8px;">
                         <li>A list of GlyphBox tokens — each with position, text, font name, font size, and origin = "text"</li>
                         <li>Page width and height in PDF points</li>
                         <li>A diagnostics report: token counts at every filter step, font distributions, density, quality flags</li>
@@ -356,50 +365,100 @@
                 </details>
                 <details>
                     <summary>Two modes</summary>
-                    <ul class="detail-list">
+                    <ul class="detail-list" style="margin-top: 8px;">
                         <li><strong>Full</strong> — all filtering, normalization, dedup, and diagnostics. Used by the batch pipeline.</li>
                         <li><strong>Minimal</strong> — only clips coordinates and skips zero-area boxes. Used by viewers/overlays where speed matters.</li>
                     </ul>
                 </details>
                 <div class="badge-row">
+                    <span class="badge badge-input">Raw PDF file path (from INGEST)</span>
+                    <span class="badge badge-output">GlyphBox tokens (origin = text)</span>
                     <span class="badge badge-lib">pdfplumber</span>
                     <span class="badge badge-file">📄 src/plancheck/tocr/extract.py</span>
                 </div>
             </div>
 
-            <!-- VOCRPP -->
-            <div class="step-card" style="--dot-color: #f59e0b; border-left: 4px solid #f59e0b;">
-                <div class="step-header">
-                    <span class="step-number" style="color:#f59e0b; background:rgba(245,158,11,.12);">STAGE 2b</span>
-                    <span class="step-title">VOCRPP — Prepare Image for OCR</span>
+            <!-- Right column: VOCRPP (compact) stacked above VOCR -->
+            <div style="display:flex; flex-direction:column; gap:12px;">
+
+                <!-- VOCRPP compact -->
+                <div class="step-card" style="--dot-color:#f59e0b; border-left:4px solid #f59e0b; padding:14px 18px;">
+                    <div class="step-header">
+                        <span class="step-number" style="color:#f59e0b; background:rgba(245,158,11,.12);">STAGE 3a</span>
+                        <span class="step-title" style="font-size:13px;">VOCRPP — Prepare Image for OCR</span>
+                    </div>
+                    <p class="step-summary" style="font-size:12px; margin-bottom:10px;">
+                        Construction drawings are often faint or noisy. VOCRPP enhances the rendered page image
+                        (grayscale, contrast, denoise, sharpen) before passing it to VOCR below.
+                        Every step is optional and toggled by the settings.
+                    </p>
+                    <details>
+                        <summary>Processing steps ▸</summary>
+                        <ul class="detail-list" style="margin-top:6px; font-size:12px;">
+                            <li>Render a separate copy of the page at the OCR resolution</li>
+                            <li><strong>Grayscale</strong> — strip color noise</li>
+                            <li><strong>Auto-contrast</strong> — stretch brightness so faint text stands out</li>
+                            <li><strong>CLAHE</strong> — locally adaptive contrast (brightens dark corners)</li>
+                            <li><strong>Median denoise</strong> — smooth speckle while keeping edges sharp</li>
+                            <li><strong>Adaptive binarize</strong> — pure black-and-white per local region</li>
+                            <li><strong>Sharpen</strong> — crisp up letter edges</li>
+                            <li>Save as <code>page_XXXX_ocr_input.png</code> in the run folder</li>
+                            <li><em>Can be skipped</em> — if OCR reconciliation is disabled, this stage is gated off entirely; VOCR then uses the raw unprocessed image instead</li>
+                        </ul>
+                        <div class="badge-row" style="margin-top:10px;">
+                            <span class="badge badge-lib">OpenCV · Pillow</span>
+                            <span class="badge badge-file">📄 src/plancheck/vocrpp/preprocess.py</span>
+                        </div>
+                    </details>
                 </div>
-                <p class="step-summary">
-                    Construction drawings are often faint, noisy, or low-contrast. Before the OCR engine looks at the page image,
-                    this stage enhances it — making text sharper, backgrounds cleaner, and lines crisper so the OCR can read more accurately.
-                    Each enhancement step is optional and controlled by the settings.
-                </p>
-                <ul class="detail-list">
-                    <li>Render a separate copy of the page at the OCR resolution (may differ from the overlay resolution)</li>
-                    <li><strong>Grayscale</strong> — convert from color to black-and-white shades (removes color noise)</li>
-                    <li><strong>Auto-contrast</strong> — stretch the brightness range so faint text stands out</li>
-                    <li><strong>CLAHE</strong> — locally adaptive contrast enhancement (brightens dark corners without blowing out light areas)</li>
-                    <li><strong>Median denoise</strong> — smooth out speckle noise while keeping edges sharp</li>
-                    <li><strong>Adaptive binarize</strong> — convert to pure black-and-white, adjusting the threshold for each small region of the image</li>
-                    <li><strong>Sharpen</strong> — boost edge definition so letters are crisper</li>
-                    <li>Save the processed image as <code>page_XXXX_ocr_input.png</code> in the run folder</li>
-                    <li>Record which steps were actually applied and quality metrics (mean brightness, contrast)</li>
-                </ul>
-                <details>
-                    <summary>Can be skipped?</summary>
-                    <ul class="detail-list">
-                        <li>Yes — if OCR reconciliation is disabled in the settings, this stage is gated off and doesn't run at all</li>
-                        <li>If it doesn't run, the next stage (VOCR) uses the raw unprocessed image instead</li>
-                    </ul>
-                </details>
-                <div class="badge-row">
-                    <span class="badge badge-lib">OpenCV · Pillow</span>
-                    <span class="badge badge-file">📄 src/plancheck/vocrpp/preprocess.py</span>
+
+                <!-- connector arrow between VOCRPP and VOCR -->
+                <div style="text-align:center; color:#f59e0b; font-size:12px; font-weight:600; margin:-4px 0;">
+                    ⬇ preprocessed image passes to VOCR
                 </div>
+
+                <!-- VOCR -->
+                <div class="step-card" style="--dot-color: #8b5cf6; border-left: 4px solid #8b5cf6;">
+                    <div class="step-header">
+                        <span class="step-number" style="color:#8b5cf6; background:rgba(139,92,246,.12);">STAGE 3b</span>
+                        <span class="step-title">VOCR — Visual OCR (PaddleOCR)</span>
+                    </div>
+                    <p class="step-summary">
+                        The PDF text layer misses symbols like <strong>/</strong>, <strong>%</strong>, <strong>°</strong>, and <strong>±</strong>
+                        because CAD software renders them as vector graphics instead of real text characters.
+                        VOCR runs a deep-learning OCR engine (PaddleOCR) on the enhanced page image from VOCRPP
+                        to find those missing symbols by "reading" the picture the way a human would.
+                    </p>
+                    <details>
+                        <summary>Processing steps ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li>Use the preprocessed image from VOCRPP if available, otherwise fall back to the raw rendered image</li>
+                            <li>Convert to RGB (PaddleOCR needs 3-channel images)</li>
+                            <li>If the image is very large, split it into overlapping tiles so PaddleOCR doesn't exceed its memory limit</li>
+                            <li>Run PaddleOCR on each tile (or the whole image if it fits) — this is the slowest step in the pipeline</li>
+                            <li>A heartbeat message prints every 15 seconds so you know it's still working</li>
+                            <li>Convert each OCR detection from pixel coordinates back to PDF-point coordinates</li>
+                            <li>Apply confidence threshold — discard readings below minimum confidence (default 0.5)</li>
+                            <li>Filter out very short text and whitespace-only detections</li>
+                            <li>If tiling was used, deduplicate tokens from overlapping tile regions using IoU</li>
+                            <li>Record stats: total tokens, confidence min / max / mean, image source, effective DPI</li>
+                        </ul>
+                    </details>
+                    <details>
+                        <summary>Can be skipped?</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li>Yes — gated by the settings. If visual OCR is disabled, this stage is skipped entirely</li>
+                            <li>When skipped, the RECONCILE stage also skips (no OCR tokens to merge)</li>
+                        </ul>
+                    </details>
+                    <div class="badge-row">
+                        <span class="badge badge-input">Preprocessed image (from VOCRPP)</span>
+                        <span class="badge badge-output">GlyphBox tokens (origin = ocr)</span>
+                        <span class="badge badge-lib">PaddleOCR · NumPy</span>
+                        <span class="badge badge-file">📄 src/plancheck/vocr/extract.py</span>
+                    </div>
+                </div>
+
             </div>
 
         </div>
@@ -415,10 +474,10 @@
             <div class="step-card">
                 <div class="step-header">
                     <span class="step-number">CLEANUP</span>
-                    <span class="step-title">NMS Prune & Skew Correction</span>
+                    <span class="step-title">NMS Prune &amp; Skew Correction</span>
                 </div>
                 <p class="step-summary">
-                    Before moving to visual OCR, the text boxes from TOCR get a quick cleanup pass.
+                    Before the TOCR tokens move on to RECONCILE, they get a quick cleanup pass.
                 </p>
                 <ul class="detail-list">
                     <li><strong>NMS prune</strong> — "Non-Maximum Suppression." If two boxes overlap a lot (above a threshold),
@@ -426,53 +485,6 @@
                     <li><strong>Skew correction</strong> (optional) — if the page was scanned crooked, estimate the rotation angle and
                         rotate all the boxes to straighten them out. Only runs if enabled in settings.</li>
                 </ul>
-            </div>
-        </div>
-    </div>
-
-    <!-- ════════════════════════════════════════════════════════════════ -->
-    <div class="phase-divider"><span>Stage 3 — VOCR</span></div>
-    <!-- ════════════════════════════════════════════════════════════════ -->
-
-    <div class="timeline">
-        <div class="step" style="--dot-color: #8b5cf6;">
-            <div class="step-dot"></div>
-            <div class="step-card">
-                <div class="step-header">
-                    <span class="step-number">STAGE 3</span>
-                    <span class="step-title">VOCR — Visual OCR (PaddleOCR)</span>
-                </div>
-                <p class="step-summary">
-                    The hidden text layer from TOCR misses certain characters — particularly symbols like <strong>/</strong>,
-                    <strong>%</strong>, <strong>°</strong>, and <strong>±</strong> that CAD software renders as vector graphics
-                    instead of real text characters. VOCR runs a deep-learning OCR engine (PaddleOCR) on the page <em>image</em>
-                    to find those missing symbols by "reading" the picture the way a human would.
-                </p>
-                <ul class="detail-list">
-                    <li>Pick the best image: use the preprocessed image from VOCRPP if available, otherwise use the raw rendered image</li>
-                    <li>Convert to RGB (PaddleOCR needs 3-channel images)</li>
-                    <li>If the image is very large, split it into overlapping tiles so PaddleOCR doesn't exceed its memory limit</li>
-                    <li>Run PaddleOCR on each tile (or the whole image if it fits) — this is the slowest step in the pipeline</li>
-                    <li>A heartbeat message prints every 15 seconds so you know it's still working</li>
-                    <li>Convert each OCR detection from pixel coordinates back to PDF-point coordinates</li>
-                    <li>Apply confidence threshold — discard readings below minimum confidence (default 0.5)</li>
-                    <li>Filter out very short text and whitespace-only detections</li>
-                    <li>If tiling was used, deduplicate tokens from overlapping tile regions using IoU</li>
-                    <li>Record stats: total tokens, confidence min / max / mean, image source, effective DPI</li>
-                </ul>
-                <details>
-                    <summary>Can be skipped?</summary>
-                    <ul class="detail-list">
-                        <li>Yes — gated by the settings. If visual OCR is disabled, this stage is skipped entirely</li>
-                        <li>When skipped, the RECONCILE stage also skips (no OCR tokens to merge)</li>
-                    </ul>
-                </details>
-                <div class="badge-row">
-                    <span class="badge badge-input">Preprocessed or raw page image</span>
-                    <span class="badge badge-output">OCR tokens + confidence scores</span>
-                    <span class="badge badge-lib">PaddleOCR · NumPy</span>
-                    <span class="badge badge-file">📄 src/plancheck/vocr/extract.py</span>
-                </div>
             </div>
         </div>
     </div>
