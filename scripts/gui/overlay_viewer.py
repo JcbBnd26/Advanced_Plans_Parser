@@ -35,6 +35,20 @@ from plancheck import (
     build_clusters_v2,
     nms_prune,
 )
+from plancheck.analysis.abbreviations import detect_abbreviation_regions
+from plancheck.analysis.graphics import extract_graphics
+from plancheck.analysis.legends import detect_legend_regions
+from plancheck.analysis.misc_titles import detect_misc_title_regions
+from plancheck.analysis.revisions import detect_revision_regions
+from plancheck.analysis.standard_details import detect_standard_detail_regions
+
+# Analysis / detection imports (lazy-safe: modules exist alongside plancheck)
+from plancheck.analysis.structural_boxes import (
+    classify_structural_boxes,
+    detect_semantic_regions,
+    detect_structural_boxes,
+)
+from plancheck.analysis.zoning import detect_zones
 from plancheck.export.overlay import _header_to_prefix
 from plancheck.export.page_data import deserialize_page, serialize_page
 from plancheck.grouping import group_notes_columns, link_continued_columns
@@ -144,6 +158,20 @@ _PURPLE_BG = (100, 0, 100, 180)
 _RED = (220, 30, 30, 230)
 _RED_BG = (220, 30, 30, 180)
 _LABEL_FG = (255, 255, 255, 255)
+
+# Additional layer colours
+_CYAN = (0, 180, 220, 200)
+_CYAN_BG = (0, 140, 180, 180)
+_ORANGE = (230, 140, 20, 200)
+_ORANGE_BG = (200, 110, 15, 180)
+_YELLOW = (220, 200, 0, 180)
+_YELLOW_BG = (180, 160, 0, 160)
+_TEAL = (0, 150, 130, 200)
+_TEAL_BG = (0, 120, 100, 180)
+_PINK = (220, 80, 150, 200)
+_PINK_BG = (180, 60, 120, 180)
+_GRAY = (140, 140, 140, 160)
+_GRAY_BG = (110, 110, 110, 140)
 
 
 def _draw_labeled_rect(
@@ -298,6 +326,201 @@ def _draw_red_layer(
 
 
 # ---------------------------------------------------------------------------
+# Additional layer drawing functions
+# ---------------------------------------------------------------------------
+
+
+def _draw_glyph_boxes(
+    draw: ImageDraw.ImageDraw,
+    tokens: list,
+    scale: float,
+    font,
+    color: tuple[int, ...] = _GRAY,
+) -> None:
+    """Draw thin outlines around individual glyph boxes."""
+    for t in tokens:
+        sx0, sy0 = _scale(t.x0, t.y0, scale)
+        sx1, sy1 = _scale(t.x1, t.y1, scale)
+        draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=1)
+
+
+def _draw_block_outlines(
+    draw: ImageDraw.ImageDraw,
+    blocks: list[BlockCluster],
+    scale: float,
+    font,
+) -> None:
+    """Draw all block bounding boxes, colour-coded by type."""
+    for i, blk in enumerate(blocks):
+        bbox = blk.bbox()
+        lbl = getattr(blk, "label", None) or ""
+        is_table = getattr(blk, "is_table", False)
+        is_notes = getattr(blk, "is_notes", False)
+        is_header = lbl in ("note_column_header", "note_column_subheader")
+
+        if is_header:
+            color = _RED
+        elif is_notes:
+            color = _GREEN
+        elif is_table:
+            color = _ORANGE
+        else:
+            color = _CYAN
+
+        sx0, sy0 = _scale(bbox[0], bbox[1], scale)
+        sx1, sy1 = _scale(bbox[2], bbox[3], scale)
+        draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=color, width=1)
+        tag = f"B{i}"
+        if lbl:
+            tag += f" [{lbl}]"
+        tb = draw.textbbox((0, 0), tag, font=font)
+        tw, th = tb[2] - tb[0], tb[3] - tb[1]
+        draw.rectangle(
+            [(sx0, max(0, sy0 - th - 4)), (sx0 + tw + 4, max(0, sy0 - 2))],
+            fill=(*color[:3], 140),
+        )
+        draw.text(
+            (sx0 + 2, max(0, sy0 - th - 2)),
+            tag,
+            fill=_LABEL_FG,
+            font=font,
+        )
+
+
+def _draw_structural_boxes_layer(
+    draw: ImageDraw.ImageDraw,
+    structural_boxes: list,
+    scale: float,
+    font,
+    color: tuple[int, ...] = _ORANGE,
+    label_bg: tuple[int, ...] = _ORANGE_BG,
+) -> None:
+    """Draw structural boxes detected from PDF graphics."""
+    for sb in structural_boxes:
+        cls = getattr(sb, "classification", None) or "unknown"
+        bbox = (
+            sb.bbox
+            if hasattr(sb, "bbox") and not callable(sb.bbox)
+            else (sb.x0, sb.y0, sb.x1, sb.y1)
+        )
+        _draw_labeled_rect(draw, bbox, f"SB:{cls}", color, label_bg, scale, font, 2)
+
+
+def _draw_zone_layer(
+    draw: ImageDraw.ImageDraw,
+    zones: list,
+    scale: float,
+    font,
+) -> None:
+    """Draw detected page zones (title_block, notes, border, etc.)."""
+    zone_colors = {
+        "title_block": _RED,
+        "notes": _GREEN,
+        "border": _GRAY,
+        "page": _CYAN,
+        "drawing": _TEAL,
+    }
+    zone_bgs = {
+        "title_block": _RED_BG,
+        "notes": _GREEN_BG,
+        "border": _GRAY_BG,
+        "page": _CYAN_BG,
+        "drawing": _TEAL_BG,
+    }
+    for z in zones:
+        tag = getattr(z, "zone_type", None) or getattr(z, "tag", "?")
+        tag_str = str(tag.value) if hasattr(tag, "value") else str(tag)
+        color = zone_colors.get(tag_str, _YELLOW)
+        bg = zone_bgs.get(tag_str, _YELLOW_BG)
+        bbox = (z.x0, z.y0, z.x1, z.y1)
+        _draw_labeled_rect(draw, bbox, f"Zone:{tag_str}", color, bg, scale, font, 3)
+
+
+def _draw_legend_layer(
+    draw: ImageDraw.ImageDraw,
+    legend_regions: list,
+    scale: float,
+    font,
+    color: tuple[int, ...] = _TEAL,
+    label_bg: tuple[int, ...] = _TEAL_BG,
+) -> None:
+    """Draw legend regions."""
+    for i, lr in enumerate(legend_regions):
+        bbox = (
+            lr.bbox()
+            if callable(getattr(lr, "bbox", None))
+            else (lr.x0, lr.y0, lr.x1, lr.y1)
+        )
+        entry_count = len(getattr(lr, "entries", []))
+        _draw_labeled_rect(
+            draw, bbox, f"Legend[{entry_count}]", color, label_bg, scale, font, 2
+        )
+
+
+def _draw_abbreviation_layer(
+    draw: ImageDraw.ImageDraw,
+    abbr_regions: list,
+    scale: float,
+    font,
+    color: tuple[int, ...] = _PINK,
+    label_bg: tuple[int, ...] = _PINK_BG,
+) -> None:
+    """Draw abbreviation regions."""
+    for i, ar in enumerate(abbr_regions):
+        bbox = (
+            ar.bbox()
+            if callable(getattr(ar, "bbox", None))
+            else (ar.x0, ar.y0, ar.x1, ar.y1)
+        )
+        entry_count = len(getattr(ar, "entries", []))
+        _draw_labeled_rect(
+            draw, bbox, f"Abbr[{entry_count}]", color, label_bg, scale, font, 2
+        )
+
+
+def _draw_revision_layer(
+    draw: ImageDraw.ImageDraw,
+    rev_regions: list,
+    scale: float,
+    font,
+    color: tuple[int, ...] = _YELLOW,
+    label_bg: tuple[int, ...] = _YELLOW_BG,
+) -> None:
+    """Draw revision regions."""
+    for i, rr in enumerate(rev_regions):
+        bbox = (
+            rr.bbox()
+            if callable(getattr(rr, "bbox", None))
+            else (rr.x0, rr.y0, rr.x1, rr.y1)
+        )
+        entry_count = len(getattr(rr, "entries", []))
+        _draw_labeled_rect(
+            draw, bbox, f"Rev[{entry_count}]", color, label_bg, scale, font, 2
+        )
+
+
+def _draw_std_detail_layer(
+    draw: ImageDraw.ImageDraw,
+    detail_regions: list,
+    scale: float,
+    font,
+    color: tuple[int, ...] = _CYAN,
+    label_bg: tuple[int, ...] = _CYAN_BG,
+) -> None:
+    """Draw standard-detail regions."""
+    for i, dr in enumerate(detail_regions):
+        bbox = (
+            dr.bbox()
+            if callable(getattr(dr, "bbox", None))
+            else (dr.x0, dr.y0, dr.x1, dr.y1)
+        )
+        entry_count = len(getattr(dr, "entries", []))
+        _draw_labeled_rect(
+            draw, bbox, f"StdDet[{entry_count}]", color, label_bg, scale, font, 2
+        )
+
+
+# ---------------------------------------------------------------------------
 # Public API: render_overlay
 # ---------------------------------------------------------------------------
 
@@ -318,7 +541,10 @@ def render_overlay(
     pdf_path : path to the PDF (needed for background raster)
     page_idx : zero-based page index
     cfg : GroupingConfig or dict of overrides (applied on top of defaults)
-    layers : ``{"green": True, "purple": True, "red": True}``
+    layers : ``{"green": True, "purple": True, "red": True, ...}``
+             New layer keys: ``glyph_boxes``, ``block_outlines``,
+             ``structural``, ``zones``, ``legends``, ``abbreviations``,
+             ``revisions``, ``std_details``
     resolution : render DPI
     json_path : read pre-computed extraction JSON instead of re-running pipeline
 
@@ -370,12 +596,110 @@ def render_overlay(
     font = _load_font(scale)
 
     # ── Composite layers ─────────────────────────────────────────────
+    # New: glyph boxes (draw first so they're behind block outlines)
+    if layers.get("glyph_boxes", False):
+        _draw_glyph_boxes(draw, tokens, scale, font)
+
+    # New: block outlines (all blocks colour-coded by type)
+    if layers.get("block_outlines", False):
+        _draw_block_outlines(draw, blocks, scale, font)
+
+    # Original three layers
     if layers.get("green", False):
         _draw_green_layer(draw, blocks, scale, font)
     if layers.get("purple", False):
         _draw_purple_layer(draw, blocks, notes_columns, scale, font)
     if layers.get("red", False):
         _draw_red_layer(draw, blocks, scale, font)
+
+    # New analysis layers (require graphics extraction)
+    needs_analysis = any(
+        layers.get(k, False)
+        for k in (
+            "structural",
+            "zones",
+            "legends",
+            "abbreviations",
+            "revisions",
+            "std_details",
+        )
+    )
+    if needs_analysis:
+        try:
+            graphics = extract_graphics(str(pdf_path), page_idx)
+        except Exception:
+            graphics = []
+
+        if layers.get("structural", False):
+            try:
+                sboxes = detect_structural_boxes(graphics, page_w, page_h)
+                classify_structural_boxes(sboxes, blocks, page_w, page_h)
+                _draw_structural_boxes_layer(draw, sboxes, scale, font)
+            except Exception:
+                pass
+
+        # Exclusion zones for downstream detectors
+        exclusion_zones = []
+
+        if layers.get("legends", False):
+            try:
+                lregs = detect_legend_regions(
+                    blocks,
+                    graphics,
+                    page_w,
+                    page_h,
+                    exclusion_zones=exclusion_zones,
+                    cfg=cfg,
+                )
+                _draw_legend_layer(draw, lregs, scale, font)
+            except Exception:
+                pass
+
+        if layers.get("abbreviations", False):
+            try:
+                aregs = detect_abbreviation_regions(
+                    blocks, graphics, page_w, page_h, cfg=cfg
+                )
+                _draw_abbreviation_layer(draw, aregs, scale, font)
+            except Exception:
+                pass
+
+        if layers.get("revisions", False):
+            try:
+                rregs = detect_revision_regions(
+                    blocks,
+                    graphics,
+                    page_w,
+                    page_h,
+                    exclusion_zones=exclusion_zones,
+                    cfg=cfg,
+                )
+                _draw_revision_layer(draw, rregs, scale, font)
+            except Exception:
+                pass
+
+        if layers.get("std_details", False):
+            try:
+                dregs = detect_standard_detail_regions(
+                    blocks,
+                    graphics,
+                    page_w,
+                    page_h,
+                    exclusion_zones=exclusion_zones,
+                    cfg=cfg,
+                )
+                _draw_std_detail_layer(draw, dregs, scale, font)
+            except Exception:
+                pass
+
+        if layers.get("zones", False):
+            try:
+                zones = detect_zones(
+                    page_w, page_h, blocks, notes_columns=notes_columns, cfg=cfg
+                )
+                _draw_zone_layer(draw, zones, scale, font)
+            except Exception:
+                pass
 
     return img
 
@@ -429,12 +753,13 @@ def _import_tk():
 class OverlayViewerTab:
     """Visual Debug tab that plugs into the existing tkinter Notebook."""
 
-    def __init__(self, notebook) -> None:
+    def __init__(self, notebook, gui_state=None) -> None:
         tk, ttk, filedialog, messagebox = _import_tk()
         self.tk = tk
         self.ttk = ttk
         self.filedialog = filedialog
         self.messagebox = messagebox
+        self.state = gui_state
 
         self.frame = ttk.Frame(notebook)
         self.frame.columnconfigure(0, weight=1)
@@ -507,19 +832,50 @@ class OverlayViewerTab:
         mid.grid(row=1, column=0, sticky="ew", **pad)
         mid.columnconfigure(3, weight=1)
 
+        # Core layer toggles (row 0)
         self._green_var = tk.BooleanVar(value=True)
         self._purple_var = tk.BooleanVar(value=True)
         self._red_var = tk.BooleanVar(value=True)
 
-        ttk.Checkbutton(mid, text="Green: notes blocks", variable=self._green_var).grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
+        ttk.Checkbutton(mid, text="Green: notes", variable=self._green_var).grid(
+            row=0, column=0, sticky="w", padx=(0, 6)
         )
         ttk.Checkbutton(mid, text="Purple: columns", variable=self._purple_var).grid(
-            row=0, column=1, sticky="w", padx=(0, 8)
+            row=0, column=1, sticky="w", padx=(0, 6)
         )
         ttk.Checkbutton(mid, text="Red: headers", variable=self._red_var).grid(
-            row=0, column=2, sticky="w", padx=(0, 8)
+            row=0, column=2, sticky="w", padx=(0, 6)
         )
+
+        # Extended layer toggles (row 0 continued + row 0b)
+        self._glyph_var = tk.BooleanVar(value=False)
+        self._blocks_var = tk.BooleanVar(value=False)
+        self._structural_var = tk.BooleanVar(value=False)
+        self._zones_var = tk.BooleanVar(value=False)
+        self._legends_var = tk.BooleanVar(value=False)
+        self._abbrev_var = tk.BooleanVar(value=False)
+        self._revisions_var = tk.BooleanVar(value=False)
+        self._stddet_var = tk.BooleanVar(value=False)
+
+        ext_layer_frame = ttk.Frame(mid)
+        ext_layer_frame.grid(row=0, column=3, sticky="w", padx=(6, 0))
+
+        ext_layers_btn = ttk.Menubutton(ext_layer_frame, text="More Layers ▾")
+        ext_layers_btn.pack(side="left")
+        ext_menu = tk.Menu(ext_layers_btn, tearoff=False)
+        ext_layers_btn["menu"] = ext_menu
+        ext_menu.add_checkbutton(label="Glyph Boxes", variable=self._glyph_var)
+        ext_menu.add_checkbutton(label="Block Outlines", variable=self._blocks_var)
+        ext_menu.add_separator()
+        ext_menu.add_checkbutton(
+            label="Structural Boxes", variable=self._structural_var
+        )
+        ext_menu.add_checkbutton(label="Zones", variable=self._zones_var)
+        ext_menu.add_separator()
+        ext_menu.add_checkbutton(label="Legends", variable=self._legends_var)
+        ext_menu.add_checkbutton(label="Abbreviations", variable=self._abbrev_var)
+        ext_menu.add_checkbutton(label="Revisions", variable=self._revisions_var)
+        ext_menu.add_checkbutton(label="Standard Details", variable=self._stddet_var)
 
         self._render_btn = ttk.Button(mid, text="Render", command=self._on_render)
         self._render_btn.grid(row=0, column=4, padx=(8, 0))
@@ -528,9 +884,13 @@ class OverlayViewerTab:
             row=0, column=5, padx=(4, 0)
         )
 
+        ttk.Button(mid, text="Load from Run...", command=self._load_from_run).grid(
+            row=0, column=6, padx=(4, 0)
+        )
+
         # --- Zoom controls ---
         zoom_frame = ttk.Frame(mid)
-        zoom_frame.grid(row=0, column=6, padx=(12, 0))
+        zoom_frame.grid(row=0, column=7, padx=(12, 0))
 
         ttk.Button(zoom_frame, text="−", width=2, command=self._zoom_out).grid(
             row=0, column=0
@@ -712,6 +1072,14 @@ class OverlayViewerTab:
             "green": self._green_var.get(),
             "purple": self._purple_var.get(),
             "red": self._red_var.get(),
+            "glyph_boxes": self._glyph_var.get(),
+            "block_outlines": self._blocks_var.get(),
+            "structural": self._structural_var.get(),
+            "zones": self._zones_var.get(),
+            "legends": self._legends_var.get(),
+            "abbreviations": self._abbrev_var.get(),
+            "revisions": self._revisions_var.get(),
+            "std_details": self._stddet_var.get(),
         }
         pdf_path = self._pdf_path
 
@@ -834,6 +1202,125 @@ class OverlayViewerTab:
         if path:
             self._last_img.save(path)
             self._status_var.set(f"Saved: {path}")
+
+    def _load_from_run(self) -> None:
+        """Load pre-computed extraction JSON from a run directory and render."""
+        run_dir = self.filedialog.askdirectory(
+            title="Select Run Directory",
+            initialdir=str(Path(__file__).resolve().parent.parent.parent / "runs"),
+        )
+        if not run_dir:
+            return
+        run_dir = Path(run_dir)
+        artifacts = run_dir / "artifacts"
+        if not artifacts.is_dir():
+            self.messagebox.showwarning(
+                "No Artifacts", f"No artifacts/ folder in {run_dir.name}."
+            )
+            return
+
+        # Find extraction JSON files
+        jsons = sorted(artifacts.glob("page_*_extraction.json"))
+        if not jsons:
+            jsons = sorted(artifacts.glob("*extraction*.json"))
+        if not jsons:
+            self.messagebox.showwarning(
+                "No Data", "No extraction JSON found in artifacts/."
+            )
+            return
+
+        # If multiple pages, let user pick
+        if len(jsons) == 1:
+            json_path = jsons[0]
+        else:
+            # Simple page picker dialog
+            page_names = [j.stem for j in jsons]
+            pick_win = self.tk.Toplevel(self.frame)
+            pick_win.title("Select extraction file")
+            pick_win.geometry("400x300")
+            lb = self.tk.Listbox(pick_win, selectmode="single")
+            for n in page_names:
+                lb.insert("end", n)
+            lb.pack(fill="both", expand=True, padx=10, pady=10)
+            chosen = [None]
+
+            def on_ok():
+                sel = lb.curselection()
+                if sel:
+                    chosen[0] = jsons[sel[0]]
+                pick_win.destroy()
+
+            self.ttk.Button(pick_win, text="OK", command=on_ok).pack(pady=5)
+            pick_win.grab_set()
+            pick_win.wait_window()
+            json_path = chosen[0]
+            if json_path is None:
+                return
+
+        # Find PDF path from manifest
+        manifest_path = run_dir / "manifest.json"
+        pdf_path = None
+        if manifest_path.is_file():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                pdf_path_str = manifest.get("pdf_path") or manifest.get("pdf")
+                if pdf_path_str:
+                    pdf_path = Path(pdf_path_str)
+                    if not pdf_path.is_file():
+                        pdf_path = None
+            except Exception:
+                pass
+
+        if pdf_path is None:
+            f = self.filedialog.askopenfilename(
+                title="Select matching PDF (for background raster)",
+                filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
+            )
+            if not f:
+                return
+            pdf_path = Path(f)
+
+        self._pdf_path = pdf_path
+        self._pdf_label_var.set(pdf_path.name)
+        self._status_var.set(f"Rendering from {json_path.name}...")
+        self._render_btn.config(state="disabled")
+
+        page_idx = int(self._page_var.get())
+        resolution = int(self._dpi_var.get())
+        cfg = self._collect_cfg()
+        layers = {
+            "green": self._green_var.get(),
+            "purple": self._purple_var.get(),
+            "red": self._red_var.get(),
+            "glyph_boxes": self._glyph_var.get(),
+            "block_outlines": self._blocks_var.get(),
+            "structural": self._structural_var.get(),
+            "zones": self._zones_var.get(),
+            "legends": self._legends_var.get(),
+            "abbreviations": self._abbrev_var.get(),
+            "revisions": self._revisions_var.get(),
+            "std_details": self._stddet_var.get(),
+        }
+
+        def worker():
+            t0 = time.perf_counter()
+            try:
+                img = render_overlay(
+                    pdf_path,
+                    page_idx,
+                    cfg=cfg,
+                    layers=layers,
+                    resolution=resolution,
+                    json_path=str(json_path),
+                )
+                elapsed = time.perf_counter() - t0
+                self.frame.after(0, lambda: self._show_image(img, elapsed))
+            except Exception as exc:
+                elapsed = time.perf_counter() - t0
+                self.frame.after(0, lambda: self._render_error(str(exc), elapsed))
+
+        self._render_thread = threading.Thread(target=worker, daemon=True)
+        self._render_thread.start()
 
 
 # ---------------------------------------------------------------------------
