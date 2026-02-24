@@ -14,18 +14,17 @@ The JSON file contains:
 Overlay scripts read this JSON instead of re-parsing the PDF.
 """
 
-from pathlib import Path
-
 import argparse
 import json
+from pathlib import Path
 
 import pdfplumber
+from run_utils import latest_overlays_dir
 
 from plancheck import GroupingConfig, build_clusters_v2, nms_prune
 from plancheck.export.page_data import serialize_page
 from plancheck.grouping import group_notes_columns, link_continued_columns
 from plancheck.tocr.extract import extract_tocr_from_page
-from run_utils import latest_overlays_dir
 
 
 def main() -> None:

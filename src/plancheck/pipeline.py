@@ -894,12 +894,19 @@ def run_pipeline(
 
     # Optional: persist detections to correction store
     if correction_store is not None and run_id is not None:
+        from .analysis.zoning import classify_blocks
         from .corrections.features import featurize, featurize_region
 
         doc_id = correction_store.register_document(pdf_path)
 
+        # Build zone map: block index → ZoneTag.value
+        block_zone_map: dict[int, str] = {}
+        if hasattr(pr, "page_zones") and pr.page_zones:
+            _zone_assignments = classify_blocks(pr.blocks, pr.page_zones)
+            block_zone_map = {idx: tag.value for idx, tag in _zone_assignments.items()}
+
         # Block-level detections
-        for block in pr.blocks:
+        for block_idx, block in enumerate(pr.blocks):
             lbl = getattr(block, "label", None)
             if lbl in ("note_column_header", "note_column_subheader"):
                 etype = "header"
@@ -912,7 +919,8 @@ def run_pipeline(
             bb = block.bbox()
             if bb == (0, 0, 0, 0):
                 continue
-            features = featurize(block, pr.page_width, pr.page_height)
+            zone = block_zone_map.get(block_idx, "unknown")
+            features = featurize(block, pr.page_width, pr.page_height, zone=zone)
             text = " ".join(b.text for b in block.get_all_boxes())[:500]
             correction_store.save_detection(
                 doc_id=doc_id,

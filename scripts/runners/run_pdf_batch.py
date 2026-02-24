@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import argparse
 import json
 import shutil
 from datetime import datetime
+from pathlib import Path
 
 from plancheck import (
     BlockCluster,

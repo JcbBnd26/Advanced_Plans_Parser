@@ -40,11 +40,15 @@ def main() -> None:
     parser.add_argument("--single", type=int, help="Single page number (1-indexed)")
     parser.add_argument("--start", type=int, help="Start page (1-indexed)")
     parser.add_argument("--end", type=int, help="End page (inclusive, 1-indexed)")
-    parser.add_argument("--resolution", type=int, default=200, help="Overlay render DPI")
+    parser.add_argument(
+        "--resolution", type=int, default=200, help="Overlay render DPI"
+    )
     parser.add_argument(
         "--run-root", type=Path, default=Path("runs"), help="Root directory for runs"
     )
-    parser.add_argument("--keep-runs", type=int, default=50, help="Number of runs to keep")
+    parser.add_argument(
+        "--keep-runs", type=int, default=50, help="Number of runs to keep"
+    )
     parser.add_argument(
         "--colors-file",
         type=Path,
@@ -110,7 +114,9 @@ def main() -> None:
                 elif isinstance(val, (list, tuple)) and len(val) >= 3:
                     # RGBA tuple like [255, 0, 0, 200]
                     color_overrides[key] = tuple(val)
-            print(f"Loaded {len(color_overrides)} color overrides from {args.colors_file}")
+            print(
+                f"Loaded {len(color_overrides)} color overrides from {args.colors_file}"
+            )
         except (json.JSONDecodeError, Exception) as e:
             print(f"Warning: Could not parse colors file: {e}")
 

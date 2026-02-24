@@ -57,7 +57,8 @@ from plancheck.tocr.extract import extract_tocr_from_page
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "utils"))
-from run_utils import latest_overlays_dir, scale as _scale
+from run_utils import latest_overlays_dir
+from run_utils import scale as _scale
 
 
 def _load_font(scale: float) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:

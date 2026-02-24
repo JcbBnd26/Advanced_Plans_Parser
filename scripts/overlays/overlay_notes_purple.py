@@ -11,11 +11,10 @@ Usage:
 Page is zero-based.  Writes to the most recent run's overlays/ folder.
 """
 
-import sys
-from pathlib import Path
-
 import argparse
 import json
+import sys
+from pathlib import Path
 
 import pdfplumber
 

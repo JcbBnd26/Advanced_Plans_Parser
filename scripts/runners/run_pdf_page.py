@@ -6,6 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "utils"))
 
+from run_utils import make_run_dir
+
 from plancheck import (
     BlockCluster,
     GlyphBox,
@@ -25,7 +27,6 @@ from plancheck.grouping import (
     mark_headers,
     mark_notes,
 )
-from run_utils import make_run_dir
 
 
 def page_boxes(pdf_path: Path, page_num: int) -> tuple[list[GlyphBox], float, float]:

@@ -2,6 +2,9 @@
 
 Trains on JSONL exported by :meth:`CorrectionStore.export_training_jsonl`
 and predicts ``(label, confidence)`` for new feature dicts.
+
+Uses :class:`~sklearn.ensemble.GradientBoostingClassifier` with balanced
+class weighting via ``compute_sample_weight``.
 """
 
 from __future__ import annotations
@@ -12,16 +15,17 @@ from typing import List, Tuple
 
 import numpy as np
 
-# Zone values for one-hot encoding (8 labels + "unknown")
+# Zone values for one-hot encoding — must match ZoneTag enum in analysis.zoning
 ZONE_VALUES: list[str] = [
-    "abbreviations",
-    "header",
-    "legend",
-    "misc_title",
-    "notes_column",
-    "revision",
-    "standard_detail",
+    "border",
+    "drawing",
+    "notes",
     "title_block",
+    "legend",
+    "abbreviations",
+    "revisions",
+    "details",
+    "page",
     "unknown",
 ]
 
@@ -48,15 +52,26 @@ _NUMERIC_KEYS: list[str] = [
     "text_length",
     "avg_chars_per_token",
     "neighbor_count",
+    # Text-content features (added in v2)
+    "unique_word_ratio",
+    "uppercase_word_frac",
+    "avg_word_length",
+    "kw_notes_pattern",
+    "kw_header_pattern",
+    "kw_legend_pattern",
+    "kw_abbreviation_pattern",
+    "kw_revision_pattern",
+    "kw_title_block_pattern",
+    "kw_detail_pattern",
 ]
 
 _DEFAULT_MODEL_PATH = Path("data/element_classifier.pkl")
 
 
 def encode_features(feature_dict: dict) -> np.ndarray:
-    """Convert a 22-key feature dict to a flat float array of length 30.
+    """Convert a feature dict to a flat float array.
 
-    The ``zone`` string is one-hot encoded into 9 binary columns
+    The ``zone`` string is one-hot encoded into binary columns
     (one per :data:`ZONE_VALUES`).  All other keys are cast to float.
 
     Parameters
@@ -67,7 +82,7 @@ def encode_features(feature_dict: dict) -> np.ndarray:
     Returns
     -------
     numpy.ndarray
-        1-D array of length ``len(_NUMERIC_KEYS) + len(ZONE_VALUES)`` = 30.
+        1-D float64 array of length ``len(_NUMERIC_KEYS) + len(ZONE_VALUES)``.
     """
     numeric = [float(feature_dict.get(k, 0.0)) for k in _NUMERIC_KEYS]
     zone = feature_dict.get("zone", "unknown")
@@ -80,6 +95,7 @@ class ElementClassifier:
 
     Wraps ``sklearn.ensemble.GradientBoostingClassifier`` with helpers
     for encoding features, training from JSONL, and predicting labels.
+    Uses balanced sample weights to handle class imbalance.
 
     Parameters
     ----------
@@ -115,6 +131,7 @@ class ElementClassifier:
             If fewer than 10 training examples are available.
         """
         from sklearn.ensemble import GradientBoostingClassifier
+        from sklearn.utils.class_weight import compute_sample_weight
 
         from .metrics import compute_metrics
 
@@ -139,6 +156,9 @@ class ElementClassifier:
         X_train = np.array([encode_features(e["features"]) for e in train_ex])
         y_train = [e["label"] for e in train_ex]
 
+        # Balanced class weighting
+        sample_weights = compute_sample_weight("balanced", y_train)
+
         # Fit
         clf = GradientBoostingClassifier(
             n_estimators=200,
@@ -146,7 +166,7 @@ class ElementClassifier:
             learning_rate=0.1,
             random_state=42,
         )
-        clf.fit(X_train, y_train)
+        clf.fit(X_train, y_train, sample_weight=sample_weights)
 
         # Evaluate on validation set (or training set if no val)
         eval_ex = val_ex if val_ex else train_ex
@@ -221,3 +241,31 @@ class ElementClassifier:
     def model_exists(self) -> bool:
         """Return *True* if a trained model file exists on disk."""
         return self.model_path.is_file()
+
+    def get_feature_importance(self) -> dict[str, float]:
+        """Return feature-name → importance mapping from the trained model.
+
+        Uses the model's ``feature_importances_`` property.
+        Returns an empty dict if no model is loaded or importances
+        cannot be computed.
+        """
+        self._load_model()
+        if self._model is None:
+            return {}
+
+        feature_names = list(_NUMERIC_KEYS) + [f"zone_{z}" for z in ZONE_VALUES]
+
+        try:
+            importances = np.asarray(self._model.feature_importances_)
+        except Exception:
+            return {}
+
+        if importances.shape[0] != len(feature_names):
+            return {}
+
+        return {
+            name: round(float(imp), 6)
+            for name, imp in sorted(
+                zip(feature_names, importances), key=lambda x: -x[1]
+            )
+        }

@@ -46,6 +46,17 @@ def sample_features() -> dict:
         "avg_chars_per_token": 8.0,
         "zone": "header",
         "neighbor_count": 3,
+        # Text-content features (v2)
+        "unique_word_ratio": 0.8,
+        "uppercase_word_frac": 0.4,
+        "avg_word_length": 5.0,
+        "kw_notes_pattern": 0,
+        "kw_header_pattern": 1,
+        "kw_legend_pattern": 0,
+        "kw_abbreviation_pattern": 0,
+        "kw_revision_pattern": 0,
+        "kw_title_block_pattern": 0,
+        "kw_detail_pattern": 0,
     }
 
 
@@ -204,3 +215,30 @@ class TestElementClassifier:
         label, conf = clf2.predict(sample_features)
         assert clf2._model is not None  # now loaded
         assert isinstance(label, str)
+
+    def test_feature_importance(self, tmp_path: Path, training_jsonl: Path) -> None:
+        clf = ElementClassifier(model_path=tmp_path / "model.pkl")
+        clf.train(training_jsonl)
+        importance = clf.get_feature_importance()
+        assert isinstance(importance, dict)
+        # Should have entries for all features (numeric + zone one-hots)
+        assert len(importance) > 0
+        # All values should be non-negative floats
+        for name, val in importance.items():
+            assert isinstance(val, float)
+
+    def test_zone_values_match_enum(self) -> None:
+        """ZONE_VALUES should contain the actual ZoneTag enum values."""
+        expected = {
+            "border",
+            "drawing",
+            "notes",
+            "title_block",
+            "legend",
+            "abbreviations",
+            "revisions",
+            "details",
+            "page",
+            "unknown",
+        }
+        assert set(ZONE_VALUES) == expected

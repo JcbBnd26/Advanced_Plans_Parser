@@ -1,17 +1,106 @@
 """Feature extraction for BlockCluster and region objects.
 
 Converts pipeline objects into flat feature dicts suitable for
-JSON serialisation and downstream LightGBM classification.
+JSON serialisation and downstream classification.
+
+Feature schema (32 keys):
+  - 3 font metrics: font_size_pt, font_size_max_pt, font_size_min_pt
+  - 8 text properties: is_all_caps, is_bold, token_count, row_count,
+        text_length, avg_chars_per_token, unique_word_ratio,
+        uppercase_word_frac, avg_word_length
+  - 7 bbox fractions: x_frac, y_frac, x_center_frac, y_center_frac,
+        width_frac, height_frac, aspect_ratio
+  - 4 content flags: contains_digit, starts_with_digit, has_colon,
+        has_period_after_num
+  - 7 keyword indicators: kw_notes_pattern, kw_header_pattern,
+        kw_legend_pattern, kw_abbreviation_pattern, kw_revision_pattern,
+        kw_title_block_pattern, kw_detail_pattern
+  - 1 neighbour: neighbor_count
+  - 1 zone: zone (string, one-hot encoded by classifier)
 """
 
 from __future__ import annotations
 
+import json
 import re
 import statistics
+from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from plancheck.models import BlockCluster, GlyphBox
+
+# ── Label-registry pattern cache ───────────────────────────────────────
+
+_REGISTRY_PATTERNS: dict[str, list[re.Pattern[str]]] | None = None
+_REGISTRY_PATH = (
+    Path(__file__).resolve().parent.parent.parent.parent
+    / "data"
+    / "label_registry.json"
+)
+
+# Hardcoded fallback patterns (used when registry file is missing)
+_FALLBACK_PATTERNS: dict[str, list[str]] = {
+    "notes_column": [r"^\d+\.", r"^•", r"SHALL", r"PER CODE", r"ALL.*SHALL"],
+    "header": [r"^[A-Z\s/\-]+$", r"PLAN", r"ELEVATION", r"SECTION", r"DETAIL"],
+    "legend": [r"LEGEND", r"SYMBOL", r"KEY"],
+    "abbreviations": [r"ABBREVIATION", r"ABBREV", r"[A-Z]{2,6}\s*[=:]"],
+    "revision": [r"REV", r"REVISION", r"DATE", r"DESCRIPTION"],
+    "title_block": [r"PROJECT", r"SHEET", r"DRAWN BY", r"CHECKED", r"SCALE"],
+    "standard_detail": [r"STD", r"STANDARD", r"SEE SHEET"],
+}
+
+
+def _load_label_patterns() -> dict[str, list[re.Pattern[str]]]:
+    """Load and compile text_patterns from label_registry.json (cached)."""
+    global _REGISTRY_PATTERNS
+    if _REGISTRY_PATTERNS is not None:
+        return _REGISTRY_PATTERNS
+
+    raw: dict[str, list[str]] = {}
+    try:
+        data = json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
+        for entry in data.get("label_registry", []):
+            label = entry.get("label", "")
+            patterns = entry.get("text_patterns", [])
+            if label and patterns:
+                raw[label] = patterns
+    except Exception:
+        raw = _FALLBACK_PATTERNS
+
+    if not raw:
+        raw = _FALLBACK_PATTERNS
+
+    _REGISTRY_PATTERNS = {}
+    for label, patterns in raw.items():
+        compiled: list[re.Pattern[str]] = []
+        for p in patterns:
+            try:
+                compiled.append(re.compile(p, re.IGNORECASE))
+            except re.error:
+                pass
+        _REGISTRY_PATTERNS[label] = compiled
+
+    return _REGISTRY_PATTERNS
+
+
+def _keyword_scores(text: str) -> dict[str, int]:
+    """Return binary keyword-match indicators for each label type."""
+    patterns = _load_label_patterns()
+    result: dict[str, int] = {}
+    label_to_key = {
+        "notes_column": "kw_notes_pattern",
+        "header": "kw_header_pattern",
+        "legend": "kw_legend_pattern",
+        "abbreviations": "kw_abbreviation_pattern",
+        "revision": "kw_revision_pattern",
+        "title_block": "kw_title_block_pattern",
+        "standard_detail": "kw_detail_pattern",
+    }
+    for label, key in label_to_key.items():
+        pats = patterns.get(label, [])
+        result[key] = int(any(p.search(text) for p in pats)) if pats else 0
+    return result
 
 
 def featurize(
@@ -103,6 +192,19 @@ def featurize(
             if ob[1] <= y1 + 20 and ob[3] >= y0 - 20:
                 neighbor_count += 1
 
+    # ── Text-content features ──────────────────────────────────────
+    words = all_text.split()
+    n_words = len(words)
+    lower_words = [w.lower() for w in words]
+    unique_words = set(lower_words)
+    unique_word_ratio = round(len(unique_words) / max(n_words, 1), 4)
+    uppercase_word_frac = round(
+        sum(1 for w in words if w.isupper() and w.isalpha()) / max(n_words, 1), 4
+    )
+    avg_word_length = round(sum(len(w) for w in words) / max(n_words, 1), 2)
+
+    kw_scores = _keyword_scores(all_text)
+
     return {
         "font_size_pt": round(font_size_pt, 2),
         "font_size_max_pt": round(font_size_max_pt, 2),
@@ -126,6 +228,10 @@ def featurize(
         "avg_chars_per_token": round(avg_chars_per_token, 2),
         "zone": zone,
         "neighbor_count": neighbor_count,
+        "unique_word_ratio": unique_word_ratio,
+        "uppercase_word_frac": uppercase_word_frac,
+        "avg_word_length": avg_word_length,
+        **kw_scores,
     }
 
 
@@ -199,6 +305,22 @@ def featurize_region(
             has_colon = int(any(":" in b.text for b in boxes))
             has_period_after_num = int(bool(re.match(r"^\d+\.", first_text)))
 
+    # Text-content features (from header if available)
+    all_text_str = ""
+    if header_block is not None:
+        hb = header_block.get_all_boxes()
+        if hb:
+            all_text_str = " ".join(b.text for b in hb)
+
+    words = all_text_str.split()
+    n_words = len(words)
+    unique_word_ratio = round(len(set(w.lower() for w in words)) / max(n_words, 1), 4)
+    uppercase_word_frac = round(
+        sum(1 for w in words if w.isupper() and w.isalpha()) / max(n_words, 1), 4
+    )
+    avg_word_length = round(sum(len(w) for w in words) / max(n_words, 1), 2)
+    kw_scores = _keyword_scores(all_text_str)
+
     return {
         "font_size_pt": round(font_size_pt, 2),
         "font_size_max_pt": round(font_size_max_pt, 2),
@@ -222,4 +344,8 @@ def featurize_region(
         "avg_chars_per_token": round(text_length / max(token_count, 1), 2),
         "zone": region_type,
         "neighbor_count": 0,
+        "unique_word_ratio": unique_word_ratio,
+        "uppercase_word_frac": uppercase_word_frac,
+        "avg_word_length": avg_word_length,
+        **kw_scores,
     }

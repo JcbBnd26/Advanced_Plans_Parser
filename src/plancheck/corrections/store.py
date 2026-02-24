@@ -33,6 +33,7 @@ _DDL = """
 CREATE TABLE IF NOT EXISTS documents (
     doc_id      TEXT PRIMARY KEY,
     filename    TEXT NOT NULL,
+    pdf_path    TEXT DEFAULT '',
     page_count  INTEGER NOT NULL,
     ingested_at TEXT NOT NULL,
     project_tag TEXT DEFAULT '',
@@ -116,6 +117,20 @@ CREATE TABLE IF NOT EXISTS box_group_members (
     FOREIGN KEY (group_id) REFERENCES box_groups(group_id),
     FOREIGN KEY (detection_id) REFERENCES detections(detection_id)
 );
+
+CREATE TABLE IF NOT EXISTS training_runs (
+    run_id          TEXT PRIMARY KEY,
+    trained_at      TEXT NOT NULL,
+    n_train         INTEGER NOT NULL,
+    n_val           INTEGER NOT NULL,
+    accuracy        REAL NOT NULL,
+    f1_macro        REAL DEFAULT 0.0,
+    f1_weighted     REAL DEFAULT 0.0,
+    labels_json     TEXT NOT NULL,
+    per_class_json  TEXT NOT NULL,
+    model_path      TEXT DEFAULT '',
+    notes           TEXT DEFAULT ''
+);
 """
 
 
@@ -146,12 +161,23 @@ class CorrectionStore:
     def _migrate(self) -> None:
         """Apply lightweight schema migrations for columns added after v1."""
         # polygon_json on detections
-        cols = {
+        det_cols = {
             r["name"]
             for r in self._conn.execute("PRAGMA table_info(detections)").fetchall()
         }
-        if "polygon_json" not in cols:
+        if "polygon_json" not in det_cols:
             self._conn.execute("ALTER TABLE detections ADD COLUMN polygon_json TEXT")
+            self._conn.commit()
+
+        # pdf_path on documents
+        doc_cols = {
+            r["name"]
+            for r in self._conn.execute("PRAGMA table_info(documents)").fetchall()
+        }
+        if "pdf_path" not in doc_cols:
+            self._conn.execute(
+                "ALTER TABLE documents ADD COLUMN pdf_path TEXT DEFAULT ''"
+            )
             self._conn.commit()
 
     def close(self) -> None:
@@ -185,8 +211,8 @@ class CorrectionStore:
 
         self._conn.execute(
             "INSERT OR IGNORE INTO documents "
-            "(doc_id, filename, page_count, ingested_at) VALUES (?, ?, ?, ?)",
-            (doc_id, pdf_path.name, page_count, _utcnow_iso()),
+            "(doc_id, filename, pdf_path, page_count, ingested_at) VALUES (?, ?, ?, ?, ?)",
+            (doc_id, pdf_path.name, str(pdf_path.resolve()), page_count, _utcnow_iso()),
         )
         self._conn.commit()
         return doc_id
@@ -757,3 +783,75 @@ class CorrectionStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+
+    # ── training runs ──────────────────────────────────────────────────
+
+    def save_training_run(
+        self, metrics: dict, model_path: str = "", notes: str = ""
+    ) -> str:
+        """Persist a training-run record and return its ``run_…`` ID.
+
+        Parameters
+        ----------
+        metrics : dict
+            Output of :func:`~plancheck.corrections.metrics.compute_metrics`,
+            augmented with ``n_train`` and ``n_val``.
+        model_path : str
+            Path to the saved model file (informational).
+        notes : str
+            Free-text annotation for this run.
+        """
+        run_id = _gen_id("run_")
+        self._conn.execute(
+            "INSERT INTO training_runs "
+            "(run_id, trained_at, n_train, n_val, accuracy, f1_macro, f1_weighted, "
+            " labels_json, per_class_json, model_path, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                _utcnow_iso(),
+                metrics.get("n_train", 0),
+                metrics.get("n_val", 0),
+                metrics.get("accuracy", 0.0),
+                metrics.get("f1_macro", 0.0),
+                metrics.get("f1_weighted", 0.0),
+                json.dumps(metrics.get("labels", [])),
+                json.dumps(metrics.get("per_class", {})),
+                model_path,
+                notes,
+            ),
+        )
+        self._conn.commit()
+        return run_id
+
+    def get_training_history(self) -> list[dict[str, Any]]:
+        """Return all training runs ordered newest-first.
+
+        Returns
+        -------
+        list[dict]
+            Each dict has: ``run_id``, ``trained_at``, ``n_train``,
+            ``n_val``, ``accuracy``, ``f1_macro``, ``f1_weighted``,
+            ``labels``, ``per_class``, ``model_path``, ``notes``.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM training_runs ORDER BY trained_at DESC"
+        ).fetchall()
+        results: list[dict[str, Any]] = []
+        for r in rows:
+            results.append(
+                {
+                    "run_id": r["run_id"],
+                    "trained_at": r["trained_at"],
+                    "n_train": r["n_train"],
+                    "n_val": r["n_val"],
+                    "accuracy": r["accuracy"],
+                    "f1_macro": r["f1_macro"],
+                    "f1_weighted": r["f1_weighted"],
+                    "labels": json.loads(r["labels_json"]),
+                    "per_class": json.loads(r["per_class_json"]),
+                    "model_path": r["model_path"],
+                    "notes": r["notes"],
+                }
+            )
+        return results

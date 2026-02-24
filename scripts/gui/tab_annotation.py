@@ -770,6 +770,18 @@ class AnnotationTab:
         self._tooltip(
             _btn_metrics, "Show accuracy and per-class metrics of the trained model"
         )
+        _btn_history = ttk.Button(
+            model_btns, text="History", command=self._on_show_training_history
+        )
+        _btn_history.pack(side="left", padx=3)
+        self._tooltip(
+            _btn_history, "Show all past training runs with accuracy and F1 trends"
+        )
+        _btn_importance = ttk.Button(
+            model_btns, text="Importance", command=self._on_show_feature_importance
+        )
+        _btn_importance.pack(side="left", padx=3)
+        self._tooltip(_btn_importance, "Show feature importance from the trained model")
 
         row += 1
         self._model_status_label = ttk.Label(
@@ -3594,7 +3606,7 @@ class AnnotationTab:
 
                 store = _CS()
                 n_examples = store.build_training_set()
-                if n_examples < 5:
+                if n_examples < 10:
                     self.root.after(
                         0,
                         lambda: self._model_status_label.configure(
@@ -3613,11 +3625,20 @@ class AnnotationTab:
                 metrics = clf.train(str(tmp))
                 self._last_metrics = metrics
 
+                # Record training run in the database
+                try:
+                    store.save_training_run(
+                        metrics, model_path=str(clf.model_path), notes="GUI train"
+                    )
+                except Exception:
+                    pass  # non-critical
+
                 acc = metrics.get("accuracy", 0)
+                f1m = metrics.get("f1_macro", 0)
                 self.root.after(
                     0,
                     lambda: self._model_status_label.configure(
-                        text=f"Model trained — acc {acc:.1%}",
+                        text=f"Model trained — acc {acc:.1%}  F1 {f1m:.1%}",
                         foreground="green",
                     ),
                 )
@@ -3652,6 +3673,73 @@ class AnnotationTab:
         txt = tk.Text(win, wrap="none", font=("Courier", 9))
         txt.pack(fill="both", expand=True, padx=8, pady=8)
         txt.insert("1.0", text)
+        self._make_text_readonly(txt)
+        self._add_copy_menu(txt)
+
+    def _on_show_training_history(self) -> None:
+        """Show a popup with all past training runs."""
+        try:
+            history = self._store.get_training_history()
+        except Exception:
+            history = []
+
+        if not history:
+            messagebox.showinfo("Training History", "No training runs recorded yet.")
+            return
+
+        lines: list[str] = [
+            f"{'Run ID':<14s} {'Date':<22s} {'#Train':>6s} {'#Val':>5s} "
+            f"{'Acc':>7s} {'F1mac':>7s} {'F1wt':>7s} {'Notes':<12s}",
+            "-" * 88,
+        ]
+        for r in history:
+            ts = r["trained_at"][:19].replace("T", " ")
+            lines.append(
+                f"{r['run_id']:<14s} {ts:<22s} {r['n_train']:>6d} {r['n_val']:>5d} "
+                f"{r['accuracy']:>6.1%} {r['f1_macro']:>6.1%} {r['f1_weighted']:>6.1%} "
+                f"{r.get('notes', ''):<12s}"
+            )
+
+        win = tk.Toplevel(self.root)
+        win.title("Training History")
+        win.geometry("700x400")
+        win.transient(self.root)
+
+        txt = tk.Text(win, wrap="none", font=("Courier", 9))
+        txt.pack(fill="both", expand=True, padx=8, pady=8)
+        txt.insert("1.0", "\n".join(lines))
+        self._make_text_readonly(txt)
+        self._add_copy_menu(txt)
+
+    def _on_show_feature_importance(self) -> None:
+        """Show feature importance from the trained model."""
+        if not self._classifier.model_exists():
+            messagebox.showinfo("Feature Importance", "No model trained yet.")
+            return
+
+        importance = self._classifier.get_feature_importance()
+        if not importance:
+            messagebox.showinfo(
+                "Feature Importance", "Could not extract feature importance."
+            )
+            return
+
+        lines: list[str] = [
+            f"{'Feature':<30s} {'Importance':>12s}",
+            "-" * 44,
+        ]
+        for name, imp in importance.items():
+            bar = "█" * max(1, int(imp * 200))
+            lines.append(f"{name:<30s} {imp:>12.6f}  {bar}")
+
+        win = tk.Toplevel(self.root)
+        win.title("Feature Importance")
+        win.geometry("600x500")
+        win.transient(self.root)
+
+        txt = tk.Text(win, wrap="none", font=("Courier", 9))
+        txt.pack(fill="both", expand=True, padx=8, pady=8)
+        txt.insert("1.0", "\n".join(lines))
         self._make_text_readonly(txt)
         self._add_copy_menu(txt)
 
@@ -3719,10 +3807,14 @@ class AnnotationTab:
             doc_id, page = result
             # Look up PDF path from doc_id
             row = self._store._conn.execute(
-                "SELECT pdf_path FROM documents WHERE doc_id = ?", (doc_id,)
+                "SELECT pdf_path, filename FROM documents WHERE doc_id = ?", (doc_id,)
             ).fetchone()
             if row:
-                pdf_path = Path(row[0])
+                pdf_path_str = row["pdf_path"] or row["filename"]
+                pdf_path = Path(pdf_path_str)
+                if not pdf_path.exists():
+                    # Try filename in current directory as fallback
+                    pdf_path = Path(row["filename"])
                 if pdf_path.exists():
                     self.state.set_pdf(pdf_path)
                     self._page_var.set(page)
@@ -3733,7 +3825,7 @@ class AnnotationTab:
                 else:
                     messagebox.showwarning(
                         "File not found",
-                        f"PDF not found: {pdf_path}",
+                        f"PDF not found: {pdf_path_str}",
                     )
             else:
                 messagebox.showwarning("Not Found", f"Document {doc_id} not in DB.")

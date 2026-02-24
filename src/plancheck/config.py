@@ -393,6 +393,16 @@ class GroupingConfig:
     # Minimum detected skew angle (degrees) below which no rotation is applied.
     preprocess_min_rotation: float = 0.01
 
+    # ── ML classifier ─────────────────────────────────────────────────
+    # Path to the trained element classifier model file.
+    ml_model_path: str = "data/element_classifier.pkl"
+    # Minimum confidence to relabel a detection using ML predictions.
+    ml_relabel_confidence: float = 0.8
+    # Enable/disable the ML feedback loop in the pipeline.
+    ml_enabled: bool = True
+    # Minimum training examples required before allowing model training.
+    ml_min_training_examples: int = 10
+
     def __post_init__(self) -> None:
         """Validate field ranges to catch misconfiguration early."""
         # -- Thresholds that must be in [0, 1] --
@@ -416,6 +426,7 @@ class GroupingConfig:
             "overlay_same_line_overlap",
             "tocr_mojibake_threshold",
             "font_metrics_confidence_min",
+            "ml_relabel_confidence",
         ]
         for name in _unit:
             _check_range(name, getattr(self, name), 0.0, 1.0)
@@ -466,6 +477,7 @@ class GroupingConfig:
             "overlay_block_outline_width",
             "overlay_region_outline_width",
             "overlay_span_outline_width",
+            "ml_min_training_examples",
         ]
         for name in _pos_ints:
             val = getattr(self, name)

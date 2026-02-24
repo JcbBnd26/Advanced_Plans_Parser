@@ -7,10 +7,8 @@ from pathlib import Path
 
 import pdfplumber
 
-from plancheck.vocrpp.preprocess import (
-    OcrPreprocessConfig,  # noqa: E402
-    preprocess_image_for_ocr,
-)
+from plancheck.vocrpp.preprocess import OcrPreprocessConfig  # noqa: E402
+from plancheck.vocrpp.preprocess import preprocess_image_for_ocr
 
 
 def render_page_image(pdf_path: Path, page_num: int, resolution: int = 200):

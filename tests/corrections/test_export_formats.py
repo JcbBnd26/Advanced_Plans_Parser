@@ -10,6 +10,7 @@ import pytest
 
 from plancheck.corrections.export_formats import (
     _get_corrected_detections,
+    _get_page_dimensions,
     export_coco,
     export_voc,
 )
@@ -54,6 +55,16 @@ def _make_features() -> dict:
         "avg_chars_per_token": 4.0,
         "zone": "header",
         "neighbor_count": 2,
+        "unique_word_ratio": 0.8,
+        "uppercase_word_frac": 0.4,
+        "avg_word_length": 5.0,
+        "kw_notes_pattern": 0,
+        "kw_header_pattern": 0,
+        "kw_legend_pattern": 0,
+        "kw_abbreviation_pattern": 0,
+        "kw_revision_pattern": 0,
+        "kw_title_block_pattern": 0,
+        "kw_detail_pattern": 0,
     }
 
 
@@ -273,3 +284,37 @@ class TestExportVoc:
 
         xml_files = list(out_dir.glob("*.xml"))
         assert len(xml_files) == 2
+
+    def test_voc_uses_detection_dimensions(self, tmp_path: Path) -> None:
+        """VOC size element should reflect the max detection bbox, not hardcoded values."""
+        store = CorrectionStore(db_path=tmp_path / "test.db")
+        doc_id = _register_doc(store)
+
+        # Detection with a large bbox to set page dimensions
+        det_id = store.save_detection(
+            doc_id=doc_id,
+            page=0,
+            run_id="run_dim",
+            element_type="header",
+            bbox=(0.0, 0.0, 3000.0, 2000.0),
+            text_content="Big page",
+            features=_make_features(),
+        )
+        store.save_correction(
+            doc_id=doc_id,
+            page=0,
+            correction_type="accept",
+            corrected_label="header",
+            corrected_bbox=(0.0, 0.0, 3000.0, 2000.0),
+            detection_id=det_id,
+        )
+
+        out_dir = tmp_path / "voc_dim"
+        export_voc(store, out_dir)
+
+        xml_files = list(out_dir.glob("*.xml"))
+        tree = ET.parse(xml_files[0])
+        root = tree.getroot()
+        size = root.find("size")
+        assert size.find("width").text == "3000"
+        assert size.find("height").text == "2000"

@@ -78,8 +78,21 @@ def compute_metrics(
     correct = sum(cm[i][i] for i in range(n_labels))
     accuracy = correct / total if total > 0 else 0.0
 
+    # ── Macro & weighted F1 ────────────────────────────────────────
+    f1_values = [per_class[l]["f1"] for l in labels]
+    supports = [per_class[l]["support"] for l in labels]
+    f1_macro = sum(f1_values) / len(f1_values) if f1_values else 0.0
+    total_support = sum(supports)
+    f1_weighted = (
+        sum(f * s for f, s in zip(f1_values, supports)) / total_support
+        if total_support > 0
+        else 0.0
+    )
+
     return {
         "accuracy": round(accuracy, 4),
+        "f1_macro": round(f1_macro, 4),
+        "f1_weighted": round(f1_weighted, 4),
         "per_class": per_class,
         "confusion_matrix": cm,
         "labels": labels,
@@ -103,6 +116,10 @@ def format_metrics_table(metrics: dict) -> str:
     lines.append(
         f"Accuracy: {metrics['accuracy']:.2%}  (n={sum(m['support'] for m in metrics['per_class'].values())})"
     )
+    if "f1_macro" in metrics:
+        lines.append(
+            f"F1 Macro: {metrics['f1_macro']:.2%}   F1 Weighted: {metrics['f1_weighted']:.2%}"
+        )
     lines.append("")
 
     # Header

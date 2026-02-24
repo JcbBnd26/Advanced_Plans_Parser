@@ -100,6 +100,31 @@ class TestComputeMetrics:
         assert p["precision"] == pytest.approx(2 / 3, abs=1e-3)
         assert p["recall"] == pytest.approx(2 / 3, abs=1e-3)
 
+    def test_f1_macro_present(self) -> None:
+        m = compute_metrics(["a", "b"], ["a", "b"])
+        assert "f1_macro" in m
+        assert "f1_weighted" in m
+
+    def test_f1_macro_perfect(self) -> None:
+        m = compute_metrics(["a", "b", "c"], ["a", "b", "c"])
+        assert m["f1_macro"] == 1.0
+        assert m["f1_weighted"] == 1.0
+
+    def test_f1_macro_all_wrong(self) -> None:
+        m = compute_metrics(["a", "a", "a"], ["b", "b", "b"])
+        assert m["f1_macro"] == 0.0
+        assert m["f1_weighted"] == 0.0
+
+    def test_f1_weighted_accounts_for_support(self) -> None:
+        """Weighted F1 should differ from macro when class sizes differ."""
+        y_true = ["a", "a", "a", "a", "b"]
+        y_pred = ["a", "a", "a", "a", "a"]
+        m = compute_metrics(y_true, y_pred)
+        # Class 'a': perfect, class 'b': 0 recall → F1=0
+        # Macro: (1.0 + 0) / 2 = 0.5
+        # Weighted: (1.0*4 + 0*1) / 5 = 0.8 — but precision of 'a' isn't 1.0
+        assert m["f1_macro"] < m["f1_weighted"]
+
 
 # ---------------------------------------------------------------------------
 # format_metrics_table
@@ -128,3 +153,9 @@ class TestFormatMetricsTable:
         m = compute_metrics(["a", "b", "a"], ["a", "b", "b"])
         text = format_metrics_table(m)
         assert "Confusion matrix" in text
+
+    def test_contains_f1_macro(self) -> None:
+        m = compute_metrics(["a", "b"], ["a", "b"])
+        text = format_metrics_table(m)
+        assert "F1 Macro" in text
+        assert "F1 Weighted" in text

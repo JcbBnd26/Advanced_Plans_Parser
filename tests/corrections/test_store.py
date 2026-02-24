@@ -326,3 +326,65 @@ class TestPolygonPersistence:
         dets = tmp_store.get_detections_for_page(doc_id, page=0)
         assert dets[0]["polygon"] == new_poly
         assert dets[0]["bbox"] == (5.0, 5.0, 45.0, 45.0)
+
+
+class TestTrainingRuns:
+    """Tests for the training_runs table and related methods."""
+
+    def test_save_and_retrieve_training_run(self, tmp_store: CorrectionStore) -> None:
+        metrics = {
+            "accuracy": 0.85,
+            "f1_macro": 0.82,
+            "f1_weighted": 0.84,
+            "n_train": 100,
+            "n_val": 20,
+            "labels": ["header", "notes_column"],
+            "per_class": {
+                "header": {"precision": 0.9, "recall": 0.8, "f1": 0.85, "support": 10},
+                "notes_column": {
+                    "precision": 0.8,
+                    "recall": 0.9,
+                    "f1": 0.85,
+                    "support": 10,
+                },
+            },
+        }
+        run_id = tmp_store.save_training_run(
+            metrics, model_path="model.pkl", notes="test run"
+        )
+        assert run_id.startswith("run_")
+
+        history = tmp_store.get_training_history()
+        assert len(history) == 1
+        assert history[0]["run_id"] == run_id
+        assert history[0]["accuracy"] == 0.85
+        assert history[0]["f1_macro"] == 0.82
+        assert history[0]["f1_weighted"] == 0.84
+        assert history[0]["n_train"] == 100
+        assert history[0]["n_val"] == 20
+        assert history[0]["labels"] == ["header", "notes_column"]
+        assert "header" in history[0]["per_class"]
+        assert history[0]["model_path"] == "model.pkl"
+        assert history[0]["notes"] == "test run"
+
+    def test_multiple_runs_ordered_newest_first(
+        self, tmp_store: CorrectionStore
+    ) -> None:
+        m1 = {"accuracy": 0.7, "n_train": 10, "n_val": 5, "labels": [], "per_class": {}}
+        m2 = {
+            "accuracy": 0.9,
+            "n_train": 50,
+            "n_val": 10,
+            "labels": [],
+            "per_class": {},
+        }
+        tmp_store.save_training_run(m1, notes="first")
+        tmp_store.save_training_run(m2, notes="second")
+
+        history = tmp_store.get_training_history()
+        assert len(history) == 2
+        assert history[0]["notes"] == "second"
+        assert history[1]["notes"] == "first"
+
+    def test_empty_history(self, tmp_store: CorrectionStore) -> None:
+        assert tmp_store.get_training_history() == []

@@ -16,8 +16,8 @@ import json
 import sys
 from pathlib import Path
 
-from plancheck.grouping.font_metrics import (  # noqa: E402
-    FontMetricsAnalyzer,
+from plancheck.grouping.font_metrics import (
+    FontMetricsAnalyzer,  # noqa: E402
     VisualMetricsAnalyzer,
 )
 

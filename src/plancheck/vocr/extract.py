@@ -214,7 +214,9 @@ def extract_ocr_tokens(
 
     log.info(
         "  OCR Stage 1: image %dx%d px (%.0f eff. DPI), %s",
-        img_w, img_h, eff_dpi,
+        img_w,
+        img_h,
+        eff_dpi,
         f"tiling {n_tiles} tiles" if need_tile else "single pass",
     )
 
@@ -288,7 +290,13 @@ def extract_ocr_tokens(
                     )
                     log.info(
                         "    tile %d/%d (%d,%d)-(%d,%d): %d tokens",
-                        tile_idx, n_tiles, x0, y0, x1, y1, len(t_tokens),
+                        tile_idx,
+                        n_tiles,
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        len(t_tokens),
                     )
                     all_tokens.extend(t_tokens)
                     all_confs.extend(t_confs)
@@ -298,7 +306,9 @@ def extract_ocr_tokens(
             all_tokens, all_confs = _dedup_tiles(all_tokens, all_confs, tile_dedup_iou)
             if pre_dedup != len(all_tokens):
                 log.info(
-                    "    tile dedup: %d -> %d tokens", pre_dedup, len(all_tokens),
+                    "    tile dedup: %d -> %d tokens",
+                    pre_dedup,
+                    len(all_tokens),
                 )
 
     except (RuntimeError, ValueError, MemoryError, OSError) as e:
@@ -329,11 +339,15 @@ def extract_ocr_tokens(
         if n_filtered:
             log.info(
                 "  OCR Stage 1: filtered %d tokens (min_len=%d, strip_ws=%s)",
-                n_filtered, min_text_len, strip_ws,
+                n_filtered,
+                min_text_len,
+                strip_ws,
             )
 
     log.info(
-        "  OCR Stage 1: %d tokens extracted in %.1fs", len(all_tokens), elapsed,
+        "  OCR Stage 1: %d tokens extracted in %.1fs",
+        len(all_tokens),
+        elapsed,
     )
 
     return all_tokens, all_confs

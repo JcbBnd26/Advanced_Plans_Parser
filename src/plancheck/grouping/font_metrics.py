@@ -628,5 +628,3 @@ class VisualMetricsAnalyzer:
             inflation_factor=inflation_factor,
             overhang_percent=overhang_percent,
         )
-
-

@@ -11,11 +11,10 @@ Usage:
 Page is zero-based.  Writes to the most recent run's overlays/ folder.
 """
 
-import sys
-from pathlib import Path
-
 import argparse
 import json
+import sys
+from pathlib import Path
 
 import pdfplumber
 from PIL import ImageDraw, ImageFont
@@ -25,7 +24,8 @@ from plancheck.export.page_data import deserialize_page, serialize_page
 from plancheck.tocr.extract import extract_tocr_from_page
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "utils"))
-from run_utils import latest_overlays_dir, scale as _scale
+from run_utils import latest_overlays_dir
+from run_utils import scale as _scale
 
 
 def main() -> None:

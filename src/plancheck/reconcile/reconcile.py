@@ -929,8 +929,14 @@ def reconcile_ocr(
     log.info(
         "  OCR reconcile: %d OCR tokens -> %d with symbol -> %d accepted (%s) "
         "[candidates: %d gen, %d ok, %d rej, %d filtered]",
-        len(ocr_tokens), with_symbol, len(added), symbol_summary,
-        n_candidates, n_accepted_c, n_rejected_c, n_filtered_non_numeric,
+        len(ocr_tokens),
+        with_symbol,
+        len(added),
+        symbol_summary,
+        n_candidates,
+        n_accepted_c,
+        n_rejected_c,
+        n_filtered_non_numeric,
     )
 
     return result

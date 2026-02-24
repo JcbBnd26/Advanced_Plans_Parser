@@ -70,6 +70,17 @@ REQUIRED_KEYS = {
     "avg_chars_per_token",
     "zone",
     "neighbor_count",
+    # Text-content features (v2)
+    "unique_word_ratio",
+    "uppercase_word_frac",
+    "avg_word_length",
+    "kw_notes_pattern",
+    "kw_header_pattern",
+    "kw_legend_pattern",
+    "kw_abbreviation_pattern",
+    "kw_revision_pattern",
+    "kw_title_block_pattern",
+    "kw_detail_pattern",
 }
 
 

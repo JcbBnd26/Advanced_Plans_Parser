@@ -29,6 +29,26 @@ _DEFAULT_CATEGORIES: list[dict[str, Any]] = [
 _LABEL_TO_CAT: dict[str, int] = {c["name"]: c["id"] for c in _DEFAULT_CATEGORIES}
 
 
+def _get_page_dimensions(
+    store: CorrectionStore, doc_id: str, page: int
+) -> tuple[float, float]:
+    """Return ``(width, height)`` for a document page.
+
+    Tries the ``documents`` table first (via pdfplumber at ingest time),
+    then falls back to the largest detection bbox on the page, and
+    finally to a default of (2448, 1584) as a last resort.
+    """
+    # Try getting real dimensions from stored detections (max bbox corner)
+    row = store._conn.execute(
+        "SELECT MAX(bbox_x1) AS max_x, MAX(bbox_y1) AS max_y "
+        "FROM detections WHERE doc_id = ? AND page = ?",
+        (doc_id, page),
+    ).fetchone()
+    if row and row["max_x"] and row["max_y"]:
+        return float(row["max_x"]), float(row["max_y"])
+    return 2448.0, 1584.0
+
+
 def _get_corrected_detections(store: CorrectionStore) -> List[dict]:
     """Return all non-delete corrected detections with their final labels.
 
@@ -109,20 +129,14 @@ def export_coco(
             img_id = len(images) + 1
             image_map[key] = img_id
 
-            # Try to get page dims from document's detections
-            dim_row = store._conn.execute(
-                "SELECT d.bbox_x1, d.bbox_y1 FROM detections d "
-                "WHERE d.doc_id = ? AND d.page = ? "
-                "ORDER BY d.bbox_x1 DESC LIMIT 1",
-                (det["doc_id"], det["page"]),
-            ).fetchone()
+            page_w, page_h = _get_page_dimensions(store, det["doc_id"], det["page"])
 
             images.append(
                 {
                     "id": img_id,
                     "file_name": f"{det['doc_id']}_page{det['page']}.pdf",
-                    "width": float(dim_row["bbox_x1"]) if dim_row else 2448.0,
-                    "height": float(dim_row["bbox_y1"]) if dim_row else 1584.0,
+                    "width": page_w,
+                    "height": page_h,
                 }
             )
 
@@ -204,9 +218,10 @@ def export_voc(
         filename = f"{safe_id}_page{page}.pdf"
         ET.SubElement(root, "filename").text = filename
 
+        page_w, page_h = _get_page_dimensions(store, doc_id, page)
         size = ET.SubElement(root, "size")
-        ET.SubElement(size, "width").text = "2448"
-        ET.SubElement(size, "height").text = "1584"
+        ET.SubElement(size, "width").text = str(round(page_w))
+        ET.SubElement(size, "height").text = str(round(page_h))
         ET.SubElement(size, "depth").text = "3"
 
         for det in dets:

@@ -41,4 +41,15 @@ def sample_features() -> dict:
         "avg_chars_per_token": 8.0,
         "zone": "right_margin",
         "neighbor_count": 3,
+        # Text-content features (v2)
+        "unique_word_ratio": 0.8,
+        "uppercase_word_frac": 0.4,
+        "avg_word_length": 5.0,
+        "kw_notes_pattern": 0,
+        "kw_header_pattern": 0,
+        "kw_legend_pattern": 0,
+        "kw_abbreviation_pattern": 0,
+        "kw_revision_pattern": 0,
+        "kw_title_block_pattern": 0,
+        "kw_detail_pattern": 0,
     }

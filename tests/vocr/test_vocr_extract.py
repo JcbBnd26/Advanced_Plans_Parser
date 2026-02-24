@@ -9,7 +9,7 @@ from PIL import Image
 
 from plancheck.config import GroupingConfig
 from plancheck.models import GlyphBox
-from plancheck.vocr.extract import _dedup_tiles, iou, _ocr_one_tile
+from plancheck.vocr.extract import _dedup_tiles, _ocr_one_tile, iou
 
 # ── IoU helper ─────────────────────────────────────────────────────────
 

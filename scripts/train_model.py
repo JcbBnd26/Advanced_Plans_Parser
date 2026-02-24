@@ -94,6 +94,15 @@ def main() -> int:
     print(f"  Training examples: {metrics['n_train']}")
     print(f"  Validation examples: {metrics['n_val']}")
 
+    # 6. Record training run in the database
+    try:
+        run_id = store.save_training_run(
+            metrics, model_path=str(args.model), notes="CLI train"
+        )
+        print(f"  Training run recorded: {run_id}")
+    except Exception as exc:
+        print(f"Warning: could not record training run: {exc}")
+
     # 6. Optional export
     if args.format:
         from plancheck.corrections.export_formats import export_coco, export_voc
