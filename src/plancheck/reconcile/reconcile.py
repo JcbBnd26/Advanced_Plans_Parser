@@ -19,9 +19,9 @@ from typing import List, Optional, Tuple
 
 from ..config import GroupingConfig
 from ..models import GlyphBox
-from ..vocr.extract import _extract_ocr_tokens, _iou
+from ..vocr.extract import extract_ocr_tokens, iou
 
-log = logging.getLogger("plancheck.ocr_reconcile")
+log = logging.getLogger(__name__)
 
 # ── Default thresholds (match GroupingConfig defaults) ─────────────────
 _DEFAULT_IOU_THRESHOLD = 0.15
@@ -74,7 +74,7 @@ class SymbolCandidate:
 
 
 # ── Geometry helpers ───────────────────────────────────────────────────
-# _iou is imported from ..vocr.extract (canonical copy lives there)
+# iou is imported from ..vocr.extract (canonical copy lives there)
 
 
 def _overlap_ratio(a: GlyphBox, b: GlyphBox) -> float:
@@ -101,7 +101,7 @@ def _overlaps_existing(
 ) -> bool:
     """Return True if *candidate* overlaps any existing token too much."""
     for t in tokens:
-        if _iou(candidate, t) > iou_thresh:
+        if iou(candidate, t) > iou_thresh:
             return True
         if _overlap_ratio(candidate, t) > cov_thresh:
             return True
@@ -126,9 +126,9 @@ def _find_best_match(
     ocr_cx, ocr_cy = _center(ocr_box)
 
     for pdf_box in pdf_tokens:
-        iou = _iou(ocr_box, pdf_box)
-        if iou > best_iou:
-            best_iou = iou
+        score = iou(ocr_box, pdf_box)
+        if score > best_iou:
+            best_iou = score
             best_box = pdf_box
 
     if best_iou >= cfg.ocr_reconcile_iou_threshold:
@@ -511,7 +511,7 @@ def _accept_candidates(
         for t in all_tokens:
             if id(t) in exclude_ids:
                 continue
-            if _iou(cand_box, t) > _iou_thr or _overlap_ratio(cand_box, t) > _cov_thr:
+            if iou(cand_box, t) > _iou_thr or _overlap_ratio(cand_box, t) > _cov_thr:
                 overlap_hit = True
                 break
 
@@ -849,7 +849,7 @@ def reconcile_ocr(
         if ocr_confs is None:
             ocr_confs = [1.0] * len(ocr_tokens)
     else:
-        ocr_tokens, ocr_confs = _extract_ocr_tokens(
+        ocr_tokens, ocr_confs = extract_ocr_tokens(
             page_image,
             page_num,
             page_width,
@@ -926,12 +926,11 @@ def reconcile_ocr(
         n_rejected_c,
         n_filtered_non_numeric,
     )
-    print(
-        f"  OCR reconcile: {len(ocr_tokens)} OCR tokens -> "
-        f"{with_symbol} with symbol -> {len(added)} accepted ({symbol_summary}) "
-        f"[candidates: {n_candidates} gen, {n_accepted_c} ok, {n_rejected_c} rej, "
-        f"{n_filtered_non_numeric} filtered]",
-        flush=True,
+    log.info(
+        "  OCR reconcile: %d OCR tokens -> %d with symbol -> %d accepted (%s) "
+        "[candidates: %d gen, %d ok, %d rej, %d filtered]",
+        len(ocr_tokens), with_symbol, len(added), symbol_summary,
+        n_candidates, n_accepted_c, n_rejected_c, n_filtered_non_numeric,
     )
 
     return result

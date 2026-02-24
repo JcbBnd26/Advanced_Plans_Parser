@@ -1,8 +1,10 @@
 import argparse
 import json
 import shutil
-from datetime import datetime
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "utils"))
 
 from plancheck import (
     BlockCluster,
@@ -23,15 +25,7 @@ from plancheck.grouping import (
     mark_headers,
     mark_notes,
 )
-
-
-def make_run_dir(name: str | None = None) -> Path:
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"run_{stamp}" if not name else f"run_{stamp}_{name}"
-    run_dir = Path("runs") / run_name
-    for sub in ["inputs", "artifacts", "overlays", "exports", "logs"]:
-        (run_dir / sub).mkdir(parents=True, exist_ok=True)
-    return run_dir
+from run_utils import make_run_dir
 
 
 def page_boxes(pdf_path: Path, page_num: int) -> tuple[list[GlyphBox], float, float]:
@@ -86,7 +80,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    run_dir = make_run_dir(args.run_name)
+    run_dir = make_run_dir(label=args.run_name)
 
     # Copy PDF into run inputs for provenance.
     copied_pdf = run_dir / "inputs" / args.pdf.name

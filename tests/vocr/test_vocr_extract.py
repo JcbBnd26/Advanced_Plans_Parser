@@ -9,7 +9,7 @@ from PIL import Image
 
 from plancheck.config import GroupingConfig
 from plancheck.models import GlyphBox
-from plancheck.vocr.extract import _dedup_tiles, _iou, _ocr_one_tile
+from plancheck.vocr.extract import _dedup_tiles, iou, _ocr_one_tile
 
 # ── IoU helper ─────────────────────────────────────────────────────────
 
@@ -18,29 +18,29 @@ class TestIou:
     def test_identical_boxes(self):
         a = GlyphBox(page=0, x0=0, y0=0, x1=10, y1=10)
         b = GlyphBox(page=0, x0=0, y0=0, x1=10, y1=10)
-        assert _iou(a, b) == pytest.approx(1.0)
+        assert iou(a, b) == pytest.approx(1.0)
 
     def test_no_overlap(self):
         a = GlyphBox(page=0, x0=0, y0=0, x1=10, y1=10)
         b = GlyphBox(page=0, x0=20, y0=20, x1=30, y1=30)
-        assert _iou(a, b) == 0.0
+        assert iou(a, b) == 0.0
 
     def test_partial_overlap(self):
         a = GlyphBox(page=0, x0=0, y0=0, x1=10, y1=10)
         b = GlyphBox(page=0, x0=5, y0=5, x1=15, y1=15)
         # Intersection = 5×5 = 25, Union = 100 + 100 - 25 = 175
-        assert _iou(a, b) == pytest.approx(25.0 / 175.0, rel=1e-3)
+        assert iou(a, b) == pytest.approx(25.0 / 175.0, rel=1e-3)
 
     def test_one_inside_another(self):
         a = GlyphBox(page=0, x0=0, y0=0, x1=20, y1=20)
         b = GlyphBox(page=0, x0=5, y0=5, x1=10, y1=10)
         # Intersection = 25, Union = 400 + 25 - 25 = 400
-        assert _iou(a, b) == pytest.approx(25.0 / 400.0, rel=1e-3)
+        assert iou(a, b) == pytest.approx(25.0 / 400.0, rel=1e-3)
 
     def test_zero_area_boxes(self):
         a = GlyphBox(page=0, x0=0, y0=0, x1=0, y1=10)
         b = GlyphBox(page=0, x0=0, y0=0, x1=10, y1=10)
-        assert _iou(a, b) == 0.0
+        assert iou(a, b) == 0.0
 
 
 # ── Tile dedup ─────────────────────────────────────────────────────────
@@ -311,9 +311,9 @@ class TestExtractVocrTokens:
 
         return predict
 
-    @patch("plancheck.vocr.extract._extract_ocr_tokens")
+    @patch("plancheck.vocr.extract.extract_ocr_tokens")
     def test_extract_vocr_tokens_delegates(self, mock_inner):
-        """extract_vocr_tokens should delegate to _extract_ocr_tokens."""
+        """extract_vocr_tokens should delegate to extract_ocr_tokens."""
         from plancheck.vocr.extract import extract_vocr_tokens
 
         mock_inner.return_value = ([], [])

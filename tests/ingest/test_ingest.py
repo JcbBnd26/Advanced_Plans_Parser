@@ -15,6 +15,12 @@ from plancheck.ingest import (
     ingest_pdf,
     render_page_image,
 )
+from plancheck.ingest.ingest import (
+    extract_page_words,
+    extract_text_in_bbox,
+    extract_text_in_polygon,
+    point_in_polygon,
+)
 
 # ── PageInfo unit tests ────────────────────────────────────────────────
 
@@ -297,3 +303,260 @@ class TestRenderPageImage:
             render_page_image(Path("dummy.pdf"), 0, resolution=300)
 
         mock_page.to_image.assert_called_once_with(resolution=300)
+
+
+# ── extract_text_in_bbox tests ─────────────────────────────────────────
+
+
+class TestExtractTextInBbox:
+    """Tests for extract_text_in_bbox."""
+
+    def test_extracts_text_from_cropped_region(self):
+        mock_cropped = MagicMock()
+        mock_cropped.extract_text.return_value = "GENERAL NOTES"
+        mock_page = MagicMock()
+        mock_page.width = 612.0
+        mock_page.height = 792.0
+        mock_page.crop.return_value = mock_cropped
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            text = extract_text_in_bbox(Path("dummy.pdf"), 0, (50, 100, 200, 300))
+
+        assert text == "GENERAL NOTES"
+        mock_page.crop.assert_called_once_with((50, 100, 200, 300))
+
+    def test_returns_empty_on_failure(self):
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = MagicMock(side_effect=Exception("bad"))
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            text = extract_text_in_bbox(Path("dummy.pdf"), 0, (0, 0, 100, 100))
+
+        assert text == ""
+
+    def test_clamps_bbox_to_page_bounds(self):
+        mock_cropped = MagicMock()
+        mock_cropped.extract_text.return_value = "clipped text"
+        mock_page = MagicMock()
+        mock_page.width = 100.0
+        mock_page.height = 100.0
+        mock_page.crop.return_value = mock_cropped
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            text = extract_text_in_bbox(Path("dummy.pdf"), 0, (-10, -10, 200, 200))
+
+        # Should clamp to (0, 0, 100, 100)
+        mock_page.crop.assert_called_once_with((0, 0, 100.0, 100.0))
+        assert text == "clipped text"
+
+    def test_returns_empty_for_zero_area_bbox(self):
+        mock_page = MagicMock()
+        mock_page.width = 100.0
+        mock_page.height = 100.0
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            text = extract_text_in_bbox(Path("dummy.pdf"), 0, (50, 50, 50, 50))
+
+        assert text == ""
+
+    def test_strips_whitespace(self):
+        mock_cropped = MagicMock()
+        mock_cropped.extract_text.return_value = "  some text  \n  "
+        mock_page = MagicMock()
+        mock_page.width = 612.0
+        mock_page.height = 792.0
+        mock_page.crop.return_value = mock_cropped
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            text = extract_text_in_bbox(Path("dummy.pdf"), 0, (0, 0, 100, 100))
+
+        assert text == "some text"
+
+    def test_returns_empty_when_none(self):
+        mock_cropped = MagicMock()
+        mock_cropped.extract_text.return_value = None
+        mock_page = MagicMock()
+        mock_page.width = 612.0
+        mock_page.height = 792.0
+        mock_page.crop.return_value = mock_cropped
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            text = extract_text_in_bbox(Path("dummy.pdf"), 0, (0, 0, 100, 100))
+
+        assert text == ""
+
+
+# ── extract_page_words tests ──────────────────────────────────────────
+
+
+class TestExtractPageWords:
+    """Tests for extract_page_words."""
+
+    def test_returns_word_dicts(self) -> None:
+        mock_page = MagicMock()
+        mock_page.extract_words.return_value = [
+            {"x0": 10, "top": 20, "x1": 50, "bottom": 35, "text": "hello"},
+            {"x0": 60, "top": 20, "x1": 100, "bottom": 35, "text": "world"},
+        ]
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            words = extract_page_words(Path("dummy.pdf"), 0)
+
+        assert len(words) == 2
+        assert words[0]["text"] == "hello"
+        assert words[1]["x0"] == 60
+
+    def test_empty_page(self) -> None:
+        mock_page = MagicMock()
+        mock_page.extract_words.return_value = []
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            words = extract_page_words(Path("dummy.pdf"), 0)
+
+        assert words == []
+
+    def test_returns_empty_on_error(self) -> None:
+        with patch(
+            "plancheck.ingest.ingest.pdfplumber.open",
+            side_effect=RuntimeError("bad pdf"),
+        ):
+            words = extract_page_words(Path("dummy.pdf"), 0)
+
+        assert words == []
+
+
+# ── point_in_polygon tests ────────────────────────────────────────────
+
+
+class TestPointInPolygon:
+    """Tests for point_in_polygon ray-casting."""
+
+    SQUARE = [(0, 0), (100, 0), (100, 100), (0, 100)]
+
+    def test_inside(self) -> None:
+        assert point_in_polygon(50, 50, self.SQUARE) is True
+
+    def test_outside(self) -> None:
+        assert point_in_polygon(150, 50, self.SQUARE) is False
+
+    def test_outside_above(self) -> None:
+        assert point_in_polygon(50, -10, self.SQUARE) is False
+
+    def test_l_shape(self) -> None:
+        l_shape = [(0, 0), (50, 0), (50, 50), (100, 50), (100, 100), (0, 100)]
+        # Inside the lower right part
+        assert point_in_polygon(75, 75, l_shape) is True
+        # In the upper right cutout
+        assert point_in_polygon(75, 25, l_shape) is False
+
+
+# ── extract_text_in_polygon tests ─────────────────────────────────────
+
+
+class TestExtractTextInPolygon:
+    """Tests for extract_text_in_polygon."""
+
+    def _make_mock_pdf(self, words: list[dict]) -> MagicMock:
+        mock_cropped = MagicMock()
+        mock_cropped.extract_words.return_value = words
+        mock_page = MagicMock()
+        mock_page.width = 612.0
+        mock_page.height = 792.0
+        mock_page.crop.return_value = mock_cropped
+        mock_pdf = MagicMock()
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        return mock_pdf
+
+    def test_filters_by_polygon(self) -> None:
+        """Words outside the polygon should be excluded."""
+        words = [
+            {"x0": 10, "x1": 40, "top": 10, "bottom": 20, "text": "inside"},
+            {"x0": 200, "x1": 250, "top": 10, "bottom": 20, "text": "outside"},
+        ]
+        polygon = [(0, 0), (100, 0), (100, 100), (0, 100)]
+        mock_pdf = self._make_mock_pdf(words)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            text = extract_text_in_polygon(Path("test.pdf"), 0, polygon)
+
+        assert text == "inside"
+
+    def test_l_shape_excludes_cutout(self) -> None:
+        """Words in the cutout area of an L-shape should be excluded."""
+        words = [
+            {
+                "x0": 10,
+                "x1": 40,
+                "top": 70,
+                "bottom": 80,
+                "text": "hello",
+            },  # inside lower left
+            {
+                "x0": 70,
+                "x1": 90,
+                "top": 10,
+                "bottom": 20,
+                "text": "cutout",
+            },  # upper right cutout
+        ]
+        l_shape = [(0, 0), (50, 0), (50, 50), (100, 50), (100, 100), (0, 100)]
+        mock_pdf = self._make_mock_pdf(words)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            text = extract_text_in_polygon(Path("test.pdf"), 0, l_shape)
+
+        assert text == "hello"
+
+    def test_returns_empty_on_error(self) -> None:
+        with patch(
+            "plancheck.ingest.ingest.pdfplumber.open",
+            side_effect=RuntimeError("fail"),
+        ):
+            text = extract_text_in_polygon(
+                Path("test.pdf"), 0, [(0, 0), (10, 0), (10, 10)]
+            )
+        assert text == ""
+
+    def test_all_words_inside(self) -> None:
+        words = [
+            {"x0": 10, "x1": 30, "top": 10, "bottom": 20, "text": "a"},
+            {"x0": 40, "x1": 60, "top": 10, "bottom": 20, "text": "b"},
+        ]
+        polygon = [(0, 0), (100, 0), (100, 100), (0, 100)]
+        mock_pdf = self._make_mock_pdf(words)
+
+        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+            text = extract_text_in_polygon(Path("test.pdf"), 0, polygon)
+
+        assert text == "a b"

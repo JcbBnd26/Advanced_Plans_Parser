@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 
 import pdfplumber
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from plancheck.vocrpp.preprocess import (
     OcrPreprocessConfig,  # noqa: E402

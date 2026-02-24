@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import tkinter as tk
 import webbrowser
 from datetime import datetime
@@ -420,9 +421,10 @@ class RunsTab:
 
     def _open_folder(self) -> None:
         if self._current_run_dir and self._current_run_dir.is_dir():
-            os.startfile(self._current_run_dir)
+            if sys.platform == "win32":
+                os.startfile(self._current_run_dir)
         else:
-            if self._runs_root.is_dir():
+            if self._runs_root.is_dir() and sys.platform == "win32":
                 os.startfile(self._runs_root)
 
     def _open_html_report(self) -> None:
@@ -491,14 +493,16 @@ class RunsTab:
         suffix = path.suffix.lower()
         if suffix in (".png", ".jpg", ".jpeg", ".bmp"):
             # Open in default image viewer
-            os.startfile(path)
+            if sys.platform == "win32":
+                os.startfile(path)
         elif suffix == ".html":
             webbrowser.open(str(path))
         elif suffix in (".json", ".csv", ".txt"):
             # Show in a popup text viewer
             self._show_text_viewer(path)
         else:
-            os.startfile(path)
+            if sys.platform == "win32":
+                os.startfile(path)
 
     def _show_text_viewer(self, path: Path) -> None:
         """Show a file in a popup text window."""

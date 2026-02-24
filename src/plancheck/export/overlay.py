@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -63,6 +63,35 @@ def _get_color(color_overrides: Optional[Dict[str, tuple]], key: str) -> tuple |
 def _scale_point(x: float, y: float, scale: float) -> Tuple[float, float]:
     """Scale (x, y) by *scale* for overlay rendering."""
     return (x * scale, y * scale)
+
+
+def _draw_rect_or_polygon(
+    draw: ImageDraw.ImageDraw,
+    obj: Any,
+    bbox: Tuple[float, float, float, float],
+    scale: float,
+    outline: tuple,
+    width: int,
+) -> None:
+    """Draw a rectangle or polygon outline, depending on whether *obj* has a ``polygon`` attribute.
+
+    If ``obj.polygon`` is a non-empty list of ``(x, y)`` vertices the
+    shape is drawn as a polygon; otherwise a plain axis-aligned rectangle
+    is drawn from *bbox*.
+    """
+    poly = getattr(obj, "polygon", None)
+    if poly:
+        scaled = [(px * scale, py * scale) for px, py in poly]
+        draw.polygon(scaled, outline=outline, fill=None)
+        # Pillow's polygon() doesn't support `width`, so overlay the
+        # outline multiple times for thicker strokes.
+        for _w in range(1, width):
+            draw.polygon(scaled, outline=outline, fill=None)
+    else:
+        x0, y0, x1, y1 = bbox
+        sx0, sy0 = _scale_point(x0, y0, scale)
+        sx1, sy1 = _scale_point(x1, y1, scale)
+        draw.rectangle([(sx0, sy0), (sx1, sy1)], outline=outline, width=width)
 
 
 # Label prefixes for each element type

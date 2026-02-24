@@ -1,0 +1,288 @@
+{
+    "version": "1.0",
+    "label_registry": [
+        {
+            "label": "notes_column",
+            "display_name": "General Notes Column",
+            "color": "#1ea01e",
+            "description": "Numbered or bulleted construction notes block. Contains requirements, material callouts, or code references. Usually in right margin or bottom zone.",
+            "aliases": [
+                "notes",
+                "general notes",
+                "keynotes"
+            ],
+            "expected_zones": [
+                "right_margin",
+                "bottom_band"
+            ],
+            "text_patterns": [
+                "^\\d+\\.",
+                "^•",
+                "SHALL",
+                "PER CODE",
+                "ALL.*SHALL"
+            ],
+            "typical_font_size_range": [
+                6.0,
+                10.0
+            ],
+            "typical_is_all_caps": false,
+            "distinguishing_features": [
+                "high token count",
+                "sequential numbering",
+                "small font"
+            ],
+            "commonly_confused_with": [
+                "header",
+                "legend"
+            ]
+        },
+        {
+            "label": "header",
+            "display_name": "Section or View Header",
+            "color": "#dc1e1e",
+            "description": "Bold large-font label identifying a drawing view, section, or major sheet area.",
+            "aliases": [
+                "title",
+                "view label",
+                "section title"
+            ],
+            "expected_zones": [
+                "header_band",
+                "drawing_area"
+            ],
+            "text_patterns": [
+                "^[A-Z\\s/\\-]+$",
+                "PLAN",
+                "ELEVATION",
+                "SECTION",
+                "DETAIL"
+            ],
+            "typical_font_size_range": [
+                10.0,
+                24.0
+            ],
+            "typical_is_all_caps": true,
+            "distinguishing_features": [
+                "short token count",
+                "large font",
+                "bold"
+            ],
+            "commonly_confused_with": [
+                "notes_column",
+                "misc_title"
+            ]
+        },
+        {
+            "label": "abbreviations",
+            "display_name": "Abbreviations Table",
+            "color": "#e05096",
+            "description": "Two-column table of short codes and their full meanings. Header typically says ABBREVIATIONS.",
+            "aliases": [
+                "abbrev",
+                "abbreviations list",
+                "abbr"
+            ],
+            "expected_zones": [
+                "right_margin",
+                "bottom_band",
+                "drawing_area"
+            ],
+            "text_patterns": [
+                "ABBREVIATION",
+                "ABBREV",
+                "[A-Z]{2,6}\\s*[=:]"
+            ],
+            "typical_font_size_range": [
+                6.0,
+                9.0
+            ],
+            "typical_is_all_caps": true,
+            "distinguishing_features": [
+                "two-column layout",
+                "short codes",
+                "equal or colon delimiters"
+            ],
+            "commonly_confused_with": [
+                "legend",
+                "notes_column"
+            ]
+        },
+        {
+            "label": "legend",
+            "display_name": "Legend / Symbol Key",
+            "color": "#009682",
+            "description": "Symbol-description pairs. Left column contains graphic symbols; right column contains text descriptions.",
+            "aliases": [
+                "symbol key",
+                "key",
+                "legend table"
+            ],
+            "expected_zones": [
+                "right_margin",
+                "bottom_band"
+            ],
+            "text_patterns": [
+                "LEGEND",
+                "SYMBOL",
+                "KEY"
+            ],
+            "typical_font_size_range": [
+                6.0,
+                10.0
+            ],
+            "typical_is_all_caps": false,
+            "distinguishing_features": [
+                "graphic elements paired with text",
+                "moderate token count"
+            ],
+            "commonly_confused_with": [
+                "abbreviations",
+                "notes_column"
+            ]
+        },
+        {
+            "label": "revision",
+            "display_name": "Revision Block",
+            "color": "#dcc800",
+            "description": "Table recording revision history: revision number, date, description, initials.",
+            "aliases": [
+                "revision history",
+                "rev block",
+                "revision table"
+            ],
+            "expected_zones": [
+                "title_block",
+                "right_margin"
+            ],
+            "text_patterns": [
+                "REV",
+                "REVISION",
+                "DATE",
+                "DESCRIPTION",
+                "BY"
+            ],
+            "typical_font_size_range": [
+                6.0,
+                9.0
+            ],
+            "typical_is_all_caps": true,
+            "distinguishing_features": [
+                "tabular layout",
+                "date-like strings",
+                "sequential rev numbers"
+            ],
+            "commonly_confused_with": [
+                "title_block",
+                "abbreviations"
+            ]
+        },
+        {
+            "label": "standard_detail",
+            "display_name": "Standard Detail Reference",
+            "color": "#0090dc",
+            "description": "Reference block pointing to a standard detail drawing: detail number, sheet number, and description.",
+            "aliases": [
+                "std detail",
+                "detail ref",
+                "standard detail block"
+            ],
+            "expected_zones": [
+                "drawing_area",
+                "bottom_band"
+            ],
+            "text_patterns": [
+                "STD",
+                "STANDARD",
+                "DETAIL",
+                "SEE SHEET",
+                "REF"
+            ],
+            "typical_font_size_range": [
+                7.0,
+                11.0
+            ],
+            "typical_is_all_caps": true,
+            "distinguishing_features": [
+                "short text",
+                "sheet number reference",
+                "boxed"
+            ],
+            "commonly_confused_with": [
+                "header",
+                "misc_title"
+            ]
+        },
+        {
+            "label": "title_block",
+            "display_name": "Title Block",
+            "color": "#8c00c8",
+            "description": "The formal title block in the sheet border containing project name, sheet number, date, engineer stamp, and related metadata.",
+            "aliases": [
+                "title bar",
+                "sheet title",
+                "stamp block"
+            ],
+            "expected_zones": [
+                "title_block"
+            ],
+            "text_patterns": [
+                "PROJECT",
+                "SHEET",
+                "DATE",
+                "SCALE",
+                "DRAWN BY",
+                "CHECKED"
+            ],
+            "typical_font_size_range": [
+                7.0,
+                14.0
+            ],
+            "typical_is_all_caps": true,
+            "distinguishing_features": [
+                "contains sheet number",
+                "contains date",
+                "bottom or right border"
+            ],
+            "commonly_confused_with": [
+                "revision",
+                "header"
+            ]
+        },
+        {
+            "label": "misc_title",
+            "display_name": "Miscellaneous Title / Label",
+            "color": "#ff8c00",
+            "description": "A boxed or prominent text label that does not fit into any of the other semantic categories. Typically a detail title, callout, or area label.",
+            "aliases": [
+                "misc label",
+                "callout",
+                "detail title"
+            ],
+            "expected_zones": [
+                "drawing_area",
+                "header_band"
+            ],
+            "text_patterns": [
+                "DETAIL",
+                "TYP",
+                "SEE",
+                "NOTE"
+            ],
+            "typical_font_size_range": [
+                8.0,
+                14.0
+            ],
+            "typical_is_all_caps": true,
+            "distinguishing_features": [
+                "short text",
+                "boxed",
+                "standalone"
+            ],
+            "commonly_confused_with": [
+                "header",
+                "standard_detail"
+            ]
+        }
+    ]
+}

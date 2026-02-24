@@ -22,9 +22,6 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
-# Ensure plancheck is importable when running from scripts/
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
-
 import pdfplumber
 from PIL import Image, ImageDraw, ImageFont
 
@@ -59,8 +56,8 @@ from plancheck.tocr.extract import extract_tocr_from_page
 # ---------------------------------------------------------------------------
 
 
-def _scale(x: float, y: float, s: float) -> tuple[int, int]:
-    return int(x * s), int(y * s)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "utils"))
+from run_utils import latest_overlays_dir, scale as _scale
 
 
 def _load_font(scale: float) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -68,17 +65,6 @@ def _load_font(scale: float) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         return ImageFont.truetype("arial.ttf", max(10, int(10 * scale / 2.78)))
     except OSError:
         return ImageFont.load_default()
-
-
-def _latest_overlays_dir() -> Path:
-    runs_dir = Path("runs")
-    if runs_dir.is_dir():
-        run_dirs = sorted(runs_dir.iterdir(), reverse=True)
-        if run_dirs:
-            d = run_dirs[0] / "overlays"
-            d.mkdir(parents=True, exist_ok=True)
-            return d
-    return Path(".")
 
 
 # ---------------------------------------------------------------------------
@@ -1196,7 +1182,7 @@ class OverlayViewerTab:
             title="Save overlay PNG",
             defaultextension=".png",
             filetypes=[("PNG Image", "*.png")],
-            initialdir=_latest_overlays_dir(),
+            initialdir=latest_overlays_dir(),
             initialfile=f"page_{self._page_var.get()}_debug_overlay.png",
         )
         if path:
@@ -1367,7 +1353,7 @@ def main() -> None:
 
     out = args.out
     if out is None:
-        out = _latest_overlays_dir() / f"page_{args.page}_debug_overlay.png"
+        out = latest_overlays_dir() / f"page_{args.page}_debug_overlay.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(out))
     print(f"Overlay saved: {out} ({img.width}×{img.height})")

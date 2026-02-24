@@ -14,10 +14,7 @@ The JSON file contains:
 Overlay scripts read this JSON instead of re-parsing the PDF.
 """
 
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 import argparse
 import json
@@ -28,17 +25,7 @@ from plancheck import GroupingConfig, build_clusters_v2, nms_prune
 from plancheck.export.page_data import serialize_page
 from plancheck.grouping import group_notes_columns, link_continued_columns
 from plancheck.tocr.extract import extract_tocr_from_page
-
-
-def _latest_overlays_dir() -> Path:
-    runs_dir = Path("runs")
-    if runs_dir.is_dir():
-        run_dirs = sorted(runs_dir.iterdir(), reverse=True)
-        if run_dirs:
-            d = run_dirs[0] / "overlays"
-            d.mkdir(parents=True, exist_ok=True)
-            return d
-    return Path(".")
+from run_utils import latest_overlays_dir
 
 
 def main() -> None:
@@ -90,7 +77,7 @@ def main() -> None:
 
     out_path = args.out
     if out_path is None:
-        out_path = _latest_overlays_dir() / f"page_{args.page}_extraction.json"
+        out_path = latest_overlays_dir() / f"page_{args.page}_extraction.json"
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(data, indent=2), encoding="utf-8")

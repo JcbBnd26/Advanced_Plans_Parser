@@ -46,7 +46,7 @@ scripts/
   gui/                  Tkinter GUI + overlay viewer
   overlays/             Standalone overlay scripts
   utils/                Page extraction, tag listing
-tests/                  pytest suite (~745 tests)
+tests/                  pytest suite (~1280 tests)
 docs/                   Implementation notes & status logs
 ```
 

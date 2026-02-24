@@ -20,7 +20,7 @@ from plancheck.reconcile.reconcile import (
     _overlap_ratio,
     _overlaps_existing,
 )
-from plancheck.vocr.extract import _dedup_tiles, _iou
+from plancheck.vocr.extract import _dedup_tiles, iou
 
 
 class TestHasAllowedSymbol:
@@ -153,24 +153,24 @@ class TestFindLineNeighbours:
 class TestIoU:
     def test_identical_boxes(self):
         a = make_box(0, 0, 10, 10, "")
-        assert _iou(a, a) == pytest.approx(1.0)
+        assert iou(a, a) == pytest.approx(1.0)
 
     def test_no_overlap(self):
         a = make_box(0, 0, 10, 10, "")
         b = make_box(20, 20, 30, 30, "")
-        assert _iou(a, b) == 0.0
+        assert iou(a, b) == 0.0
 
     def test_partial_overlap(self):
         a = make_box(0, 0, 10, 10, "")
         b = make_box(5, 0, 15, 10, "")
         # Inter = 5*10 = 50; union = 100+100-50 = 150
-        assert _iou(a, b) == pytest.approx(50.0 / 150.0)
+        assert iou(a, b) == pytest.approx(50.0 / 150.0)
 
     def test_contained(self):
         outer = make_box(0, 0, 20, 20, "")
         inner = make_box(5, 5, 10, 10, "")
         # Inter = 5*5 = 25; union = 400+25-25 = 400
-        assert _iou(outer, inner) == pytest.approx(25.0 / 400.0)
+        assert iou(outer, inner) == pytest.approx(25.0 / 400.0)
 
 
 class TestOverlapRatio:

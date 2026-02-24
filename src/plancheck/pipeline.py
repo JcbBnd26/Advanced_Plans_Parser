@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     )
     from .reconcile.reconcile import ReconcileResult
 
-logger = logging.getLogger("plancheck.pipeline")
+log = logging.getLogger(__name__)
 
 # ── Skip reasons (exhaustive enumeration) ──────────────────────────────
 
@@ -494,8 +494,7 @@ def _run_prune_deskew(
     page_h: float,
 ) -> tuple:
     """Prune overlapping boxes and optionally deskew.  Returns (boxes, skew)."""
-    from .grouping import nms_prune
-    from .tocr.preprocess import estimate_skew_degrees, rotate_boxes
+    from .tocr.preprocess import estimate_skew_degrees, nms_prune, rotate_boxes
 
     boxes = nms_prune(boxes, cfg.iou_prune)
     if cfg.enable_skew:
@@ -567,8 +566,8 @@ def _run_reconcile_stage(
     sr_vocr: StageResult,
 ) -> list:
     """Stage 5: OCR reconciliation.  Returns updated boxes list."""
-    from .grouping import nms_prune
     from .ingest import render_page_image
+    from .tocr.preprocess import nms_prune
 
     reconcile_result = None
     recon_inputs = {
@@ -674,6 +673,7 @@ def _run_analysis_stage(
             graphics=graphics,
             page_width=page_w,
             page_height=page_h,
+            merge_overlapping=cfg.merge_overlapping_boxes,
         )
         abbreviation_regions = detect_abbreviation_regions(
             blocks=blocks,
@@ -798,6 +798,8 @@ def run_pipeline(
     page_num: int,
     cfg: GroupingConfig | None = None,
     resolution: int = 200,
+    correction_store: "CorrectionStore | None" = None,
+    run_id: str | None = None,
 ) -> PageResult:
     """Run the full 9-stage pipeline on a single page and return results.
 
@@ -890,14 +892,279 @@ def run_pipeline(
     # Stage 8: checks
     findings = _run_checks_stage(pr, cfg, page_num)
 
+    # Optional: persist detections to correction store
+    if correction_store is not None and run_id is not None:
+        from .corrections.features import featurize, featurize_region
+
+        doc_id = correction_store.register_document(pdf_path)
+
+        # Block-level detections
+        for block in pr.blocks:
+            lbl = getattr(block, "label", None)
+            if lbl in ("note_column_header", "note_column_subheader"):
+                etype = "header"
+            elif lbl == "notes_block" or getattr(block, "is_notes", False):
+                etype = "notes_column"
+            elif getattr(block, "is_header", False):
+                etype = "header"
+            else:
+                continue
+            bb = block.bbox()
+            if bb == (0, 0, 0, 0):
+                continue
+            features = featurize(block, pr.page_width, pr.page_height)
+            text = " ".join(b.text for b in block.get_all_boxes())[:500]
+            correction_store.save_detection(
+                doc_id=doc_id,
+                page=page_num,
+                run_id=run_id,
+                element_type=etype,
+                bbox=bb,
+                text_content=text,
+                features=features,
+                confidence=None,
+            )
+
+        # Region-level detections
+        for region_list, etype in [
+            (pr.abbreviation_regions, "abbreviations"),
+            (pr.legend_regions, "legend"),
+            (pr.revision_regions, "revision"),
+            (pr.standard_detail_regions, "standard_detail"),
+            (pr.misc_title_regions, "misc_title"),
+        ]:
+            for region in region_list:
+                bbox = region.bbox()
+                if bbox == (0, 0, 0, 0):
+                    continue
+                header_block = getattr(region, "header", None)
+                entry_count = len(getattr(region, "entries", []))
+                features = featurize_region(
+                    etype,
+                    bbox,
+                    header_block,
+                    pr.page_width,
+                    pr.page_height,
+                    entry_count=entry_count,
+                )
+                try:
+                    text_content = region.header_text()
+                except Exception:
+                    text_content = getattr(region, "text", "")
+                correction_store.save_detection(
+                    doc_id=doc_id,
+                    page=page_num,
+                    run_id=run_id,
+                    element_type=etype,
+                    bbox=bbox,
+                    text_content=text_content or "",
+                    features=features,
+                    confidence=getattr(region, "confidence", None),
+                )
+
+        # Title blocks (bbox is a field, not a method)
+        for tb in pr.title_blocks:
+            bbox = tb.bbox
+            if bbox == (0, 0, 0, 0):
+                continue
+            features = featurize_region(
+                "title_block",
+                bbox,
+                None,
+                pr.page_width,
+                pr.page_height,
+            )
+            correction_store.save_detection(
+                doc_id=doc_id,
+                page=page_num,
+                run_id=run_id,
+                element_type="title_block",
+                bbox=bbox,
+                text_content=tb.raw_text[:500] if tb.raw_text else "",
+                features=features,
+                confidence=tb.confidence,
+            )
+
+        # ── ML feedback loop ────────────────────────────────────────
+        #
+        # 1.  Apply prior corrections: if the user already corrected a
+        #     detection on this page (from a previous run), carry that
+        #     label/bbox forward using spatial matching.
+        # 2.  ML re-labelling: if a trained classifier exists and it
+        #     disagrees with the rule-based label at high confidence,
+        #     override the label so the user sees improved results.
+        # 3.  Confidence scoring: write model confidence to each
+        #     detection row for display (coloured dots in the GUI).
+        #
+        _apply_ml_feedback(correction_store, doc_id, page_num, cfg)
+
     # Stage 9: export (no-op in library mode)
     with run_stage("export", cfg) as sr_exp:
         sr_exp.status = "success"
         sr_exp.counts = {"note": "library mode — no file I/O"}
     pr.stages["export"] = sr_exp
 
-    logger.info("run_pipeline page %d: %d findings", page_num, len(findings))
+    log.info("run_pipeline page %d: %d findings", page_num, len(findings))
     return pr
+
+
+# ── ML feedback loop ───────────────────────────────────────────────────
+
+# Minimum confidence for the ML classifier to override a rule-based label.
+_ML_RELABEL_CONFIDENCE: float = 0.80
+
+
+def _bbox_iou(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+) -> float:
+    """Compute Intersection-over-Union between two bboxes."""
+    x0 = max(a[0], b[0])
+    y0 = max(a[1], b[1])
+    x1 = min(a[2], b[2])
+    y1 = min(a[3], b[3])
+    inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _apply_ml_feedback(
+    store: Any,
+    doc_id: str,
+    page_num: int,
+    cfg: GroupingConfig,
+) -> None:
+    """Apply prior corrections + ML predictions to this page's detections.
+
+    Three passes (all best-effort — failures are logged and swallowed):
+
+    1. **Prior corrections**: look up every correction the user previously
+       made for this (doc_id, page).  Match each correction's
+       ``original_bbox`` against new detections by IoU ≥ 0.5.  When
+       matched, update the detection's ``element_type`` (and bbox if
+       reshaped).  Delete-corrections hide the detection.
+
+    2. **ML relabelling**: if a trained :class:`ElementClassifier` exists,
+       run it over every *uncorrected* detection.  When the model
+       disagrees with the rule-based label **and** model confidence ≥
+       ``_ML_RELABEL_CONFIDENCE``, update the detection's label.
+
+    3. **Confidence scoring**: write model confidence to every detection
+       regardless of whether the label was changed.
+    """
+    try:
+        dets = store.get_detections_for_page(doc_id, page_num)
+        if not dets:
+            return
+
+        # ── Pass 1: prior corrections ──────────────────────────────
+        prior = store.get_prior_corrections_by_bbox(doc_id, page_num)
+        corrected_det_ids: set[str] = set()
+
+        for corr in prior:
+            orig_bbox = corr["original_bbox"]
+            if orig_bbox is None:
+                continue
+
+            # Find best matching new detection by IoU.
+            # Prefer a *different* detection than the one the correction
+            # was originally linked to (so we match against new re-run
+            # detections).  Fall back to the original if nothing else
+            # matches (single-detection or no-re-run scenario).
+            orig_det_id = corr["detection_id"]
+            best_iou = 0.0
+            best_det: dict | None = None
+            fallback_det: dict | None = None
+            for det in dets:
+                iou = _bbox_iou(orig_bbox, det["bbox"])
+                if det["detection_id"] == orig_det_id:
+                    if iou >= 0.5:
+                        fallback_det = det
+                    continue
+                if iou > best_iou:
+                    best_iou = iou
+                    best_det = det
+
+            if best_iou < 0.5 or best_det is None:
+                # No new detection matched — fall back to original
+                if fallback_det is not None:
+                    best_det = fallback_det
+                else:
+                    continue
+
+            did = best_det["detection_id"]
+            corrected_det_ids.add(did)
+
+            if corr["correction_type"] == "delete":
+                # Mark as very-low confidence so it visually fades
+                store._conn.execute(
+                    "UPDATE detections SET confidence = 0.0 " "WHERE detection_id = ?",
+                    (did,),
+                )
+            elif corr["correction_type"] in ("relabel", "accept"):
+                new_label = corr["corrected_label"]
+                store._conn.execute(
+                    "UPDATE detections SET element_type = ? " "WHERE detection_id = ?",
+                    (new_label, did),
+                )
+            elif corr["correction_type"] == "reshape":
+                new_bbox = corr["corrected_bbox"]
+                new_label = corr["corrected_label"]
+                store._conn.execute(
+                    "UPDATE detections SET element_type = ?, "
+                    "  bbox_x0 = ?, bbox_y0 = ?, bbox_x1 = ?, bbox_y1 = ? "
+                    "WHERE detection_id = ?",
+                    (new_label, *new_bbox, did),
+                )
+
+        store._conn.commit()
+
+        # ── Pass 2 + 3: ML relabelling + confidence scoring ───────
+        from .corrections.classifier import ElementClassifier
+
+        clf = ElementClassifier()
+        if not clf.model_exists():
+            return
+
+        # Refresh detections after pass 1 modifications
+        dets = store.get_detections_for_page(doc_id, page_num)
+        for det in dets:
+            if not det["features"]:
+                continue
+            pred_label, pred_conf = clf.predict(det["features"])
+            did = det["detection_id"]
+
+            # Always write confidence
+            store._conn.execute(
+                "UPDATE detections SET confidence = ? " "WHERE detection_id = ?",
+                (pred_conf, did),
+            )
+
+            # Only relabel if: not already corrected by user AND
+            # model disagrees AND model is confident enough
+            if (
+                did not in corrected_det_ids
+                and pred_label != det["element_type"]
+                and pred_conf >= _ML_RELABEL_CONFIDENCE
+            ):
+                log.info(
+                    "ML relabel: %s %s → %s (conf=%.2f)",
+                    did[:12],
+                    det["element_type"],
+                    pred_label,
+                    pred_conf,
+                )
+                store._conn.execute(
+                    "UPDATE detections SET element_type = ? " "WHERE detection_id = ?",
+                    (pred_label, did),
+                )
+
+        store._conn.commit()
+
+    except Exception:
+        log.debug("ML feedback failed", exc_info=True)
 
 
 # ── Document-level result ──────────────────────────────────────────────
@@ -1139,7 +1406,7 @@ def run_document(
             pr = run_pipeline(pdf_path, pg, cfg=cfg, resolution=resolution)
             dr.pages.append(pr)
         except Exception as exc:
-            logger.error("run_document page %d failed: %s", pg, exc)
+            log.error("run_document page %d failed: %s", pg, exc)
             # Create a minimal failed PageResult
             failed = PageResult(page=pg)
             failed.stages["error"] = StageResult(
@@ -1152,7 +1419,7 @@ def run_document(
     # Cross-page checks
     dr.document_findings = _run_document_checks(dr.pages)
 
-    logger.info(
+    log.info(
         "run_document: %d pages, %d doc findings",
         len(dr.pages),
         len(dr.document_findings),

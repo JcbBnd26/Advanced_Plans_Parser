@@ -10,7 +10,7 @@ from typing import IO, Iterable, List, Optional, Tuple
 from ..config import GroupingConfig
 from ..models import BlockCluster, GlyphBox, Line, NotesColumn, RowBand, Span
 
-logger = logging.getLogger("plancheck.clustering")
+log = logging.getLogger(__name__)
 
 # ── Pre-compiled note-start patterns ───────────────────────────────────
 _NOTE_SIMPLE_RE = re.compile(r"^\d+\.")
@@ -134,7 +134,7 @@ def build_lines(tokens: List[GlyphBox], settings: GroupingConfig) -> List[Line]:
     for i, line in enumerate(lines):
         line.line_id = i
 
-    logger.debug(
+    log.debug(
         "build_lines: %d tokens → %d lines (median_h=%.1f, vert_tol=%.1f)",
         len(tokens),
         len(lines),
@@ -382,7 +382,7 @@ def split_wide_lines(
     for idx, ln in enumerate(result):
         ln.line_id = idx
 
-    logger.debug(
+    log.debug(
         "split_wide_lines: %d lines → %d lines (gap_thresh=%.1f)",
         len(lines),
         len(result),
@@ -803,7 +803,7 @@ def group_blocks_from_lines(
     median_line_h = float(median(line_heights)) if line_heights else 1.0
     block_gap = median_line_h * settings.block_gap_mult
     max_block_height = median_line_h * settings.max_block_height_mult
-    logger.debug(
+    log.debug(
         "group_blocks_from_lines: %d lines, median_h=%.1f, block_gap=%.1f",
         len(lines),
         median_line_h,
@@ -1302,10 +1302,10 @@ def group_notes_columns(
     # Build list of all labeled blocks with their x0 positions
     labeled_blocks = [b for b in blocks if id(b) in labeled]
     if not labeled_blocks:
-        logger.debug("group_notes_columns: no labeled blocks found")
+        log.debug("group_notes_columns: no labeled blocks found")
         return []
 
-    logger.debug(
+    log.debug(
         "group_notes_columns: %d headers, %d notes blocks",
         len(headers),
         len(notes),
@@ -2065,7 +2065,7 @@ def build_clusters_v2(
     n_headers = sum(1 for b in blocks if b.is_header)
     n_notes = sum(1 for b in blocks if b.is_notes)
     n_tables = sum(1 for b in blocks if b.is_table)
-    logger.info(
+    log.info(
         "build_clusters_v2: %d tokens → %d lines → %d blocks "
         "(headers=%d, notes=%d, tables=%d)",
         len(tokens),

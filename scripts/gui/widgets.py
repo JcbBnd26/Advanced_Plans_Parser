@@ -321,23 +321,6 @@ class StageProgressBar(ttk.Frame):
             self.columnconfigure(i, weight=1)
             self._labels[stage] = lbl
 
-        # Arrow separators
-        for i in range(len(self.STAGES) - 1):
-            sep = tk.Label(
-                self,
-                text="\u25b8",
-                font=("Consolas", 7),
-                fg="#555555",
-                bg=(
-                    self.cget("background")
-                    if self.cget("background") != "SystemButtonFace"
-                    else "#f0f0f0"
-                ),
-            )
-            # Place between stage labels – use a sub-grid approach via column offset
-            # Actually easier to just put arrows as part of stage labels
-            # We'll skip arrow labels for simplicity – the groove relief provides separation
-
     def set_stage(self, stage: str, status: str) -> None:
         """Set *stage* to *status* ('pending'|'running'|'done'|'skipped'|'error')."""
         if stage not in self._labels:

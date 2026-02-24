@@ -18,7 +18,7 @@ from PIL import Image
 from ..config import GroupingConfig
 from ..models import GlyphBox
 
-log = logging.getLogger("plancheck.ocr_reconcile")
+log = logging.getLogger(__name__)
 
 # PaddleOCR's internal limit: images wider/taller than this get silently
 # downscaled, destroying small CAD text.  We tile the image so each tile
@@ -27,10 +27,10 @@ _PADDLE_MAX_SIDE_DEFAULT = 3800
 _TILE_OVERLAP_FRAC_DEFAULT = 0.05  # 5 % overlap between adjacent tiles
 
 
-# ── Geometry helper (used by _dedup_tiles) ─────────────────────────────
+# ── Geometry helper (used by dedup_tiles and reconcile) ────────────────
 
 
-def _iou(a: GlyphBox, b: GlyphBox) -> float:
+def iou(a: GlyphBox, b: GlyphBox) -> float:
     """Intersection-over-union of two axis-aligned boxes."""
     ix0 = max(a.x0, b.x0)
     iy0 = max(a.y0, b.y0)
@@ -125,7 +125,7 @@ def _dedup_tiles(
         for j in range(i + 1, len(tokens)):
             if not keep[j]:
                 continue
-            if _iou(tokens[i], tokens[j]) > dedup_iou:
+            if iou(tokens[i], tokens[j]) > dedup_iou:
                 # Drop the lower-confidence duplicate
                 if confs[i] >= confs[j]:
                     keep[j] = False
@@ -138,7 +138,7 @@ def _dedup_tiles(
     return out_tokens, out_confs
 
 
-def _extract_ocr_tokens(
+def extract_ocr_tokens(
     page_image: Image.Image,
     page_num: int,
     page_width: float,
@@ -212,11 +212,10 @@ def _extract_ocr_tokens(
     else:
         n_tiles = 1
 
-    print(
-        f"  OCR Stage 1: image {img_w}x{img_h} px "
-        f"({eff_dpi:.0f} eff. DPI), "
-        f"{'tiling ' + str(n_tiles) + ' tiles' if need_tile else 'single pass'}",
-        flush=True,
+    log.info(
+        "  OCR Stage 1: image %dx%d px (%.0f eff. DPI), %s",
+        img_w, img_h, eff_dpi,
+        f"tiling {n_tiles} tiles" if need_tile else "single pass",
     )
 
     t0 = time.perf_counter()
@@ -246,10 +245,7 @@ def _extract_ocr_tokens(
             if t.is_alive():
                 beat += 1
                 elapsed = time.perf_counter() - t0
-                print(
-                    f"    {label} ... {elapsed:.0f}s",
-                    flush=True,
-                )
+                log.info("    %s ... %.0fs", label, elapsed)
         if exc_box:
             raise exc_box[0]
         return result_box[0]
@@ -290,11 +286,9 @@ def _extract_ocr_tokens(
                         min_conf,
                         label=f"tile {tile_idx}/{n_tiles}",
                     )
-                    print(
-                        f"    tile {tile_idx}/{n_tiles} "
-                        f"({x0},{y0})-({x1},{y1}): "
-                        f"{len(t_tokens)} tokens",
-                        flush=True,
+                    log.info(
+                        "    tile %d/%d (%d,%d)-(%d,%d): %d tokens",
+                        tile_idx, n_tiles, x0, y0, x1, y1, len(t_tokens),
                     )
                     all_tokens.extend(t_tokens)
                     all_confs.extend(t_confs)
@@ -303,15 +297,14 @@ def _extract_ocr_tokens(
             pre_dedup = len(all_tokens)
             all_tokens, all_confs = _dedup_tiles(all_tokens, all_confs, tile_dedup_iou)
             if pre_dedup != len(all_tokens):
-                print(
-                    f"    tile dedup: {pre_dedup} -> {len(all_tokens)} tokens",
-                    flush=True,
+                log.info(
+                    "    tile dedup: %d -> %d tokens", pre_dedup, len(all_tokens),
                 )
 
     except (RuntimeError, ValueError, MemoryError, OSError) as e:
         import traceback
 
-        print(f"  OCR Stage 1: EXCEPTION during predict(): {e}", flush=True)
+        log.error("  OCR Stage 1: EXCEPTION during predict(): %s", e)
         traceback.print_exc()
         return [], []
 
@@ -334,15 +327,13 @@ def _extract_ocr_tokens(
             all_tokens, all_confs = [], []
         n_filtered = pre_filter - len(all_tokens)
         if n_filtered:
-            print(
-                f"  OCR Stage 1: filtered {n_filtered} tokens "
-                f"(min_len={min_text_len}, strip_ws={strip_ws})",
-                flush=True,
+            log.info(
+                "  OCR Stage 1: filtered %d tokens (min_len=%d, strip_ws=%s)",
+                n_filtered, min_text_len, strip_ws,
             )
 
-    print(
-        f"  OCR Stage 1: {len(all_tokens)} tokens extracted " f"in {elapsed:.1f}s",
-        flush=True,
+    log.info(
+        "  OCR Stage 1: %d tokens extracted in %.1fs", len(all_tokens), elapsed,
     )
 
     return all_tokens, all_confs
@@ -381,4 +372,4 @@ def extract_vocr_tokens(
     (tokens, confidences)
         Parallel lists of :class:`GlyphBox` and float scores.
     """
-    return _extract_ocr_tokens(page_image, page_num, page_width, page_height, cfg)
+    return extract_ocr_tokens(page_image, page_num, page_width, page_height, cfg)

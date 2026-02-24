@@ -1,22 +1,14 @@
-﻿"""Legend detection and extraction from PDF pages."""
+"""Legend detection and extraction from PDF pages."""
 
 from __future__ import annotations
 
 import logging
 from typing import List, Optional, Tuple
 
-logger = logging.getLogger("plancheck.legends")
+log = logging.getLogger(__name__)
 
 from ..config import GroupingConfig
 from ..models import BlockCluster, GraphicElement, LegendEntry, LegendRegion
-from .abbreviations import detect_abbreviation_regions  # noqa: F401
-
-# --- Sub-module re-exports (public API) -----------------------------------
-from .graphics import extract_graphics  # noqa: F401
-from .misc_titles import detect_misc_title_regions  # noqa: F401
-
-# --- Internal helpers used by this file only ------------------------------
-from .region_helpers import filter_graphics_outside_regions  # noqa: F401
 from .region_helpers import (
     _bboxes_overlap,
     _extract_text_rows_from_blocks,
@@ -24,8 +16,6 @@ from .region_helpers import (
     _find_symbols_in_region,
     _find_text_blocks_in_region,
 )
-from .revisions import detect_revision_regions  # noqa: F401
-from .standard_details import detect_standard_detail_regions  # noqa: F401
 
 
 def _is_legend_header(block: BlockCluster) -> bool:
@@ -201,8 +191,8 @@ def detect_legend_regions(
             if not in_exclusion:
                 legend_headers.append(blk)
 
-    logger.debug("detect_legend_regions: found %d legend headers", len(legend_headers))
-    logger.debug("Total graphics: %d (lines/rects/curves)", len(graphics))
+    log.debug("detect_legend_regions: found %d legend headers", len(legend_headers))
+    log.debug("Total graphics: %d (lines/rects/curves)", len(graphics))
 
     for header in legend_headers:
         hx0, hy0, hx1, hy1 = header.bbox()
@@ -210,7 +200,7 @@ def detect_legend_regions(
         if header.rows:
             header_text = " ".join(b.text for b in header.rows[0].boxes if b.text)
 
-        logger.debug(
+        log.debug(
             "Processing legend '%s' at bbox=(%.1f, %.1f, %.1f, %.1f)",
             header_text,
             hx0,
@@ -229,7 +219,7 @@ def detect_legend_regions(
         box_bbox = enclosing_rect.bbox() if enclosing_rect else None
 
         if is_boxed:
-            logger.debug("  Boxed legend, box bbox=%s", box_bbox)
+            log.debug("  Boxed legend, box bbox=%s", box_bbox)
             region_bbox = box_bbox
         else:
             # Define search region below header
@@ -257,7 +247,7 @@ def detect_legend_regions(
                             region_y1 = by0 - 10
 
             region_bbox = (region_x0, region_y0, region_x1, region_y1)
-            logger.debug(
+            log.debug(
                 "  Unboxed legend, search region=(%.1f, %.1f, %.1f, %.1f)",
                 region_x0,
                 region_y0,
@@ -269,7 +259,7 @@ def detect_legend_regions(
         symbols = _find_symbols_in_region(
             region_bbox, graphics, max_symbol_size=cfg.legend_max_symbol_size
         )
-        logger.debug("  Found %d potential symbols in region", len(symbols))
+        log.debug("  Found %d potential symbols in region", len(symbols))
 
         # Filter out very tiny symbols (noise) and very large ones
         symbols = [
@@ -278,16 +268,16 @@ def detect_legend_regions(
             if s.area() > cfg.legend_symbol_min_area
             and s.area() < cfg.legend_symbol_max_area
         ]
-        logger.debug("  After size filter: %d symbols", len(symbols))
+        log.debug("  After size filter: %d symbols", len(symbols))
 
         # Detect column structure
         symbol_columns = _detect_legend_columns(
             symbols, x_tolerance=cfg.legend_column_x_tolerance
         )
-        logger.debug("  Detected %d symbol columns", len(symbol_columns))
+        log.debug("  Detected %d symbol columns", len(symbol_columns))
         for i, col in enumerate(symbol_columns):
-            logger.debug(
-                "    Column %d: %d symbols at xâ‰ˆ%.1f",
+            log.debug(
+                "    Column %d: %d symbols at x≈%.1f",
                 i,
                 len(col),
                 col[0].x0,
@@ -307,7 +297,7 @@ def detect_legend_regions(
             if not in_exclusion:
                 filtered_text_blocks.append(blk)
         text_blocks = filtered_text_blocks
-        logger.debug(
+        log.debug(
             "  Found %d text blocks in region (after exclusion filter)",
             len(text_blocks),
         )
@@ -321,16 +311,16 @@ def detect_legend_regions(
             y_tolerance=cfg.legend_text_y_tolerance,
             x_gap_max=cfg.legend_text_x_gap_max,
         )
-        logger.debug("  Created %d legend entries", len(entries))
+        log.debug("  Created %d legend entries", len(entries))
         for entry in entries:
             if entry.description:
-                logger.debug(
+                log.debug(
                     "    Entry: '%s...' at %s",
                     entry.description[:50],
                     entry.symbol_bbox,
                 )
             else:
-                logger.debug("    Entry: (no text) at %s", entry.symbol_bbox)
+                log.debug("    Entry: (no text) at %s", entry.symbol_bbox)
 
         # Compute detection confidence:
         #   - boxed regions are more reliable (+0.3)

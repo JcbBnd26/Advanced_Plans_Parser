@@ -62,6 +62,19 @@ def _multi_bbox(
     return (min(xs0), min(ys0), max(xs1), max(ys1))
 
 
+class HeaderTextMixin:
+    """Shared helper for region dataclasses that have a ``header`` block."""
+
+    header: Optional["BlockCluster"]
+
+    def header_text(self) -> str:
+        """Concatenated text from the first header row."""
+        if not self.header or not self.header.rows:
+            return ""
+        texts = [b.text for b in self.header.rows[0].boxes if b.text]
+        return " ".join(texts).strip()
+
+
 @dataclass
 class GraphicElement:
     """A graphical element extracted from the PDF (line, rect, curve)."""
@@ -116,7 +129,7 @@ class LegendEntry:
 
 
 @dataclass
-class LegendRegion:
+class LegendRegion(HeaderTextMixin):
     """A legend region: header + entries."""
 
     page: int
@@ -125,13 +138,6 @@ class LegendRegion:
     is_boxed: bool = False  # Whether legend is enclosed in a rectangle
     box_bbox: Optional[Tuple[float, float, float, float]] = None
     confidence: float = 0.0  # 0–1 detection confidence
-
-    def header_text(self) -> str:
-        """Concatenated text from the first header row."""
-        if not self.header or not self.header.rows:
-            return ""
-        texts = [b.text for b in self.header.rows[0].boxes if b.text]
-        return " ".join(texts).strip()
 
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of header, entries, and enclosing box."""
@@ -154,7 +160,7 @@ class AbbreviationEntry:
 
 
 @dataclass
-class AbbreviationRegion:
+class AbbreviationRegion(HeaderTextMixin):
     """An abbreviation region: header + entries (pure text, no graphics)."""
 
     page: int
@@ -163,13 +169,6 @@ class AbbreviationRegion:
     is_boxed: bool = False
     box_bbox: Optional[Tuple[float, float, float, float]] = None
     confidence: float = 0.0  # 0–1 detection confidence
-
-    def header_text(self) -> str:
-        """Concatenated text from the first header row."""
-        if not self.header or not self.header.rows:
-            return ""
-        texts = [b.text for b in self.header.rows[0].boxes if b.text]
-        return " ".join(texts).strip()
 
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of header, entries, and enclosing box."""
@@ -214,7 +213,7 @@ class MiscTitleRegion:
 
 
 @dataclass
-class RevisionRegion:
+class RevisionRegion(HeaderTextMixin):
     """A revisions box: header + entries (typically a table)."""
 
     page: int
@@ -223,13 +222,6 @@ class RevisionRegion:
     is_boxed: bool = False
     box_bbox: Optional[Tuple[float, float, float, float]] = None
     confidence: float = 0.0  # 0–1 detection confidence
-
-    def header_text(self) -> str:
-        """Concatenated text from the first header row."""
-        if not self.header or not self.header.rows:
-            return ""
-        texts = [b.text for b in self.header.rows[0].boxes if b.text]
-        return " ".join(texts).strip()
 
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of header, entries, and enclosing box."""
@@ -252,7 +244,7 @@ class StandardDetailEntry:
 
 
 @dataclass
-class StandardDetailRegion:
+class StandardDetailRegion(HeaderTextMixin):
     """A standard details region: header + entries (sheet numbers and descriptions)."""
 
     page: int
@@ -265,13 +257,6 @@ class StandardDetailRegion:
     is_boxed: bool = False
     box_bbox: Optional[Tuple[float, float, float, float]] = None
     confidence: float = 0.0  # 0–1 detection confidence
-
-    def header_text(self) -> str:
-        """Concatenated text from the first header row."""
-        if not self.header or not self.header.rows:
-            return ""
-        texts = [b.text for b in self.header.rows[0].boxes if b.text]
-        return " ".join(texts).strip()
 
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of header, entries, and enclosing box."""
@@ -584,7 +569,7 @@ class BlockCluster:
 
 
 @dataclass
-class NotesColumn:
+class NotesColumn(HeaderTextMixin):
     """A notes column: header block + associated notes blocks grouped together."""
 
     page: int
@@ -593,13 +578,6 @@ class NotesColumn:
     # For linking continued columns (e.g., "SITE NOTES" and "SITE NOTES (CONT'D)")
     column_group_id: Optional[str] = None  # Shared ID for linked columns
     continues_from: Optional[str] = None  # Header text of the column this continues
-
-    def header_text(self) -> str:
-        """Extract the header text from the header block."""
-        if not self.header or not self.header.rows:
-            return ""
-        texts = [b.text for b in self.header.rows[0].boxes if b.text]
-        return " ".join(texts).strip()
 
     def base_header_text(self) -> str:
         """Get header text without continuation suffixes like (CONT'D)."""

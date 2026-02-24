@@ -15,7 +15,6 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 _project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "src"))
 sys.path.insert(0, str(_project / "scripts" / "runners"))
 
 from widgets import CollapsibleFrame, LogPanel
@@ -317,6 +316,7 @@ class RecreationTab:
                 if messagebox.askyesno(
                     "Open PDF?", f"Open the recreation PDF?\n{result}"
                 ):
-                    os.startfile(result)
+                    if sys.platform == "win32":
+                        os.startfile(result)
 
         self._worker.run(target, on_done=on_done)

@@ -2,12 +2,7 @@ from .abbreviations import detect_abbreviation_regions
 from .graphics import extract_graphics
 from .legends import detect_legend_regions
 from .misc_titles import detect_misc_title_regions
-from .region_helpers import (
-    _bboxes_overlap,
-    _find_enclosing_rect,
-    _find_text_blocks_in_region,
-    filter_graphics_outside_regions,
-)
+from .region_helpers import filter_graphics_outside_regions
 from .revisions import detect_revision_regions
 from .standard_details import detect_standard_detail_regions
 from .structural_boxes import (

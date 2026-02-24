@@ -20,7 +20,6 @@ from typing import Any
 
 # Ensure imports work
 _project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "src"))
 sys.path.insert(0, str(_project / "scripts" / "runners"))
 sys.path.insert(0, str(_project / "scripts" / "utils"))
 

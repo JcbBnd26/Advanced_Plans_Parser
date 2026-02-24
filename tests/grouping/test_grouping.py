@@ -5,13 +5,6 @@ from conftest import make_box
 
 from plancheck.config import GroupingConfig
 from plancheck.grouping import (
-    _is_note_number,
-    _is_note_number_column,
-    _median_size,
-    _split_row_by_width,
-    _split_row_on_gaps,
-    _text_ends_incomplete,
-    _text_starts_as_continuation,
     build_clusters_v2,
     build_lines,
     compute_median_space_gap,
@@ -22,6 +15,15 @@ from plancheck.grouping import (
     mark_notes,
     mark_tables,
     split_line_spans,
+)
+from plancheck.grouping.clustering import (
+    _is_note_number,
+    _is_note_number_column,
+    _median_size,
+    _split_row_by_width,
+    _split_row_on_gaps,
+    _text_ends_incomplete,
+    _text_starts_as_continuation,
 )
 from plancheck.models import RowBand
 

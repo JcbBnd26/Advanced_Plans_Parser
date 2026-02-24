@@ -102,6 +102,9 @@ class GroupingConfig:
     # Values are fractions of page height.
     content_band_top: float = 0.15  # Exclude top 15%
     content_band_bottom: float = 0.85  # Exclude bottom 15%
+    # Auto-merge overlapping structural boxes of the same type into
+    # union polygons during the analysis stage.
+    merge_overlapping_boxes: bool = False
 
     # ── Text OCR (pdfplumber text extraction) ─────────────────────────
     # When True (default), extract word boxes from the PDF text layer.

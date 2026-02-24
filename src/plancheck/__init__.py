@@ -28,24 +28,6 @@ from .pipeline import (
 from .tocr.extract import extract_tocr_page
 from .tocr.preprocess import estimate_skew_degrees, nms_prune, rotate_boxes
 
-# ── Grouping ──────────────────────────────────────────────────────────
-
-
-# ── Pipeline ──────────────────────────────────────────────────────────
-
-
-# ── Ingest ────────────────────────────────────────────────────────────
-
-
-# ── Text OCR preprocessing ───────────────────────────────────────────
-
-
-# ── Overlay & export ──────────────────────────────────────────────────
-
-
-# ── Zoning ────────────────────────────────────────────────────────────
-
-
 # ── Optional (VOCR / reconcile) ───────────────────────────────────────
 
 try:

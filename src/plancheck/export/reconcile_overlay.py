@@ -22,7 +22,7 @@ from ..reconcile.reconcile import (
     _has_numeric_symbol_context,
 )
 
-log = logging.getLogger("plancheck.ocr_reconcile")
+log = logging.getLogger(__name__)
 
 
 def draw_reconcile_debug(

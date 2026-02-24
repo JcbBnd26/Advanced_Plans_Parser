@@ -228,3 +228,155 @@ def render_page_image(
     if img.mode != "RGB":
         img = img.convert("RGB")
     return img
+
+
+def extract_page_words(
+    pdf_path: Path | str,
+    page_num: int,
+) -> list[dict]:
+    """Return every word pdfplumber finds on *page_num*.
+
+    Each word dict has at least ``x0, top, x1, bottom, text``.
+
+    Parameters
+    ----------
+    pdf_path : Path or str
+        Path to the PDF.
+    page_num : int
+        Zero-based page index.
+
+    Returns
+    -------
+    list[dict]
+        Word dicts as produced by ``pdfplumber.Page.extract_words()``.
+        Empty list on failure.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[page_num]
+            words = page.extract_words(keep_blank_chars=False)
+            return words  # type: ignore[return-value]
+    except Exception as exc:
+        log.warning("extract_page_words page %d failed: %s", page_num, exc)
+        return []
+
+
+def point_in_polygon(px: float, py: float, polygon: list[tuple[float, float]]) -> bool:
+    """Ray-casting point-in-polygon test.
+
+    Parameters
+    ----------
+    px, py : float
+        Point to test.
+    polygon : list[(x, y)]
+        Closed polygon vertices.
+
+    Returns
+    -------
+    bool
+        ``True`` if the point lies inside the polygon.
+    """
+    n = len(polygon)
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+        if ((yi > py) != (yj > py)) and (px < (xj - xi) * (py - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def extract_text_in_polygon(
+    pdf_path: Path | str,
+    page_num: int,
+    polygon: list[tuple[float, float]],
+) -> str:
+    """Extract text from a polygonal region of a PDF page.
+
+    Crops the page to the polygon's bounding rectangle, extracts all
+    words, then keeps only those whose centre falls inside the polygon.
+
+    Parameters
+    ----------
+    pdf_path : Path or str
+        Path to the PDF.
+    page_num : int
+        Zero-based page index.
+    polygon : list[(x, y)]
+        Polygon vertices in PDF points.
+
+    Returns
+    -------
+    str
+        Space-joined text of matched words, or empty string on failure.
+    """
+    try:
+        xs = [p[0] for p in polygon]
+        ys = [p[1] for p in polygon]
+        bbox = (min(xs), min(ys), max(xs), max(ys))
+
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[page_num]
+            x0 = max(0, bbox[0])
+            y0 = max(0, bbox[1])
+            x1 = min(float(page.width), bbox[2])
+            y1 = min(float(page.height), bbox[3])
+            if x1 <= x0 or y1 <= y0:
+                return ""
+            cropped = page.crop((x0, y0, x1, y1))
+            words = cropped.extract_words(keep_blank_chars=False)
+
+        kept: list[str] = []
+        for w in words:
+            # Word centre — positions are absolute (not relative to crop)
+            cx = (w["x0"] + w["x1"]) / 2
+            cy = (w["top"] + w["bottom"]) / 2
+            if point_in_polygon(cx, cy, polygon):
+                kept.append(w["text"])
+
+        return " ".join(kept)
+    except Exception as exc:
+        log.warning("extract_text_in_polygon page %d failed: %s", page_num, exc)
+        return ""
+
+
+def extract_text_in_bbox(
+    pdf_path: Path | str,
+    page_num: int,
+    bbox: Tuple[float, float, float, float],
+) -> str:
+    """Extract text from a rectangular region of a PDF page.
+
+    Parameters
+    ----------
+    pdf_path : Path or str
+        Path to the PDF.
+    page_num : int
+        Zero-based page index.
+    bbox : (x0, y0, x1, y1)
+        Bounding box in PDF points (72 pts = 1 inch).
+
+    Returns
+    -------
+    str
+        Extracted text, or empty string on failure.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[page_num]
+            x0, y0, x1, y1 = bbox
+            # Clamp to page bounds
+            x0 = max(0, x0)
+            y0 = max(0, y0)
+            x1 = min(float(page.width), x1)
+            y1 = min(float(page.height), y1)
+            if x1 <= x0 or y1 <= y0:
+                return ""
+            cropped = page.crop((x0, y0, x1, y1))
+            text = cropped.extract_text() or ""
+            return text.strip()
+    except Exception as exc:
+        log.warning("extract_text_in_bbox page %d failed: %s", page_num, exc)
+        return ""

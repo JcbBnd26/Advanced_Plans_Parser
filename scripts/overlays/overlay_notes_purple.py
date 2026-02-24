@@ -14,8 +14,6 @@ Page is zero-based.  Writes to the most recent run's overlays/ folder.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
-
 import argparse
 import json
 
@@ -32,16 +30,8 @@ from plancheck.export.page_data import deserialize_page, serialize_page
 from plancheck.grouping import group_notes_columns, link_continued_columns
 from plancheck.tocr.extract import extract_tocr_from_page
 
-
-def _latest_overlays_dir() -> Path:
-    runs_dir = Path("runs")
-    if runs_dir.is_dir():
-        run_dirs = sorted(runs_dir.iterdir(), reverse=True)
-        if run_dirs:
-            d = run_dirs[0] / "overlays"
-            d.mkdir(parents=True, exist_ok=True)
-            return d
-    return Path(".")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "utils"))
+from run_utils import latest_overlays_dir
 
 
 def main() -> None:
@@ -70,7 +60,7 @@ def main() -> None:
     out_path = args.out
     if out_path is None:
         page_for_name = args.page if args.json is None else None
-        out_path = _latest_overlays_dir() / f"page_{args.page}_notes_purple.png"
+        out_path = latest_overlays_dir() / f"page_{args.page}_notes_purple.png"
 
     #  Load or compute pipeline data
     if args.json is not None:
@@ -79,7 +69,7 @@ def main() -> None:
         page_idx = raw["page"]
         # Fix up out_path page index if not overridden
         if args.out is None:
-            out_path = _latest_overlays_dir() / f"page_{page_idx}_notes_purple.png"
+            out_path = latest_overlays_dir() / f"page_{page_idx}_notes_purple.png"
         pdf_path = args.pdf
     else:
         if args.pdf is None:

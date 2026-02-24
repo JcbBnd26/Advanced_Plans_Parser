@@ -13,11 +13,7 @@ Usage
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
-
-# Ensure src/ is on the import path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from plancheck.export.sheet_recreation import ORIGIN_COLORS, recreate_sheet
 

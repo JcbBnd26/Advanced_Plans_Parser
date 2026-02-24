@@ -1,7 +1,7 @@
 """
 Advanced Plan Parser – Master GUI Controller.
 
-Slim orchestrator that wires up five tabs via a shared GuiState.
+Slim orchestrator that wires up six tabs via a shared GuiState.
 
 Tabs
 ----
@@ -10,6 +10,7 @@ Tabs
 3. Visual Debug   – Overlay viewer with 11 layer types + knobs
 4. Diagnostics    – Font metrics, benchmark, VOCRPP, tuning, grouping playground
 5. Sheet Recreation – Generate text-only PDFs from runs
+6. Annotation     – Interactive detection correction UI for ML training
 
 Architecture
 ------------
@@ -25,7 +26,6 @@ from pathlib import Path
 
 # Add src and scripts to path for imports
 _project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "src"))
 sys.path.insert(0, str(_project / "scripts" / "runners"))
 sys.path.insert(0, str(_project / "scripts" / "utils"))
 sys.path.insert(0, str(_project / "scripts" / "gui"))
@@ -114,6 +114,7 @@ class PlanParserGUI:
 
         # ── Import and create each tab ────────────────────────────────
         from overlay_viewer import OverlayViewerTab
+        from tab_annotation import AnnotationTab
         from tab_diagnostics import DiagnosticsTab
         from tab_pipeline import PipelineTab
         from tab_recreation import RecreationTab
@@ -125,6 +126,7 @@ class PlanParserGUI:
         self._overlay_tab = OverlayViewerTab(self.notebook, gui_state=self.state)
         self._diagnostics_tab = DiagnosticsTab(self.notebook, self.state)
         self._recreation_tab = RecreationTab(self.notebook, self.state)
+        self._annotation_tab = AnnotationTab(self.notebook, gui_state=self.state)
 
         # ── Status bar ────────────────────────────────────────────────
         self._status_bar = StatusBar(self.root)
@@ -142,6 +144,7 @@ class PlanParserGUI:
         self.root.bind("<Control-Key-3>", lambda e: self.notebook.select(2))
         self.root.bind("<Control-Key-4>", lambda e: self.notebook.select(3))
         self.root.bind("<Control-Key-5>", lambda e: self.notebook.select(4))
+        self.root.bind("<Control-Key-6>", lambda e: self.notebook.select(5))
 
     def _quick_open_pdf(self) -> None:
         f = filedialog.askopenfilename(

@@ -26,6 +26,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 from ..models import BlockCluster, GlyphBox, GraphicElement
+from .box_merge import find_overlap_clusters, merge_boxes, polygon_bbox
 
 logger = logging.getLogger("plancheck.structural")
 
@@ -108,6 +109,9 @@ class StructuralBox:
     # True if this box was synthesised from a text anchor rather than
     # detected as a drawn rectangle
     is_synthetic: bool = False
+    # Union polygon vertices (set when this box was merged from overlapping
+    # boxes). None means the box is a simple axis-aligned rectangle.
+    polygon: Optional[List[Tuple[float, float]]] = None
 
     def bbox(self) -> Tuple[float, float, float, float]:
         """Bounding box as ``(x0, y0, x1, y1)``."""
@@ -376,6 +380,93 @@ def _dedup_boxes(
         if not is_dup:
             keep.append(b)
     return keep
+
+
+def merge_overlapping_structural_boxes(
+    boxes: List[StructuralBox],
+) -> List[StructuralBox]:
+    """Merge overlapping structural boxes of the same type into union polygons.
+
+    For each :class:`BoxType`, finds overlap clusters (transitive) and
+    merges each cluster into a single :class:`StructuralBox` whose
+    ``polygon`` is the Shapely union of all source rectangles.
+
+    Boxes of different types never merge.  Clusters of size 1 are
+    returned unchanged.
+
+    Parameters
+    ----------
+    boxes : list[StructuralBox]
+        The input boxes (may be mutated in-place via replacement).
+
+    Returns
+    -------
+    list[StructuralBox]
+        A new list with merged boxes replacing their source clusters.
+    """
+    if not boxes:
+        return []
+
+    # Group by box_type
+    by_type: Dict[BoxType, List[int]] = {}
+    for i, b in enumerate(boxes):
+        by_type.setdefault(b.box_type, []).append(i)
+
+    merged_indices: set = set()  # indices consumed by merging
+    new_boxes: List[StructuralBox] = []
+
+    for btype, indices in by_type.items():
+        bboxes = [boxes[i].bbox() for i in indices]
+        clusters = find_overlap_clusters(bboxes)
+
+        for cluster in clusters:
+            if len(cluster) == 1:
+                continue  # leave singletons alone
+
+            global_indices = [indices[c] for c in cluster]
+            merged_indices.update(global_indices)
+
+            cluster_bboxes = [boxes[gi].bbox() for gi in global_indices]
+            poly_coords = merge_boxes(cluster_bboxes)
+            bbox = polygon_bbox(poly_coords)
+
+            # Survivor inherits properties from the largest source box
+            largest_gi = max(global_indices, key=lambda gi: boxes[gi].area())
+            src = boxes[largest_gi]
+
+            merged = StructuralBox(
+                page=src.page,
+                x0=bbox[0],
+                y0=bbox[1],
+                x1=bbox[2],
+                y1=bbox[3],
+                box_type=btype,
+                confidence=max(boxes[gi].confidence for gi in global_indices),
+                contained_block_indices=sum(
+                    (boxes[gi].contained_block_indices for gi in global_indices), []
+                ),
+                contained_text="\n".join(
+                    boxes[gi].contained_text
+                    for gi in global_indices
+                    if boxes[gi].contained_text
+                ),
+                source=src.source,
+                is_synthetic=any(boxes[gi].is_synthetic for gi in global_indices),
+                polygon=poly_coords,
+            )
+            new_boxes.append(merged)
+            logger.debug(
+                "Merged %d %s boxes → polygon with %d vertices",
+                len(global_indices),
+                btype.value,
+                len(poly_coords),
+            )
+
+    # Combine: keep un-merged originals + new merged boxes
+    result = [b for i, b in enumerate(boxes) if i not in merged_indices]
+    result.extend(new_boxes)
+    result.sort(key=lambda b: b.area(), reverse=True)
+    return result
 
 
 # ── 2. Box Classification ─────────────────────────────────────────────
@@ -836,6 +927,7 @@ def detect_semantic_regions(
     x_tolerance: float = 80.0,
     font_size_ratio: float = 1.8,
     adaptive_gap_mult: float = 3.0,
+    merge_overlapping: bool = False,
 ) -> Tuple[List[StructuralBox], List[SemanticRegion]]:
     """Run the full structural detection + semantic region pipeline.
 
@@ -844,8 +936,10 @@ def detect_semantic_regions(
     1. Detects structural boxes from graphics.
     2. Classifies them by text + geometry.
     3. Creates synthetic regions from text anchors.
-    4. Grows semantic regions from anchors.
-    5. Returns both the classified structural boxes and the semantic regions.
+    4. Optionally merges overlapping boxes of the same type (when
+       *merge_overlapping* is ``True``).
+    5. Grows semantic regions from anchors.
+    6. Returns both the classified structural boxes and the semantic regions.
 
     Parameters
     ----------
@@ -903,6 +997,10 @@ def detect_semantic_regions(
                             sb.contained_text += " " + b.text
 
     all_boxes = struct_boxes + synthetic
+
+    # Step 3b: Optionally merge overlapping boxes of the same type
+    if merge_overlapping:
+        all_boxes = merge_overlapping_structural_boxes(all_boxes)
 
     # Step 4: Build semantic regions
     regions = _build_semantic_regions(

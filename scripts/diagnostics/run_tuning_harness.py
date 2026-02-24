@@ -57,7 +57,6 @@ from datetime import datetime
 from pathlib import Path
 
 _project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "src"))
 sys.path.insert(0, str(_project / "scripts" / "runners"))
 
 from run_pdf_batch import cleanup_old_runs, run_pdf  # noqa: E402

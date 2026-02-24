@@ -190,7 +190,7 @@ class TestDetectLegendRegions:
     def test_emits_debug_logs(self, caplog):
         """Logger output should appear via caplog, not file I/O."""
         header = make_block([(100, 100, 200, 112, "LEGEND")], is_header=True)
-        with caplog.at_level(logging.DEBUG, logger="plancheck.legends"):
+        with caplog.at_level(logging.DEBUG, logger="plancheck.analysis.legends"):
             detect_legend_regions(
                 blocks=[header],
                 graphics=[],

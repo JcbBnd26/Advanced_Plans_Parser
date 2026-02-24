@@ -14,8 +14,6 @@ Page is zero-based.  Writes to the most recent run's overlays/ folder.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
-
 import argparse
 import json
 
@@ -26,20 +24,8 @@ from plancheck import GlyphBox, GroupingConfig, build_clusters_v2, nms_prune
 from plancheck.export.page_data import deserialize_page, serialize_page
 from plancheck.tocr.extract import extract_tocr_from_page
 
-
-def _latest_overlays_dir() -> Path:
-    runs_dir = Path("runs")
-    if runs_dir.is_dir():
-        run_dirs = sorted(runs_dir.iterdir(), reverse=True)
-        if run_dirs:
-            d = run_dirs[0] / "overlays"
-            d.mkdir(parents=True, exist_ok=True)
-            return d
-    return Path(".")
-
-
-def _scale(x: float, y: float, s: float):
-    return int(x * s), int(y * s)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "utils"))
+from run_utils import latest_overlays_dir, scale as _scale
 
 
 def main() -> None:
@@ -68,7 +54,7 @@ def main() -> None:
         tokens, blocks, _notes_columns, page_w, page_h = deserialize_page(raw)
         page_idx = raw["page"]
         if out_path is None:
-            out_path = _latest_overlays_dir() / f"page_{page_idx}_headers_red.png"
+            out_path = latest_overlays_dir() / f"page_{page_idx}_headers_red.png"
         pdf_path = args.pdf
     else:
         if args.pdf is None:
@@ -76,7 +62,7 @@ def main() -> None:
         pdf_path = args.pdf
         page_idx = args.page
         if out_path is None:
-            out_path = _latest_overlays_dir() / f"page_{page_idx}_headers_red.png"
+            out_path = latest_overlays_dir() / f"page_{page_idx}_headers_red.png"
 
         with pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[page_idx]
