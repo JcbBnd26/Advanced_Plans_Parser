@@ -34,11 +34,20 @@ def _get_page_dimensions(
 ) -> tuple[float, float]:
     """Return ``(width, height)`` for a document page.
 
-    Tries the ``documents`` table first (via pdfplumber at ingest time),
-    then falls back to the largest detection bbox on the page, and
-    finally to a default of (2448, 1584) as a last resort.
+    Tries the ``documents`` table first (page_width, page_height stored
+    at ingest time from pdfplumber), then falls back to the largest
+    detection bbox on the page, and finally to a default of
+    (2448, 1584) as a last resort.
     """
-    # Try getting real dimensions from stored detections (max bbox corner)
+    # Prefer real page dimensions stored at registration time
+    doc_row = store._conn.execute(
+        "SELECT page_width, page_height FROM documents WHERE doc_id = ?",
+        (doc_id,),
+    ).fetchone()
+    if doc_row and doc_row["page_width"] and doc_row["page_height"]:
+        return float(doc_row["page_width"]), float(doc_row["page_height"])
+
+    # Fallback: largest detection bbox corner on this page
     row = store._conn.execute(
         "SELECT MAX(bbox_x1) AS max_x, MAX(bbox_y1) AS max_y "
         "FROM detections WHERE doc_id = ? AND page = ?",

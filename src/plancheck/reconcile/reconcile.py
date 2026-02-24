@@ -108,6 +108,45 @@ def _overlaps_existing(
     return False
 
 
+def _build_spatial_grid(
+    tokens: List[GlyphBox], cell_size: float = 50.0
+) -> dict[tuple[int, int], list[int]]:
+    """Build a grid index mapping (col, row) cells to token indices.
+
+    Each token is inserted into every cell its bounding box overlaps.
+    Querying with a specific bbox then only needs to scan adjacent cells.
+    """
+    grid: dict[tuple[int, int], list[int]] = {}
+    for idx, t in enumerate(tokens):
+        x0, y0, x1, y1 = t.x0, t.y0, t.x1, t.y1
+        c0 = int(x0 // cell_size)
+        r0 = int(y0 // cell_size)
+        c1 = int(x1 // cell_size)
+        r1 = int(y1 // cell_size)
+        for c in range(c0, c1 + 1):
+            for r in range(r0, r1 + 1):
+                grid.setdefault((c, r), []).append(idx)
+    return grid
+
+
+def _grid_candidates(
+    grid: dict[tuple[int, int], list[int]],
+    bbox: tuple[float, float, float, float],
+    cell_size: float = 50.0,
+) -> set[int]:
+    """Return indices of tokens whose cells overlap *bbox*."""
+    x0, y0, x1, y1 = bbox
+    c0 = int(x0 // cell_size)
+    r0 = int(y0 // cell_size)
+    c1 = int(x1 // cell_size)
+    r1 = int(y1 // cell_size)
+    result: set[int] = set()
+    for c in range(c0, c1 + 1):
+        for r in range(r0, r1 + 1):
+            result.update(grid.get((c, r), ()))
+    return result
+
+
 # ── Stage 2: Spatial alignment ─────────────────────────────────────────
 
 
@@ -115,8 +154,13 @@ def _find_best_match(
     ocr_box: GlyphBox,
     pdf_tokens: List[GlyphBox],
     cfg: GroupingConfig,
+    candidate_indices: set[int] | None = None,
 ) -> Tuple[Optional[GlyphBox], str]:
     """Find the best-matching PDF token for an OCR token.
+
+    When *candidate_indices* is provided (from a spatial grid), only those
+    pdf_tokens entries are compared — reducing cost from O(m) to O(k)
+    where k is the number of nearby tokens.
 
     Returns (matched_pdf_box_or_None, match_type).
     """
@@ -125,7 +169,11 @@ def _find_best_match(
 
     ocr_cx, ocr_cy = _center(ocr_box)
 
-    for pdf_box in pdf_tokens:
+    indices = (
+        candidate_indices if candidate_indices is not None else range(len(pdf_tokens))
+    )
+    for idx in indices:
+        pdf_box = pdf_tokens[idx]
         score = iou(ocr_box, pdf_box)
         if score > best_iou:
             best_iou = score
@@ -140,7 +188,8 @@ def _find_best_match(
     closest_dist = float("inf")
     closest_box: Optional[GlyphBox] = None
 
-    for pdf_box in pdf_tokens:
+    for idx in indices:
+        pdf_box = pdf_tokens[idx]
         pcx, pcy = _center(pdf_box)
         dx = abs(ocr_cx - pcx)
         dy = abs(ocr_cy - pcy)
@@ -162,10 +211,20 @@ def _build_match_index(
     pdf_tokens: List[GlyphBox],
     cfg: GroupingConfig,
 ) -> List[MatchRecord]:
-    """Spatially align every OCR token against the PDF token set."""
+    """Spatially align every OCR token against the PDF token set.
+
+    Uses a grid-based spatial index so that each OCR token only compares
+    against nearby PDF tokens instead of the full list.
+    """
+    # Build spatial grid on PDF tokens for fast candidate lookup
+    grid = _build_spatial_grid(pdf_tokens)
+
     matches: List[MatchRecord] = []
     for ocr_box, conf in zip(ocr_tokens, ocr_confidences):
-        pdf_box, match_type = _find_best_match(ocr_box, pdf_tokens, cfg)
+        candidates = _grid_candidates(grid, ocr_box.bbox())
+        pdf_box, match_type = _find_best_match(
+            ocr_box, pdf_tokens, cfg, candidate_indices=candidates
+        )
         matches.append(
             MatchRecord(
                 ocr_box=ocr_box,
@@ -916,18 +975,6 @@ def reconcile_ocr(
 
     log.info(
         "OCR reconcile: %d OCR tokens -> %d with symbol -> %d accepted (%s) "
-        "[candidates: %d gen, %d ok, %d rej, %d filtered]",
-        len(ocr_tokens),
-        with_symbol,
-        len(added),
-        symbol_summary,
-        n_candidates,
-        n_accepted_c,
-        n_rejected_c,
-        n_filtered_non_numeric,
-    )
-    log.info(
-        "  OCR reconcile: %d OCR tokens -> %d with symbol -> %d accepted (%s) "
         "[candidates: %d gen, %d ok, %d rej, %d filtered]",
         len(ocr_tokens),
         with_symbol,

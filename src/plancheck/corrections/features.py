@@ -3,7 +3,7 @@
 Converts pipeline objects into flat feature dicts suitable for
 JSON serialisation and downstream classification.
 
-Feature schema (32 keys):
+Feature schema (35 keys):
   - 3 font metrics: font_size_pt, font_size_max_pt, font_size_min_pt
   - 8 text properties: is_all_caps, is_bold, token_count, row_count,
         text_length, avg_chars_per_token, unique_word_ratio,
@@ -17,15 +17,21 @@ Feature schema (32 keys):
         kw_title_block_pattern, kw_detail_pattern
   - 1 neighbour: neighbor_count
   - 1 zone: zone (string, one-hot encoded by classifier)
+  - 3 discriminative: text_density, x_dist_to_right_margin,
+        line_width_variance
 """
 
 from __future__ import annotations
 
+import bisect
 import json
+import logging
 import re
 import statistics
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from plancheck.models import BlockCluster, GlyphBox
@@ -65,7 +71,13 @@ def _load_label_patterns() -> dict[str, list[re.Pattern[str]]]:
             patterns = entry.get("text_patterns", [])
             if label and patterns:
                 raw[label] = patterns
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        log.warning(
+            "Could not load label_registry.json (%s), using fallback patterns", exc
+        )
+        raw = _FALLBACK_PATTERNS
+    except Exception as exc:
+        log.error("Unexpected error loading label_registry: %s", exc)
         raw = _FALLBACK_PATTERNS
 
     if not raw:
@@ -77,8 +89,8 @@ def _load_label_patterns() -> dict[str, list[re.Pattern[str]]]:
         for p in patterns:
             try:
                 compiled.append(re.compile(p, re.IGNORECASE))
-            except re.error:
-                pass
+            except re.error as exc:
+                log.warning("Invalid regex pattern %r for label %r: %s", p, label, exc)
         _REGISTRY_PATTERNS[label] = compiled
 
     return _REGISTRY_PATTERNS
@@ -181,15 +193,22 @@ def featurize(
     has_colon = int(any(":" in b.text for b in boxes))
     has_period_after_num = int(bool(re.match(r"^\d+\.", first_text)))
 
-    # ── Neighbours ─────────────────────────────────────────────────
+    # ── Neighbours (O(n log n) via sorted y-scan) ─────────────────
     neighbor_count = 0
     if all_blocks:
-        for other in all_blocks:
-            if other is block:
-                continue
-            ob = other.bbox()
-            # vertical overlap with 20pt tolerance
-            if ob[1] <= y1 + 20 and ob[3] >= y0 - 20:
+        # Pre-sort other blocks by y0 and use bisect to check only
+        # blocks whose vertical extent overlaps [y0 - 20, y1 + 20].
+        others = sorted(
+            (ob for ob in all_blocks if ob is not block),
+            key=lambda b: b.bbox()[1],
+        )
+        other_y0s = [b.bbox()[1] for b in others]
+        # We want blocks where ob.y0 <= y1 + 20 AND ob.y3 >= y0 - 20.
+        # bisect_right finds rightmost index where other_y0 <= y1 + 20.
+        hi = bisect.bisect_right(other_y0s, y1 + 20)
+        for idx in range(hi):
+            ob = others[idx].bbox()
+            if ob[3] >= y0 - 20:
                 neighbor_count += 1
 
     # ── Text-content features ──────────────────────────────────────
@@ -204,6 +223,23 @@ def featurize(
     avg_word_length = round(sum(len(w) for w in words) / max(n_words, 1), 2)
 
     kw_scores = _keyword_scores(all_text)
+
+    # ── Discriminative features (v3) ───────────────────────────────
+    area = max(w * h, 1.0)
+    text_density = round(text_length / area, 6)
+    x_dist_to_right_margin = round((pw - x1) / pw, 4)
+    # Row width variance: stdev of per-row text widths (0 if <=1 row)
+    if len(block.rows) > 1:
+        row_widths = []
+        for row in block.rows:
+            if row.boxes:
+                rxs = [b.x0 for b in row.boxes] + [b.x1 for b in row.boxes]
+                row_widths.append(max(rxs) - min(rxs))
+        line_width_variance = (
+            round(statistics.pstdev(row_widths), 2) if row_widths else 0.0
+        )
+    else:
+        line_width_variance = 0.0
 
     return {
         "font_size_pt": round(font_size_pt, 2),
@@ -231,6 +267,9 @@ def featurize(
         "unique_word_ratio": unique_word_ratio,
         "uppercase_word_frac": uppercase_word_frac,
         "avg_word_length": avg_word_length,
+        "text_density": text_density,
+        "x_dist_to_right_margin": x_dist_to_right_margin,
+        "line_width_variance": line_width_variance,
         **kw_scores,
     }
 
@@ -321,6 +360,12 @@ def featurize_region(
     avg_word_length = round(sum(len(w) for w in words) / max(n_words, 1), 2)
     kw_scores = _keyword_scores(all_text_str)
 
+    # ── Discriminative features (v3) ───────────────────────────────
+    area = max(w * h, 1.0)
+    text_density = round(text_length / area, 6)
+    x_dist_to_right_margin = round((pw - x1) / pw, 4)
+    line_width_variance = 0.0  # regions don't have per-row data
+
     return {
         "font_size_pt": round(font_size_pt, 2),
         "font_size_max_pt": round(font_size_max_pt, 2),
@@ -342,10 +387,13 @@ def featurize_region(
         "has_period_after_num": has_period_after_num,
         "text_length": text_length,
         "avg_chars_per_token": round(text_length / max(token_count, 1), 2),
-        "zone": region_type,
+        "zone": "unknown",
         "neighbor_count": 0,
         "unique_word_ratio": unique_word_ratio,
         "uppercase_word_frac": uppercase_word_frac,
         "avg_word_length": avg_word_length,
+        "text_density": text_density,
+        "x_dist_to_right_margin": x_dist_to_right_margin,
+        "line_width_variance": line_width_variance,
         **kw_scores,
     }

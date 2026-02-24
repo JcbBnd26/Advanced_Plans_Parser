@@ -113,16 +113,28 @@ def _dedup_tiles(
 ) -> Tuple[List[GlyphBox], List[float]]:
     """Remove near-duplicate tokens from overlapping tile regions.
 
+    Uses a sort-and-sweep approach: tokens are sorted by x0 so that
+    only tokens with overlapping x-intervals are compared, reducing
+    average complexity from O(n²) to O(n log n).
+
     Keeps the higher-confidence token when two tokens overlap significantly.
     """
     if len(tokens) <= 1:
         return tokens, confs
 
+    # Sort by x0 for sweep-line; track original indices
+    indexed = sorted(range(len(tokens)), key=lambda i: tokens[i].x0)
     keep = [True] * len(tokens)
-    for i in range(len(tokens)):
+
+    for pos, i in enumerate(indexed):
         if not keep[i]:
             continue
-        for j in range(i + 1, len(tokens)):
+        bx1 = tokens[i].x1
+        # Only compare with subsequent tokens whose x0 is within reach
+        for pos2 in range(pos + 1, len(indexed)):
+            j = indexed[pos2]
+            if tokens[j].x0 > bx1:
+                break  # No more x-overlap possible
             if not keep[j]:
                 continue
             if iou(tokens[i], tokens[j]) > dedup_iou:

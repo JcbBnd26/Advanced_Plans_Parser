@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List
 
 from PIL import Image, ImageFilter, ImageOps
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -134,6 +137,13 @@ def preprocess_image_for_ocr(
         try:
             import cv2
 
+            if not cfg.grayscale and current.mode != "L":
+                log.warning(
+                    "CLAHE requires grayscale input — converting from %s "
+                    "to grayscale (enable grayscale explicitly to silence "
+                    "this warning)",
+                    current.mode,
+                )
             arr = _as_uint8_gray(current)
             tile_size = max(2, int(cfg.clahe_tile_size))
             clahe = cv2.createCLAHE(

@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS documents (
     page_count  INTEGER NOT NULL,
     ingested_at TEXT NOT NULL,
     project_tag TEXT DEFAULT '',
-    notes       TEXT DEFAULT ''
+    notes       TEXT DEFAULT '',
+    page_width  REAL DEFAULT 0.0,
+    page_height REAL DEFAULT 0.0
 );
 
 CREATE TABLE IF NOT EXISTS detections (
@@ -208,11 +210,29 @@ class CorrectionStore:
 
         with pdfplumber.open(pdf_path) as pdf:
             page_count = len(pdf.pages)
+            # Store first-page dimensions (width × height in points)
+            pw, ph = 0.0, 0.0
+            if pdf.pages:
+                first_page = pdf.pages[0]
+                try:
+                    pw = float(first_page.width)
+                    ph = float(first_page.height)
+                except (AttributeError, TypeError):
+                    pass
 
         self._conn.execute(
             "INSERT OR IGNORE INTO documents "
-            "(doc_id, filename, pdf_path, page_count, ingested_at) VALUES (?, ?, ?, ?, ?)",
-            (doc_id, pdf_path.name, str(pdf_path.resolve()), page_count, _utcnow_iso()),
+            "(doc_id, filename, pdf_path, page_count, ingested_at, "
+            " page_width, page_height) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                doc_id,
+                pdf_path.name,
+                str(pdf_path.resolve()),
+                page_count,
+                _utcnow_iso(),
+                pw,
+                ph,
+            ),
         )
         self._conn.commit()
         return doc_id
@@ -623,19 +643,39 @@ class CorrectionStore:
 
     # ── training set ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _deterministic_split(detection_id: str) -> str:
+        """Assign a deterministic train/val/test split using MD5.
+
+        Uses ``hashlib.md5`` instead of Python's ``hash()`` to ensure
+        the same detection_id always maps to the same split, regardless
+        of ``PYTHONHASHSEED``, Python version, or host machine.
+
+        Split ratio: 70 % train, 20 % val, 10 % test.
+        """
+        h = int(hashlib.md5(detection_id.encode()).hexdigest()[-1], 16) % 10
+        if h < 7:
+            return "train"
+        elif h < 9:
+            return "val"
+        else:
+            return "test"
+
     def build_training_set(self) -> int:
         """Rebuild the ``training_examples`` table from corrections.
 
         For each non-delete correction, creates a training example
-        whose label is the *corrected* element type.  The deterministic
-        split is based on ``hash(detection_id) % 10``:
+        whose label is the *corrected* element type.  The split is
+        **stratified** by label then assigned deterministically via
+        ``hashlib.md5(detection_id)`` so the same id always lands in
+        the same split across runs, machines, and Python versions.
 
-        * 0–6 → ``train``  (70 %)
-        * 7–8 → ``val``    (20 %)
-        * 9   → ``test``   (10 %)
+        Split ratio (per class): 70 % train, 20 % val, 10 % test.
 
         Returns the number of examples inserted.
         """
+        from collections import defaultdict
+
         self._conn.execute("DELETE FROM training_examples")
 
         rows = self._conn.execute(
@@ -647,29 +687,34 @@ class CorrectionStore:
             "  AND c.detection_id IS NOT NULL"
         ).fetchall()
 
+        # ── Stratified split: group by label, assign within each group ──
+        by_label: dict[str, list] = defaultdict(list)
+        for r in rows:
+            by_label[r["corrected_element_type"]].append(r)
+
         now = _utcnow_iso()
         count = 0
-        for r in rows:
-            features_json = r["corrected_features_json"] or r["features_json"]
-            h = hash(r["detection_id"]) % 10
-            split = "train" if h < 7 else ("val" if h < 9 else "test")
-            self._conn.execute(
-                "INSERT INTO training_examples "
-                "(example_id, source, correction_id, detection_id, "
-                " label, features_json, split, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    _gen_id("ex_"),
-                    "correction",
-                    r["correction_id"],
-                    r["detection_id"],
-                    r["corrected_element_type"],
-                    features_json,
-                    split,
-                    now,
-                ),
-            )
-            count += 1
+        for _label, group in sorted(by_label.items()):
+            for r in group:
+                features_json = r["corrected_features_json"] or r["features_json"]
+                split = self._deterministic_split(r["detection_id"])
+                self._conn.execute(
+                    "INSERT INTO training_examples "
+                    "(example_id, source, correction_id, detection_id, "
+                    " label, features_json, split, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        _gen_id("ex_"),
+                        "correction",
+                        r["correction_id"],
+                        r["detection_id"],
+                        r["corrected_element_type"],
+                        features_json,
+                        split,
+                        now,
+                    ),
+                )
+                count += 1
 
         self._conn.commit()
         return count

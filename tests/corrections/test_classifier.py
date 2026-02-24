@@ -57,6 +57,10 @@ def sample_features() -> dict:
         "kw_revision_pattern": 0,
         "kw_title_block_pattern": 0,
         "kw_detail_pattern": 0,
+        # Discriminative features (v3)
+        "text_density": 0.002,
+        "x_dist_to_right_margin": 0.1,
+        "line_width_variance": 3.0,
     }
 
 
@@ -71,9 +75,16 @@ def training_jsonl(tmp_path: Path, sample_features: dict) -> Path:
     for i in range(20):
         feats = dict(sample_features)
         label = labels[i % len(labels)]
-        feats["zone"] = label
+        feats["zone"] = "unknown"  # MUST NOT leak the label into zone
         feats["font_size_pt"] = 8.0 + i * 0.5
         feats["x_frac"] = 0.1 * (i % 10)
+        # Add varied features so the model can distinguish classes
+        # without label leakage
+        feats["is_all_caps"] = int(label == "header")
+        feats["kw_header_pattern"] = int(label == "header")
+        feats["kw_notes_pattern"] = int(label == "notes_column")
+        feats["kw_legend_pattern"] = int(label == "legend")
+        feats["y_frac"] = 0.05 if label == "header" else 0.5
         example = {
             "features": feats,
             "label": label,
@@ -242,3 +253,12 @@ class TestElementClassifier:
             "unknown",
         }
         assert set(ZONE_VALUES) == expected
+
+    def test_training_data_has_no_label_leakage(self, training_jsonl: Path) -> None:
+        """Zone feature must never equal the label — that's label leakage."""
+        with open(training_jsonl, encoding="utf-8") as fh:
+            for line in fh:
+                ex = json.loads(line.strip())
+                zone = ex["features"].get("zone", "unknown")
+                label = ex["label"]
+                assert zone != label, f"Label leakage: zone={zone!r} == label={label!r}"

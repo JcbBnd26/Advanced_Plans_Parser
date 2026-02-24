@@ -10,10 +10,13 @@ class weighting via ``compute_sample_weight``.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 # Zone values for one-hot encoding — must match ZoneTag enum in analysis.zoning
 ZONE_VALUES: list[str] = [
@@ -63,6 +66,10 @@ _NUMERIC_KEYS: list[str] = [
     "kw_revision_pattern",
     "kw_title_block_pattern",
     "kw_detail_pattern",
+    # Discriminative features (added in v3)
+    "text_density",
+    "x_dist_to_right_margin",
+    "line_width_variance",
 ]
 
 _DEFAULT_MODEL_PATH = Path("data/element_classifier.pkl")
@@ -106,7 +113,6 @@ class ElementClassifier:
     def __init__(self, model_path: Path = _DEFAULT_MODEL_PATH) -> None:
         self.model_path = Path(model_path)
         self._model = None
-        self._classes: list[str] = []
 
     # ── Training ───────────────────────────────────────────────────
 
@@ -159,16 +165,24 @@ class ElementClassifier:
         # Balanced class weighting
         sample_weights = compute_sample_weight("balanced", y_train)
 
-        # Fit
+        # Fit — regularised defaults to reduce overfitting on small data
         clf = GradientBoostingClassifier(
             n_estimators=200,
-            max_depth=5,
+            max_depth=3,
             learning_rate=0.1,
+            min_samples_leaf=5,
+            subsample=0.8,
             random_state=42,
         )
         clf.fit(X_train, y_train, sample_weight=sample_weights)
 
         # Evaluate on validation set (or training set if no val)
+        eval_on_train = not bool(val_ex)
+        if eval_on_train:
+            log.warning(
+                "No validation data available — metrics computed on "
+                "TRAINING data and are unreliable"
+            )
         eval_ex = val_ex if val_ex else train_ex
         X_eval = np.array([encode_features(e["features"]) for e in eval_ex])
         y_eval = [e["label"] for e in eval_ex]
@@ -178,6 +192,7 @@ class ElementClassifier:
         metrics = compute_metrics(y_eval, y_pred, labels=labels)
         metrics["n_train"] = len(train_ex)
         metrics["n_val"] = len(val_ex)
+        metrics["eval_on_train"] = eval_on_train
 
         # Persist
         import joblib
@@ -186,7 +201,6 @@ class ElementClassifier:
         joblib.dump({"model": clf, "classes": labels}, self.model_path)
 
         self._model = clf
-        self._classes = labels
 
         return metrics
 
@@ -200,7 +214,6 @@ class ElementClassifier:
 
         data = joblib.load(self.model_path)
         self._model = data["model"]
-        self._classes = data["classes"]
 
     def predict(self, feature_dict: dict) -> Tuple[str, float]:
         """Predict element type and confidence for a single feature dict.

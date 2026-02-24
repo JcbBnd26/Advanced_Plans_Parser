@@ -426,7 +426,6 @@ def _run_tocr_vocrpp_stages(
 
     def _do_tocr():
         """Execute the text-layer OCR extraction stage."""
-        nonlocal boxes, page_w, page_h
         with run_stage("tocr", cfg) as sr_t:
             result = extract_tocr_page(pdf_path, page_num, cfg, mode="full")
             b, pw, ph, diag = result.to_legacy_tuple()

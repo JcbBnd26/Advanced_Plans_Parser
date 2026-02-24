@@ -16,6 +16,14 @@ log = logging.getLogger(__name__)
 _NOTE_SIMPLE_RE = re.compile(r"^\d+\.")
 _NOTE_BROAD_RE = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
 _NOTE_CAPTURE_RE = re.compile(r"^(\d+)\.")
+# Note-number column pattern (e.g. "1.", "A)", "(12)")
+_NOTE_NUMBER_RE = re.compile(r"^[\(\[]?[0-9A-Za-z]{1,3}[\.)\]]?$")
+# Header detection patterns
+_HEADER_COLON_RE = re.compile(r"^[A-Z0-9\s\-\(\)\'\.\/]+: *$", re.ASCII)
+_HEADER_CAPS_RE = re.compile(r"^[A-Z][A-Z0-9\s\-\(\)\'\.\/]{4,}$", re.ASCII)
+_TITLE_BLOCK_RE = re.compile(
+    r"OKLAHOMA DEPARTMENT|LEGEND AND |SHEET |^[A-Z]+-\d+$", re.ASCII
+)
 
 
 @contextmanager
@@ -486,14 +494,11 @@ def _is_note_number_column(
     cfg: GroupingConfig | None = None,
 ) -> bool:
     """Check if a column consists primarily of note numbers (short labels like '1.', '10.', 'A.')."""
-    import re
-
     if not boxes:
         return False
     _majority = cfg.grouping_note_majority if cfg else 0.5
     _max_rows = cfg.grouping_note_max_rows if cfg else 50
-    note_pattern = re.compile(r"^[\(\[]?[0-9A-Za-z]{1,3}[\.\)\]]?$")
-    note_count = sum(1 for b in boxes if note_pattern.match(b.text.strip()))
+    note_count = sum(1 for b in boxes if _NOTE_NUMBER_RE.match(b.text.strip()))
     # If most boxes in this column are note numbers, it's a note number column
     return note_count >= len(boxes) * _majority and len(boxes) <= _max_rows
 
@@ -578,11 +583,7 @@ def _is_note_number(box: GlyphBox) -> bool:
     text = box.text.strip()
     if not text:
         return False
-    # Pattern: digit(s) or letter followed by period, optionally with closing paren
-    # Examples: "1.", "12.", "A.", "1)", "(1)"
-    import re
-
-    return bool(re.match(r"^[\(\[]?[0-9A-Za-z]{1,3}[\.\)\]]?$", text))
+    return bool(_NOTE_NUMBER_RE.match(text))
 
 
 def _split_row_on_gaps(row: RowBand, median_w: float, gap_mult: float) -> List[RowBand]:
@@ -1099,17 +1100,15 @@ def mark_headers(
     Single-row blocks only.  Excluded phrases prevent false-positives.
     """
     # Classic: "GENERAL NOTES:", "EROSION CONTROL NOTES - GENERAL:", etc.
-    header_colon_re = re.compile(r"^[A-Z0-9\s\-\(\)\'\.\/]+: *$", re.ASCII)
+    header_colon_re = _HEADER_COLON_RE
     # Broader: ALL CAPS, ≥2 words, no numbered-note start
-    header_caps_re = re.compile(r"^[A-Z][A-Z0-9\s\-\(\)\'\.\/]{4,}$", re.ASCII)
+    header_caps_re = _HEADER_CAPS_RE
     excluded_phrases = {
         "BE USED ON THIS PROJECT:",
         "SHEET",
     }
     # Patterns that are title-block / sheet-label text, not section headers
-    _title_block_re = re.compile(
-        r"OKLAHOMA DEPARTMENT|LEGEND AND |SHEET |^[A-Z]+-\d+$", re.ASCII
-    )
+    _title_block_re = _TITLE_BLOCK_RE
 
     # Tunables from config
     _large_mult = cfg.header_large_font_mult if cfg else 1.25

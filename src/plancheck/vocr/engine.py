@@ -8,10 +8,14 @@ a matching PaddleOCR instance.
 
 from __future__ import annotations
 
+import logging
+from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config import GroupingConfig
+
+log = logging.getLogger(__name__)
 
 # Model-name lookup by tier.
 _MODEL_TIERS: dict[str, tuple[str, str]] = {
@@ -19,8 +23,20 @@ _MODEL_TIERS: dict[str, tuple[str, str]] = {
     "server": ("PP-OCRv5_server_det", "en_PP-OCRv5_server_rec"),
 }
 
-# Cache: config-key → PaddleOCR instance.
-_ocr_cache: dict[tuple, object] = {}
+# Cache: config-key → PaddleOCR instance  (LRU, capped at _MAX_CACHE entries).
+_MAX_CACHE = 3
+_ocr_cache: OrderedDict[tuple, object] = OrderedDict()
+
+
+def clear_ocr_cache() -> int:
+    """Drop all cached PaddleOCR instances, freeing GPU/CPU memory.
+
+    Returns the number of entries that were evicted.
+    """
+    n = len(_ocr_cache)
+    _ocr_cache.clear()
+    log.info("Cleared %d cached PaddleOCR engine(s)", n)
+    return n
 
 
 def _engine_key(cfg: "GroupingConfig | None") -> tuple:
@@ -47,6 +63,11 @@ def _get_ocr(cfg: "GroupingConfig | None" = None):
         When *None*, uses mobile-tier defaults (backward compat).
     """
     key = _engine_key(cfg)
+    if key in _ocr_cache:
+        # Move to end (most recently used)
+        _ocr_cache.move_to_end(key)
+        return _ocr_cache[key]
+
     if key not in _ocr_cache:
         import os
 
@@ -64,4 +85,12 @@ def _get_ocr(cfg: "GroupingConfig | None" = None):
             use_doc_unwarping=key[2],
             use_textline_orientation=key[3],
         )
+        # Evict oldest entry if cache exceeds max size
+        while len(_ocr_cache) > _MAX_CACHE:
+            evicted_key, _ = _ocr_cache.popitem(last=False)
+            log.info(
+                "Evicted PaddleOCR engine %s from cache (max=%d)",
+                evicted_key,
+                _MAX_CACHE,
+            )
     return _ocr_cache[key]
