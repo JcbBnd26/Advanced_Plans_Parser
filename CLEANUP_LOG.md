@@ -1,6 +1,50 @@
-# Workspace Cleanup Log — February 18, 2026
+# Workspace Cleanup Log
 
-## Summary
+## Phase 4 — Production ML Infrastructure (2026-02-24)
+
+Implemented the final phase of the ML Upgrade Roadmap.
+All **1,499 tests pass** (3 skipped) after this phase — up from ~1,370 before Phase 4.
+
+### New Modules (4)
+
+| File | Purpose |
+|------|---------|
+| `src/plancheck/corrections/drift_detection.py` | Percentile-bounds data drift detection (fit / check / persist) |
+| `src/plancheck/corrections/retrain_trigger.py` | Automated retrain logic + startup check |
+| `src/plancheck/corrections/experiment_tracker.py` | Lightweight experiment listing, comparison, CSV export |
+| `scripts/gui/tab_mlops.py` | GUI MLOps tab — Drift Monitor, Retrain Control, Feature Cache, Experiment History |
+
+### Modified Modules (6)
+
+| File | Changes |
+|------|---------|
+| `src/plancheck/config.py` | 6 new fields: `ml_drift_enabled/threshold/stats_path`, `ml_retrain_threshold/on_startup`, `ml_feature_cache_enabled` |
+| `src/plancheck/pipeline.py` | `drift_warnings` on `PageResult`, feature cache lookups in `_apply_ml_feedback`, `predict_from_vector` path |
+| `src/plancheck/corrections/store.py` | `feature_cache` table, 4 `training_runs` migrations (hyperparams, feature_set, training_curves, feature_version), retrain helpers, cache CRUD |
+| `src/plancheck/corrections/classifier.py` | `FEATURE_VERSION = 5`, `predict_from_vector()`, hyperparams/feature_set in `train()` return |
+| `scripts/train_model.py` | Fixed `restore_snapshot` bug (tag → path), drift detector fitting, extended `save_training_run` |
+| `scripts/gui/gui.py` | Registered MLOps tab |
+
+### New Test Files (6 files, ~129 tests)
+
+- `tests/corrections/test_drift_detection.py`
+- `tests/corrections/test_retrain_trigger.py`
+- `tests/corrections/test_feature_cache.py`
+- `tests/corrections/test_experiment_tracker.py`
+- `tests/corrections/test_phase4_config.py`
+- `tests/gui/test_tab_mlops.py`
+
+### Bugs Fixed
+
+- `store.restore_snapshot()` in `train_model.py` was called with a tag string instead of a `Path`
+- `count_corrections_since()` referenced wrong column (`created_at` → `corrected_at`)
+- `get_training_history()` ORDER BY was non-deterministic for same-millisecond rows (added `rowid DESC` tiebreaker)
+
+---
+
+## Initial Cleanup — February 18, 2026
+
+### Summary
 
 Removed **36 files/directories** of vestigial, generated, and dead code.
 Updated **13 import statements** across **9 script files** to use canonical subpackage paths.

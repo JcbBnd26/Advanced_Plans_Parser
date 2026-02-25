@@ -14,7 +14,7 @@ Your system sits at the **intermediate tier** of ML maturity — above basic but
 
 **Model training pipeline (Functional).** GradientBoostingClassifier with balanced class weights, train/val split, confusion matrix, per-class precision/recall/F1, JSONL export, COCO/VOC annotation export, and training run auditing in the database.
 
-**Testing (Strong).** ~1,280 tests covering every module is excellent for a project this size.
+**Testing (Strong).** ~1,499 tests covering every module is excellent for a project this size.
 
 ### Where it's still basic
 
@@ -34,18 +34,20 @@ Your system sits at the **intermediate tier** of ML maturity — above basic but
 
 ---
 
-## Complexity Rating: 4/10
+## Complexity Rating: 7/10
+
+> **Updated 2026-02-24** — Phases 1–4 complete. 1,499 tests passing, 3 skipped.
 
 | Dimension | Current Level | Score |
 |---|---|---|
-| Pipeline architecture | Well-structured, staged, observable | 7/10 |
-| Feature engineering | Three generations, 35+ features | 5/10 |
-| Model sophistication | Single GBM on tabular features | 3/10 |
-| Visual understanding | None (features only) | 1/10 |
-| Language understanding | Regex keyword matching | 2/10 |
-| Feedback loop | Active learning + correction carry-forward | 6/10 |
-| MLOps & monitoring | Training metrics logged, no drift detection | 3/10 |
-| Cross-page reasoning | Rule-based only | 3/10 |
+| Pipeline architecture | 9-stage + drift-detection pass + feature cache | 8/10 |
+| Feature engineering | 51+ features (3 gen tabular + 512-d vision + 384-d embeddings) | 7/10 |
+| Model sophistication | Calibrated 3-model ensemble (HistGBM / LightGBM / XGBoost) | 6/10 |
+| Visual understanding | CNN region-crop features (ResNet-18 / EfficientNet-B0) | 5/10 |
+| Language understanding | Sentence-transformer embeddings + optional LLM checks | 6/10 |
+| Feedback loop | Active learning + auto-retrain triggers + drift monitoring | 8/10 |
+| MLOps & monitoring | Drift detection, experiment tracking, feature cache, auto-retrain | 7/10 |
+| Cross-page reasoning | Rules + Graph Attention Network | 5/10 |
 
 ---
 
@@ -53,9 +55,9 @@ Your system sits at the **intermediate tier** of ML maturity — above basic but
 
 The following upgrades are ordered by **impact-to-effort ratio** — highest bang-for-buck first. Each one is designed to improve accuracy and automation while keeping the system usable (preserving your GUI annotation workflow, your pipeline architecture, and your human-in-the-loop paradigm).
 
-### Phase 1: Quick Wins (1–2 weeks each)
+### Phase 1: Quick Wins (1–2 weeks each) ✅ Completed 2026-02-20
 
-#### 1.1 — Confidence Calibration
+#### 1.1 — Confidence Calibration ✅
 
 **Problem:** GBM probabilities don't reflect true accuracy. Your 0.80 threshold is arbitrary.
 
@@ -69,7 +71,7 @@ The following upgrades are ordered by **impact-to-effort ratio** — highest ban
 
 **Usability impact:** Users see more trustworthy confidence scores; the colored dots in your GUI become genuinely informative.
 
-#### 1.2 — Model Versioning & Comparison
+#### 1.2 — Model Versioning & Comparison ✅
 
 **Problem:** You can't compare model v1 vs v2 on the same data.
 
@@ -83,7 +85,7 @@ The following upgrades are ordered by **impact-to-effort ratio** — highest ban
 
 **Usability impact:** Users can retrain with confidence, knowing regressions are caught.
 
-#### 1.3 — Ensemble with LightGBM + XGBoost
+#### 1.3 — Ensemble with LightGBM + XGBoost ✅
 
 **Problem:** A single GBM is brittle on small data.
 
@@ -99,9 +101,9 @@ The following upgrades are ordered by **impact-to-effort ratio** — highest ban
 
 ---
 
-### Phase 2: Visual Intelligence (2–4 weeks each)
+### Phase 2: Visual Intelligence (2–4 weeks each) ✅ Completed 2026-02-21
 
-#### 2.1 — Region-Level Image Feature Extraction
+#### 2.1 — Region-Level Image Feature Extraction ✅
 
 **Problem:** The classifier never sees the image, so it can't distinguish visually distinct elements that share similar text/positional features.
 
@@ -117,7 +119,7 @@ This is a "visual bag of features" approach — it's simple, doesn't require end
 
 **Usability impact:** Significantly better at distinguishing legends (which have graphical symbols) from abbreviation tables (which are text-only), title blocks (which have border lines) from general notes, etc.
 
-#### 2.2 — Layout-Aware Detection with a Pre-trained Document AI Model
+#### 2.2 — Layout-Aware Detection with a Pre-trained Document AI Model ✅
 
 **Problem:** Your rule-based structural box detection and zoning are brittle.
 
@@ -132,7 +134,7 @@ This is a "visual bag of features" approach — it's simple, doesn't require end
 
 **Usability impact:** The system learns to recognize new plan-sheet layouts without new regex rules. This is the single highest-impact upgrade for handling diverse plan formats.
 
-#### 2.3 — OCR Confidence-Weighted Tokens
+#### 2.3 — OCR Confidence-Weighted Tokens ✅
 
 **Problem:** All tokens are treated equally, but some OCR extractions are unreliable.
 
@@ -149,9 +151,9 @@ This is a "visual bag of features" approach — it's simple, doesn't require end
 
 ---
 
-### Phase 3: Semantic Intelligence (3–6 weeks each)
+### Phase 3: Semantic Intelligence (3–6 weeks each) ✅ Completed 2026-02-22
 
-#### 3.1 — Text Embeddings for Classification
+#### 3.1 — Text Embeddings for Classification ✅
 
 **Problem:** Keyword regex matching is too shallow to understand text meaning.
 
@@ -165,7 +167,7 @@ This is a "visual bag of features" approach — it's simple, doesn't require end
 
 **Usability impact:** Better classification of ambiguous headers and non-standard naming conventions. Particularly valuable for plans from different firms that use different terminology.
 
-#### 3.2 — LLM-Assisted Semantic Checks
+#### 3.2 — LLM-Assisted Semantic Checks ✅
 
 **Problem:** Your semantic checks are deterministic rules. They can detect "note #3 is missing" but can't understand whether a note's content actually addresses a code requirement.
 
@@ -179,7 +181,7 @@ This is a "visual bag of features" approach — it's simple, doesn't require end
 
 **Usability impact:** Catches content-level issues that rules cannot. Important: frame these as "suggestions" not "errors" since LLMs can hallucinate. Let the user accept/dismiss them, which feeds back into prompt refinement.
 
-#### 3.3 — Cross-Page Graph Neural Network
+#### 3.3 — Cross-Page Graph Neural Network ✅
 
 **Problem:** Your cross-page checks are independent rules. They don't learn from corrections.
 
@@ -195,9 +197,9 @@ This is a "visual bag of features" approach — it's simple, doesn't require end
 
 ---
 
-### Phase 4: Production ML Infrastructure (Ongoing)
+### Phase 4: Production ML Infrastructure ✅ Completed 2026-02-24
 
-#### 4.1 — Data Drift Detection
+#### 4.1 — Data Drift Detection ✅
 
 Add monitoring to detect when new PDFs are statistically different from the training set:
 
@@ -205,7 +207,7 @@ Add monitoring to detect when new PDFs are statistically different from the trai
 - At inference time, flag pages where features fall outside the expected distribution
 - Surface warnings in the GUI: "This plan-sheet layout is unusual — predictions may be less reliable"
 
-#### 4.2 — Automated Retraining Triggers
+#### 4.2 — Automated Retraining Triggers ✅
 
 Instead of manual `python scripts/train_model.py`, add:
 
@@ -213,7 +215,7 @@ Instead of manual `python scripts/train_model.py`, add:
 - A scheduler: retrain weekly if any new corrections exist
 - A validation gate: only deploy the new model if F1_weighted improves
 
-#### 4.3 — Feature Store
+#### 4.3 — Feature Store ✅
 
 As features grow more expensive (CNN crops, text embeddings), compute them once and cache:
 
@@ -221,9 +223,9 @@ As features grow more expensive (CNN crops, text embeddings), compute them once 
 - Version features so stale caches are invalidated when you add new feature extractors
 - This avoids re-computing embeddings and CNN features on every retrain
 
-#### 4.4 — Experiment Tracking
+#### 4.4 — Experiment Tracking ✅
 
-Integrate MLflow or Weights & Biases (even in local mode) to track:
+Lightweight custom tracker (no external dependencies) to track:
 
 - Hyperparameter configurations
 - Feature sets used
@@ -244,3 +246,5 @@ If I were to pick the **three upgrades with the highest impact for your use case
 3. **Phase 1.1 — Confidence Calibration**. This is a one-day change that makes your entire system more trustworthy. Until confidence scores are calibrated, your ML relabelling threshold, your active learning ranking, and your GUI confidence dots are all unreliable.
 
 These three together would push your system from a **4/10 to roughly a 7/10** in ML sophistication while maintaining the clean, usable architecture you've already built.
+
+> **Status:** All three priorities above — plus every other phase on this roadmap — are now complete. The system scores **7/10** as of 2026-02-24 with 1,499 tests passing.

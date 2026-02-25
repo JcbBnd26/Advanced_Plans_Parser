@@ -963,7 +963,7 @@ class CorrectionStore:
             ``training_curves``, ``feature_version``.
         """
         rows = self._conn.execute(
-            "SELECT * FROM training_runs ORDER BY trained_at DESC"
+            "SELECT * FROM training_runs ORDER BY trained_at DESC, rowid DESC"
         ).fetchall()
         results: list[dict[str, Any]] = []
         for r in rows:
