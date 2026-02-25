@@ -17,5 +17,16 @@ shapely>=2.0.0
 # Layout (optional) - LayoutLMv3
 # transformers>=4.30.0
 
+# Embeddings (optional) - sentence transformers
+# sentence-transformers>=2.2.0
+
+# LLM (optional) - LLM providers
+# ollama>=0.4.0
+# openai>=1.0.0
+# anthropic>=0.30.0
+
+# GNN (optional) - graph neural networks
+# torch-geometric>=2.4.0
+
 # Dev dependencies
 pytest>=8.0.0

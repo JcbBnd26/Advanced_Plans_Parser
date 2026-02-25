@@ -86,6 +86,7 @@ _DEFAULT_MODEL_PATH = Path("data/element_classifier.pkl")
 def encode_features(
     feature_dict: dict,
     image_features: np.ndarray | None = None,
+    text_embedding: np.ndarray | None = None,
 ) -> np.ndarray:
     """Convert a feature dict to a flat float array.
 
@@ -94,7 +95,11 @@ def encode_features(
 
     When *image_features* is provided (from
     :func:`~plancheck.corrections.image_features.extract_image_features`),
-    the CNN embedding is appended to the end of the vector.
+    the CNN embedding is appended after the base features.
+
+    When *text_embedding* is provided (from
+    :func:`~plancheck.corrections.text_embeddings.embed`),
+    the dense text vector is appended after image features (if any).
 
     Parameters
     ----------
@@ -102,20 +107,27 @@ def encode_features(
         Output of :func:`~plancheck.corrections.features.featurize`.
     image_features : numpy.ndarray, optional
         1-D float array of CNN image embeddings (512-d for ResNet-18).
+    text_embedding : numpy.ndarray, optional
+        1-D float array of text embeddings (384-d for MiniLM).
 
     Returns
     -------
     numpy.ndarray
         1-D float64 array of length ``len(_NUMERIC_KEYS) + len(ZONE_VALUES)``
-        (+ ``image_features.shape[0]`` when vision is active).
+        (+ image dims when vision active, + embedding dims when embeddings active).
     """
     numeric = [float(feature_dict.get(k, 0.0)) for k in _NUMERIC_KEYS]
     zone = feature_dict.get("zone", "unknown")
     one_hot = [1.0 if zone == z else 0.0 for z in ZONE_VALUES]
     base = np.array(numeric + one_hot, dtype=np.float64)
+    parts = [base]
     if image_features is not None and len(image_features) > 0:
-        return np.concatenate([base, image_features.astype(np.float64)])
-    return base
+        parts.append(image_features.astype(np.float64))
+    if text_embedding is not None and len(text_embedding) > 0:
+        parts.append(text_embedding.astype(np.float64))
+    if len(parts) == 1:
+        return base
+    return np.concatenate(parts)
 
 
 class ElementClassifier:
@@ -473,6 +485,7 @@ class ElementClassifier:
         self,
         feature_dict: dict,
         image_features: np.ndarray | None = None,
+        text_embedding: np.ndarray | None = None,
     ) -> Tuple[str, float]:
         """Predict element type and confidence for a single feature dict.
 
@@ -482,6 +495,8 @@ class ElementClassifier:
             Hand-crafted features from :func:`featurize`.
         image_features : numpy.ndarray, optional
             CNN image embedding for the element's visual crop.
+        text_embedding : numpy.ndarray, optional
+            Dense text embedding from sentence-transformer.
 
         Returns
         -------
@@ -490,12 +505,16 @@ class ElementClassifier:
             maximum class probability.
         """
         self._load_model()
-        # Only append image features if the model was trained with them.
+        # Only append optional features if the model was trained with them.
         # Base vector length = len(_NUMERIC_KEYS) + len(ZONE_VALUES).
         base_dim = len(_NUMERIC_KEYS) + len(ZONE_VALUES)
         if self._n_features_in is not None and self._n_features_in <= base_dim:
             image_features = None  # model doesn't expect vision dims
-        x = encode_features(feature_dict, image_features).reshape(1, -1)
+            text_embedding = None  # model doesn't expect embedding dims
+        x = encode_features(feature_dict, image_features, text_embedding).reshape(1, -1)
+        # If model was trained with fewer features, trim to match
+        if self._n_features_in is not None and x.shape[1] > self._n_features_in:
+            x = x[:, : self._n_features_in]
         proba = self._model.predict_proba(x)[0]
         idx = int(np.argmax(proba))
         label = self._model.classes_[idx]
@@ -505,6 +524,7 @@ class ElementClassifier:
         self,
         feature_dicts: List[dict],
         image_features_list: List[np.ndarray] | None = None,
+        text_embeddings_list: List[np.ndarray] | None = None,
     ) -> List[Tuple[str, float]]:
         """Predict element types for a batch of feature dicts.
 
@@ -514,6 +534,8 @@ class ElementClassifier:
             Hand-crafted features from :func:`featurize`.
         image_features_list : list[numpy.ndarray], optional
             Parallel list of CNN image embeddings (one per element).
+        text_embeddings_list : list[numpy.ndarray], optional
+            Parallel list of text embeddings (one per element).
 
         Returns
         -------
@@ -523,19 +545,23 @@ class ElementClassifier:
         if not feature_dicts:
             return []
         self._load_model()
-        # Only use image features if the model was trained with them
+        # Only use optional features if the model was trained with them
         base_dim = len(_NUMERIC_KEYS) + len(ZONE_VALUES)
         if self._n_features_in is not None and self._n_features_in <= base_dim:
             image_features_list = None  # model doesn't expect vision dims
-        if image_features_list is not None:
-            X = np.array(
-                [
-                    encode_features(f, img)
-                    for f, img in zip(feature_dicts, image_features_list)
-                ]
-            )
-        else:
-            X = np.array([encode_features(f) for f in feature_dicts])
+            text_embeddings_list = None  # model doesn't expect embedding dims
+
+        rows = []
+        for i, f in enumerate(feature_dicts):
+            img = image_features_list[i] if image_features_list else None
+            emb = text_embeddings_list[i] if text_embeddings_list else None
+            rows.append(encode_features(f, img, emb))
+        X = np.array(rows)
+
+        # Trim if model expects fewer features
+        if self._n_features_in is not None and X.shape[1] > self._n_features_in:
+            X = X[:, : self._n_features_in]
+
         probas = self._model.predict_proba(X)
         results: list[tuple[str, float]] = []
         for row in probas:

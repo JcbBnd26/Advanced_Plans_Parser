@@ -809,6 +809,24 @@ def _run_checks_stage(
             page=page_num,
             mean_ocr_confidence=_mean_conf,
         )
+        # ── Optional LLM-assisted checks ─────────────────────────────
+        if cfg.enable_llm_checks:
+            try:
+                from .checks.llm_checks import run_llm_checks
+
+                llm_findings = run_llm_checks(
+                    notes_columns=pr.notes_columns,
+                    page=page_num,
+                    provider=cfg.llm_provider,
+                    model=cfg.llm_model,
+                    api_key=cfg.llm_api_key,
+                    api_base=cfg.llm_api_base,
+                    temperature=cfg.llm_temperature,
+                )
+                findings.extend(llm_findings)
+            except Exception as exc:  # pragma: no cover
+                log.warning("LLM checks failed: %s", exc)
+
         sr_chk.counts = {"findings": len(findings)}
         sr_chk.status = "success"
     pr.stages["checks"] = sr_chk
@@ -1190,6 +1208,20 @@ def _apply_ml_feedback(
             except Exception:
                 log.debug("Vision feature extractor init failed", exc_info=True)
 
+        # Optionally set up text embedder
+        text_embedder = None
+        if cfg.ml_embeddings_enabled:
+            try:
+                from .corrections.text_embeddings import (
+                    TextEmbedder,
+                    is_embeddings_available,
+                )
+
+                if is_embeddings_available():
+                    text_embedder = TextEmbedder(model_name=cfg.ml_embeddings_model)
+            except Exception:
+                log.debug("Text embedder init failed", exc_info=True)
+
         # Refresh detections after pass 1 modifications
         dets = store.get_detections_for_page(doc_id, page_num)
         for det in dets:
@@ -1203,8 +1235,22 @@ def _apply_ml_feedback(
                 if bbox:
                     img_feat = img_extractor.extract(page_image, tuple(bbox))
 
+            # Extract text embedding when embeddings are enabled
+            text_emb = None
+            if text_embedder is not None:
+                det_features = det["features"]
+                # Reconstruct text from features if available, or use
+                # a representative text snippet from the detection
+                det_text = det.get("text", "")
+                if not det_text and det_features:
+                    det_text = str(det_features.get("_text", ""))
+                if det_text:
+                    text_emb = text_embedder.embed(det_text)
+
             pred_label, pred_conf = clf.predict(
-                det["features"], image_features=img_feat
+                det["features"],
+                image_features=img_feat,
+                text_embedding=text_emb,
             )
             did = det["detection_id"]
 
@@ -1250,6 +1296,10 @@ class DocumentResult:
     pages: List[PageResult] = field(default_factory=list)
     document_findings: List[CheckResult] = field(default_factory=list)
     config: Optional[GroupingConfig] = None
+
+    # GNN cross-page predictions (populated when ml_gnn_enabled)
+    gnn_predictions: Optional[Any] = None
+    gnn_graph_nodes: list = field(default_factory=list)
 
     def total_findings(self) -> int:
         """Total semantic findings across all pages + document-level."""
@@ -1490,6 +1540,30 @@ def run_document(
 
     # Cross-page checks
     dr.document_findings = _run_document_checks(dr.pages)
+
+    # ── Optional GNN refinement ──────────────────────────────────
+    if cfg.ml_gnn_enabled:
+        try:
+            from .analysis.document_graph import build_document_graph
+            from .analysis.gnn_model import is_gnn_available, predict_with_gnn
+
+            if is_gnn_available():
+                graph = build_document_graph(
+                    dr.pages,
+                    include_embeddings=cfg.ml_embeddings_enabled,
+                )
+                gnn_labels = predict_with_gnn(
+                    graph,
+                    model_path=cfg.ml_gnn_model_path,
+                )
+                if gnn_labels is not None and len(gnn_labels) > 0:
+                    log.info("GNN refined %d node labels", len(gnn_labels))
+                    # Store GNN predictions on the DocumentResult for
+                    # downstream consumers (export, GUI, etc.)
+                    dr.gnn_predictions = gnn_labels
+                    dr.gnn_graph_nodes = graph.get("nodes", [])
+        except Exception as exc:
+            log.warning("GNN refinement failed: %s", exc)
 
     log.info(
         "run_document: %d pages, %d doc findings",

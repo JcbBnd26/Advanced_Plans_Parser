@@ -381,6 +381,121 @@ class DiagnosticsTab:
             command=self._check_layout_avail,
         ).pack(side="left", padx=2)
 
+        # ── 9. Text Embeddings ───────────────────────────────────────
+        emb_section = CollapsibleFrame(
+            self._inner, "Text Embeddings (Sentence-Transformer)"
+        )
+        emb_section.grid(row=row, column=0, sticky="ew", **pad)
+        row += 1
+
+        em = emb_section.content
+        em.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            em,
+            text="Dense semantic embeddings for block text (supplements kw_* features).",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(em, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
+        self._emb_model_var = tk.StringVar(value="all-MiniLM-L6-v2")
+        ttk.Entry(em, textvariable=self._emb_model_var, width=50).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=4,
+        )
+
+        emb_btns = ttk.Frame(em)
+        emb_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            emb_btns,
+            text="Check Availability",
+            command=self._check_embeddings_avail,
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            emb_btns,
+            text="Test Embedding",
+            command=self._test_embedding,
+        ).pack(side="left", padx=2)
+
+        # ── 10. LLM Semantic Checks ──────────────────────────────────
+        llm_section = CollapsibleFrame(self._inner, "LLM Semantic Checks")
+        llm_section.grid(row=row, column=0, sticky="ew", **pad)
+        row += 1
+
+        lc = llm_section.content
+        lc.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            lc,
+            text="Optional LLM-assisted content analysis (off by default).",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(lc, text="Provider:").grid(row=1, column=0, sticky="w", pady=2)
+        self._llm_provider_var = tk.StringVar(value="ollama")
+        ttk.Combobox(
+            lc,
+            textvariable=self._llm_provider_var,
+            width=20,
+            values=["ollama", "openai", "anthropic"],
+            state="readonly",
+        ).grid(row=1, column=1, sticky="w", padx=4)
+
+        ttk.Label(lc, text="Model:").grid(row=2, column=0, sticky="w", pady=2)
+        self._llm_model_var = tk.StringVar(value="llama3.1:8b")
+        ttk.Entry(lc, textvariable=self._llm_model_var, width=50).grid(
+            row=2,
+            column=1,
+            sticky="ew",
+            padx=4,
+        )
+
+        llm_btns = ttk.Frame(lc)
+        llm_btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            llm_btns,
+            text="Check Availability",
+            command=self._check_llm_avail,
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            llm_btns,
+            text="Run LLM Checks",
+            command=self._run_llm_checks,
+        ).pack(side="left", padx=2)
+
+        # ── 11. Cross-Page GNN ───────────────────────────────────────
+        gnn_section = CollapsibleFrame(self._inner, "Cross-Page GNN")
+        gnn_section.grid(row=row, column=0, sticky="ew", **pad)
+        row += 1
+
+        gn = gnn_section.content
+        gn.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            gn,
+            text="Graph neural network for cross-page inconsistency detection.",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(gn, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
+        self._gnn_model_var = tk.StringVar(value="data/document_gnn.pt")
+        ttk.Entry(gn, textvariable=self._gnn_model_var, width=50).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=4,
+        )
+
+        gnn_btns = ttk.Frame(gn)
+        gnn_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            gnn_btns,
+            text="Check Availability",
+            command=self._check_gnn_avail,
+        ).pack(side="left", padx=2)
+
         # ── Log panel ────────────────────────────────────────────────
         self.log_panel = LogPanel(self.frame, height=8)
         self.log_panel.grid(
@@ -976,3 +1091,175 @@ class DiagnosticsTab:
                 )
 
         self._worker.run(target, on_done=on_done)
+
+    # ------------------------------------------------------------------
+    # Text Embeddings (Sentence-Transformer)
+    # ------------------------------------------------------------------
+
+    def _check_embeddings_avail(self) -> None:
+        """Check if sentence-transformers is available."""
+        self.log_panel.clear()
+        try:
+            from plancheck.corrections.text_embeddings import is_embeddings_available
+
+            avail = is_embeddings_available()
+            if avail:
+                self.log_panel.write(
+                    "sentence-transformers is available.",
+                    "SUCCESS",
+                )
+            else:
+                self.log_panel.write(
+                    "sentence-transformers NOT available. Install with: "
+                    "pip install 'plancheck[embeddings]'",
+                    "WARNING",
+                )
+        except Exception as exc:
+            self.log_panel.write(f"Error checking availability: {exc}", "ERROR")
+
+    def _test_embedding(self) -> None:
+        """Compute an embedding for a test string and show dimensions."""
+        self.log_panel.clear()
+        self._worker = PipelineWorker(self.root, self.log_panel)
+        model_name = self._emb_model_var.get().strip() or "all-MiniLM-L6-v2"
+
+        def target():
+            from plancheck.corrections.text_embeddings import (
+                TextEmbedder,
+                is_embeddings_available,
+            )
+
+            if not is_embeddings_available():
+                raise RuntimeError(
+                    "sentence-transformers not available. "
+                    "Install with: pip install 'plancheck[embeddings]'"
+                )
+
+            embedder = TextEmbedder(model_name=model_name)
+            test_texts = [
+                "GENERAL NOTES",
+                "CONSTRUCTION NOTES",
+                "LEGEND",
+                "ABBREVIATIONS",
+                "REVISION SCHEDULE",
+            ]
+            embeddings = embedder.embed_batch(test_texts)
+            print(f"Model: {model_name}")
+            print(f"Embedding dim: {embedder.embedding_dim}")
+            print(f"\nSemantic similarity test:")
+            import numpy as np
+
+            for i in range(len(test_texts)):
+                for j in range(i + 1, len(test_texts)):
+                    sim = float(np.dot(embeddings[i], embeddings[j]))
+                    print(f"  '{test_texts[i]}' vs '{test_texts[j]}': {sim:.3f}")
+            return embeddings
+
+        def on_done(result, error, elapsed):
+            if not error:
+                self.log_panel.write(
+                    f"Embedding test complete ({elapsed:.1f}s).", "SUCCESS"
+                )
+
+        self._worker.run(target, on_done=on_done)
+
+    # ------------------------------------------------------------------
+    # LLM Semantic Checks
+    # ------------------------------------------------------------------
+
+    def _check_llm_avail(self) -> None:
+        """Check if LLM provider is available."""
+        self.log_panel.clear()
+        provider = self._llm_provider_var.get()
+        try:
+            from plancheck.checks.llm_checks import is_llm_available
+
+            avail = is_llm_available(provider)
+            if avail:
+                self.log_panel.write(
+                    f"LLM provider '{provider}' is available.", "SUCCESS"
+                )
+            else:
+                self.log_panel.write(
+                    f"LLM provider '{provider}' NOT available. "
+                    f"Install with: pip install 'plancheck[llm]'",
+                    "WARNING",
+                )
+        except Exception as exc:
+            self.log_panel.write(f"Error checking availability: {exc}", "ERROR")
+
+    def _run_llm_checks(self) -> None:
+        """Run LLM semantic checks on the current page."""
+        pdf, _, _ = self._get_pdf_and_pages()
+        if pdf is None:
+            return
+
+        provider = self._llm_provider_var.get()
+        model = self._llm_model_var.get().strip()
+        if not model:
+            messagebox.showwarning("No Model", "Enter an LLM model name.")
+            return
+
+        self.log_panel.clear()
+        self._worker = PipelineWorker(self.root, self.log_panel)
+
+        def target():
+            from plancheck import GroupingConfig
+            from plancheck.checks.llm_checks import is_llm_available, run_llm_checks
+            from plancheck.pipeline import run_pipeline
+
+            if not is_llm_available(provider):
+                raise RuntimeError(
+                    f"LLM provider '{provider}' not available. "
+                    f"Install with: pip install 'plancheck[llm]'"
+                )
+
+            print(f"Running pipeline on page 0...")
+            cfg = GroupingConfig()
+            pr = run_pipeline(pdf, 0, cfg=cfg)
+
+            print(f"Running LLM checks ({provider}/{model})...")
+            findings = run_llm_checks(
+                notes_columns=pr.notes_columns,
+                provider=provider,
+                model=model,
+            )
+            print(f"\nLLM findings: {len(findings)}")
+            for f in findings:
+                print(f"  [{f.severity}] {f.check_id}: {f.message}")
+            return findings
+
+        def on_done(result, error, elapsed):
+            if not error:
+                n = len(result) if result else 0
+                self.log_panel.write(
+                    f"LLM checks complete: {n} findings ({elapsed:.1f}s).",
+                    "SUCCESS",
+                )
+
+        self._worker.run(target, on_done=on_done)
+
+    # ------------------------------------------------------------------
+    # Cross-Page GNN
+    # ------------------------------------------------------------------
+
+    def _check_gnn_avail(self) -> None:
+        """Check if PyTorch Geometric is available."""
+        self.log_panel.clear()
+        try:
+            from plancheck.analysis.gnn_model import is_gnn_available
+
+            avail = is_gnn_available()
+            if avail:
+                self.log_panel.write(
+                    "PyTorch Geometric is available (torch + torch_geometric).",
+                    "SUCCESS",
+                )
+            else:
+                self.log_panel.write(
+                    "PyTorch Geometric NOT available. Install with: "
+                    "pip install 'plancheck[gnn]'",
+                    "WARNING",
+                )
+        except Exception as exc:
+            self.log_panel.write(f"Error checking availability: {exc}", "ERROR")

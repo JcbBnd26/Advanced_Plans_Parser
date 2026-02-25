@@ -412,6 +412,28 @@ class GroupingConfig:
     ml_layout_enabled: bool = False
     # LayoutLMv3 model name or path to fine-tuned checkpoint.
     ml_layout_model_path: str = "microsoft/layoutlmv3-base"
+    # Enable sentence-transformer text embeddings (requires sentence-transformers).
+    ml_embeddings_enabled: bool = False
+    # Sentence-transformer model name (e.g. "all-MiniLM-L6-v2").
+    ml_embeddings_model: str = "all-MiniLM-L6-v2"
+    # Enable LLM-assisted semantic checks (requires ollama/openai/anthropic).
+    enable_llm_checks: bool = False
+    # LLM provider: "ollama", "openai", or "anthropic".
+    llm_provider: str = "ollama"
+    # LLM model name (e.g. "llama3.1:8b", "gpt-4o-mini", "claude-3-haiku-20240307").
+    llm_model: str = "llama3.1:8b"
+    # LLM API key (for openai/anthropic; not needed for ollama).
+    llm_api_key: str = ""
+    # LLM API base URL (for ollama, default http://localhost:11434).
+    llm_api_base: str = "http://localhost:11434"
+    # LLM temperature for generation (0.0 = deterministic).
+    llm_temperature: float = 0.1
+    # Enable cross-page GNN model (requires torch + torch-geometric).
+    ml_gnn_enabled: bool = False
+    # Path to trained GNN model checkpoint.
+    ml_gnn_model_path: str = "data/document_gnn.pt"
+    # Hidden dimension for GNN layers.
+    ml_gnn_hidden_dim: int = 64
 
     def __post_init__(self) -> None:
         """Validate field ranges to catch misconfiguration early."""
@@ -493,6 +515,15 @@ class GroupingConfig:
             val = getattr(self, name)
             if val < 1:
                 raise ConfigValidationError(f"{name}={val} must be >= 1")
+
+        # -- LLM temperature [0, 2] --
+        _check_range("llm_temperature", self.llm_temperature, 0.0, 2.0)
+
+        # -- GNN hidden dim must be positive --
+        if self.ml_gnn_hidden_dim < 1:
+            raise ConfigValidationError(
+                f"ml_gnn_hidden_dim={self.ml_gnn_hidden_dim} must be >= 1"
+            )
 
         # -- DPI / resolution must be positive when set --
         if self.ocr_reconcile_resolution < 1:
