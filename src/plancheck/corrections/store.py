@@ -133,6 +133,14 @@ CREATE TABLE IF NOT EXISTS training_runs (
     model_path      TEXT DEFAULT '',
     notes           TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS feature_cache (
+    cache_key       TEXT PRIMARY KEY,
+    detection_id    TEXT NOT NULL,
+    feature_version INTEGER NOT NULL DEFAULT 0,
+    vector_json     TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+);
 """
 
 
@@ -191,6 +199,33 @@ class CorrectionStore:
             self._conn.execute(
                 "ALTER TABLE training_runs "
                 "ADD COLUMN holdout_preds_json TEXT DEFAULT ''"
+            )
+            self._conn.commit()
+
+        # hyperparams_json, feature_set_json, training_curves_json,
+        # feature_version on training_runs (Phase 4.4)
+        if "hyperparams_json" not in tr_cols:
+            self._conn.execute(
+                "ALTER TABLE training_runs "
+                "ADD COLUMN hyperparams_json TEXT DEFAULT ''"
+            )
+            self._conn.commit()
+        if "feature_set_json" not in tr_cols:
+            self._conn.execute(
+                "ALTER TABLE training_runs "
+                "ADD COLUMN feature_set_json TEXT DEFAULT ''"
+            )
+            self._conn.commit()
+        if "training_curves_json" not in tr_cols:
+            self._conn.execute(
+                "ALTER TABLE training_runs "
+                "ADD COLUMN training_curves_json TEXT DEFAULT ''"
+            )
+            self._conn.commit()
+        if "feature_version" not in tr_cols:
+            self._conn.execute(
+                "ALTER TABLE training_runs "
+                "ADD COLUMN feature_version INTEGER DEFAULT 0"
             )
             self._conn.commit()
 
@@ -853,6 +888,10 @@ class CorrectionStore:
         model_path: str = "",
         notes: str = "",
         holdout_predictions: list[dict] | None = None,
+        hyperparams: dict | None = None,
+        feature_set: dict | None = None,
+        training_curves: dict | None = None,
+        feature_version: int = 0,
     ) -> str:
         """Persist a training-run record and return its ``run_…`` ID.
 
@@ -868,14 +907,27 @@ class CorrectionStore:
         holdout_predictions : list[dict] | None
             Optional list of ``{"label_true", "label_pred", "confidence"}``
             dicts from the validation set evaluation.
+        hyperparams : dict | None
+            Hyperparameters used for training (Phase 4.4).
+        feature_set : dict | None
+            Feature schema description (Phase 4.4).
+        training_curves : dict | None
+            Epoch-level training/validation loss curves (Phase 4.4).
+        feature_version : int
+            Feature schema version (Phase 4.3).
         """
         run_id = _gen_id("run_")
         hp_json = json.dumps(holdout_predictions) if holdout_predictions else ""
+        hyper_json = json.dumps(hyperparams) if hyperparams else ""
+        fs_json = json.dumps(feature_set) if feature_set else ""
+        tc_json = json.dumps(training_curves) if training_curves else ""
         self._conn.execute(
             "INSERT INTO training_runs "
             "(run_id, trained_at, n_train, n_val, accuracy, f1_macro, f1_weighted, "
-            " labels_json, per_class_json, model_path, notes, holdout_preds_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " labels_json, per_class_json, model_path, notes, holdout_preds_json, "
+            " hyperparams_json, feature_set_json, training_curves_json, "
+            " feature_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 _utcnow_iso(),
@@ -889,6 +941,10 @@ class CorrectionStore:
                 model_path,
                 notes,
                 hp_json,
+                hyper_json,
+                fs_json,
+                tc_json,
+                feature_version,
             ),
         )
         self._conn.commit()
@@ -903,14 +959,20 @@ class CorrectionStore:
             Each dict has: ``run_id``, ``trained_at``, ``n_train``,
             ``n_val``, ``accuracy``, ``f1_macro``, ``f1_weighted``,
             ``labels``, ``per_class``, ``model_path``, ``notes``,
-            ``holdout_predictions``.
+            ``holdout_predictions``, ``hyperparams``, ``feature_set``,
+            ``training_curves``, ``feature_version``.
         """
         rows = self._conn.execute(
             "SELECT * FROM training_runs ORDER BY trained_at DESC"
         ).fetchall()
         results: list[dict[str, Any]] = []
         for r in rows:
-            hp_raw = r["holdout_preds_json"] if "holdout_preds_json" in r.keys() else ""
+            keys = r.keys()
+            hp_raw = r["holdout_preds_json"] if "holdout_preds_json" in keys else ""
+            hyper_raw = r["hyperparams_json"] if "hyperparams_json" in keys else ""
+            fs_raw = r["feature_set_json"] if "feature_set_json" in keys else ""
+            tc_raw = r["training_curves_json"] if "training_curves_json" in keys else ""
+            fv = r["feature_version"] if "feature_version" in keys else 0
             results.append(
                 {
                     "run_id": r["run_id"],
@@ -925,6 +987,10 @@ class CorrectionStore:
                     "model_path": r["model_path"],
                     "notes": r["notes"],
                     "holdout_predictions": json.loads(hp_raw) if hp_raw else [],
+                    "hyperparams": json.loads(hyper_raw) if hyper_raw else {},
+                    "feature_set": json.loads(fs_raw) if fs_raw else {},
+                    "training_curves": json.loads(tc_raw) if tc_raw else {},
+                    "feature_version": fv,
                 }
             )
         return results
@@ -983,4 +1049,152 @@ class CorrectionStore:
             "improved_classes": improved,
             "regressed_classes": regressed,
             "per_class_deltas": per_class_deltas,
+        }
+
+    # ── retrain helpers (Phase 4.2) ────────────────────────────────
+
+    def last_train_date(self) -> str | None:
+        """Return ISO-8601 timestamp of the most recent training run.
+
+        Returns *None* when no runs have been recorded.
+        """
+        row = self._conn.execute(
+            "SELECT trained_at FROM training_runs ORDER BY trained_at DESC LIMIT 1"
+        ).fetchone()
+        return row["trained_at"] if row else None
+
+    def count_corrections_since(self, since_iso: str | None = None) -> int:
+        """Count corrections added after *since_iso*.
+
+        Parameters
+        ----------
+        since_iso : str | None
+            ISO-8601 timestamp.  When *None*, returns the total count.
+        """
+        if since_iso is None:
+            row = self._conn.execute("SELECT COUNT(*) AS n FROM corrections").fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM corrections WHERE corrected_at > ?",
+                (since_iso,),
+            ).fetchone()
+        return row["n"] if row else 0
+
+    def count_corrections_since_last_train(self) -> int:
+        """Return number of new corrections since the last training run."""
+        return self.count_corrections_since(self.last_train_date())
+
+    def should_retrain(self, threshold: int = 50) -> bool:
+        """Return *True* when enough new corrections have accumulated.
+
+        Parameters
+        ----------
+        threshold : int
+            Minimum number of new corrections needed (default 50).
+        """
+        return self.count_corrections_since_last_train() >= threshold
+
+    # ── feature cache (Phase 4.3) ─────────────────────────────────
+
+    def cache_features(
+        self,
+        detection_id: str,
+        vector: list[float],
+        feature_version: int,
+    ) -> None:
+        """Store a computed feature vector in the cache.
+
+        Parameters
+        ----------
+        detection_id : str
+            Detection this vector belongs to.
+        vector : list[float]
+            The dense feature vector (encoded by :func:`encode_features`).
+        feature_version : int
+            Schema version (from :data:`FEATURE_VERSION`).
+        """
+        cache_key = f"{detection_id}:v{feature_version}"
+        self._conn.execute(
+            "INSERT OR REPLACE INTO feature_cache "
+            "(cache_key, detection_id, feature_version, vector_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                cache_key,
+                detection_id,
+                feature_version,
+                json.dumps(vector),
+                _utcnow_iso(),
+            ),
+        )
+        self._conn.commit()
+
+    def get_cached_features(
+        self,
+        detection_id: str,
+        feature_version: int,
+    ) -> list[float] | None:
+        """Retrieve a cached feature vector, or *None* on miss.
+
+        Parameters
+        ----------
+        detection_id : str
+            Detection to look up.
+        feature_version : int
+            Required schema version — stale versions are not returned.
+        """
+        cache_key = f"{detection_id}:v{feature_version}"
+        row = self._conn.execute(
+            "SELECT vector_json FROM feature_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["vector_json"])
+
+    def invalidate_cache(self, *, feature_version: int | None = None) -> int:
+        """Delete cached feature vectors.
+
+        Parameters
+        ----------
+        feature_version : int, optional
+            When given, only delete entries with a *different* version.
+            When *None*, delete **all** cached entries.
+
+        Returns
+        -------
+        int
+            Number of rows deleted.
+        """
+        if feature_version is None:
+            cur = self._conn.execute("DELETE FROM feature_cache")
+        else:
+            cur = self._conn.execute(
+                "DELETE FROM feature_cache WHERE feature_version != ?",
+                (feature_version,),
+            )
+        self._conn.commit()
+        return cur.rowcount
+
+    def cache_stats(self) -> dict[str, int]:
+        """Return summary stats about the feature cache.
+
+        Returns
+        -------
+        dict
+            ``total_entries``, ``distinct_detections``,
+            ``distinct_versions``.
+        """
+        total = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM feature_cache"
+        ).fetchone()["n"]
+        det_count = self._conn.execute(
+            "SELECT COUNT(DISTINCT detection_id) AS n FROM feature_cache"
+        ).fetchone()["n"]
+        ver_count = self._conn.execute(
+            "SELECT COUNT(DISTINCT feature_version) AS n FROM feature_cache"
+        ).fetchone()["n"]
+        return {
+            "total_entries": total,
+            "distinct_detections": det_count,
+            "distinct_versions": ver_count,
         }

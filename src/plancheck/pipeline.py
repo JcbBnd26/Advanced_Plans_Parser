@@ -349,6 +349,9 @@ class PageResult:
     # Layout model predictions (Phase 2.2)
     layout_predictions: list = field(default_factory=list)
 
+    # Drift warnings (Phase 4.1)
+    drift_warnings: list = field(default_factory=list)
+
     # Checks
     semantic_findings: List[CheckResult] = field(default_factory=list)
 
@@ -382,6 +385,7 @@ class PageResult:
                 "title_blocks": len(self.title_blocks),
                 "structural_boxes": len(self.structural_boxes),
                 "semantic_findings": len(self.semantic_findings),
+                "drift_warnings": len(self.drift_warnings),
             },
             "semantic_findings": [
                 f.to_dict() if hasattr(f, "to_dict") else str(f)
@@ -1048,13 +1052,14 @@ def run_pipeline(
         # 3.  Confidence scoring: write model confidence to each
         #     detection row for display (coloured dots in the GUI).
         #
-        _apply_ml_feedback(
+        _drift_warnings = _apply_ml_feedback(
             correction_store,
             doc_id,
             page_num,
             cfg,
             page_image=pr.background_image,
         )
+        pr.drift_warnings = _drift_warnings
 
     # Stage 9: export (no-op in library mode)
     with run_stage("export", cfg) as sr_exp:
@@ -1091,7 +1096,7 @@ def _apply_ml_feedback(
     page_num: int,
     cfg: GroupingConfig,
     page_image: Any = None,
-) -> None:
+) -> list:
     """Apply prior corrections + ML predictions to this page's detections.
 
     Three passes (all best-effort — failures are logged and swallowed):
@@ -1111,14 +1116,24 @@ def _apply_ml_feedback(
     3. **Confidence scoring**: write model confidence to every detection
        regardless of whether the label was changed.
 
+    4. **Drift detection** (Phase 4.1): when ``cfg.ml_drift_enabled``
+       is *True* and drift stats exist, check each feature vector
+       against the reference distribution.
+
     When *page_image* is provided and ``cfg.ml_vision_enabled`` is True,
     CNN image embeddings are extracted for each detection and appended
     to the feature vector.
+
+    Returns
+    -------
+    list[dict]
+        Drift warning dicts (empty when drift detection is disabled).
     """
+    drift_warnings: list = []
     try:
         dets = store.get_detections_for_page(doc_id, page_num)
         if not dets:
-            return
+            return drift_warnings
 
         # ── Pass 1: prior corrections ──────────────────────────────
         prior = store.get_prior_corrections_by_bbox(doc_id, page_num)
@@ -1184,7 +1199,7 @@ def _apply_ml_feedback(
 
         # ── Pass 2 + 3: ML relabelling + confidence scoring ───────
         if not cfg.ml_enabled:
-            return
+            return drift_warnings
 
         from .corrections.classifier import ElementClassifier
 
@@ -1224,35 +1239,79 @@ def _apply_ml_feedback(
 
         # Refresh detections after pass 1 modifications
         dets = store.get_detections_for_page(doc_id, page_num)
+
+        # Feature cache setup (Phase 4.3)
+        use_cache = getattr(cfg, "ml_feature_cache_enabled", False)
+        feat_version = 0
+        if use_cache:
+            try:
+                from .corrections.classifier import FEATURE_VERSION
+
+                feat_version = FEATURE_VERSION
+            except ImportError:
+                use_cache = False
+
         for det in dets:
             if not det["features"]:
                 continue
 
-            # Extract image features when vision is enabled
-            img_feat = None
-            if img_extractor is not None:
-                bbox = det["bbox"]
-                if bbox:
-                    img_feat = img_extractor.extract(page_image, tuple(bbox))
-
-            # Extract text embedding when embeddings are enabled
-            text_emb = None
-            if text_embedder is not None:
-                det_features = det["features"]
-                # Reconstruct text from features if available, or use
-                # a representative text snippet from the detection
-                det_text = det.get("text", "")
-                if not det_text and det_features:
-                    det_text = str(det_features.get("_text", ""))
-                if det_text:
-                    text_emb = text_embedder.embed(det_text)
-
-            pred_label, pred_conf = clf.predict(
-                det["features"],
-                image_features=img_feat,
-                text_embedding=text_emb,
-            )
             did = det["detection_id"]
+
+            # Check feature cache first (Phase 4.3)
+            cached_vec = None
+            if use_cache:
+                try:
+                    raw = store.get_cached_features(did, feat_version)
+                    if raw is not None:
+                        cached_vec = raw
+                except Exception:
+                    pass
+
+            if cached_vec is not None:
+                # Use cached vector for prediction directly
+                import numpy as _np
+
+                vec = _np.array(cached_vec, dtype=_np.float64)
+                pred_label, pred_conf = clf.predict_from_vector(vec)
+            else:
+                # Extract image features when vision is enabled
+                img_feat = None
+                if img_extractor is not None:
+                    bbox = det["bbox"]
+                    if bbox:
+                        img_feat = img_extractor.extract(page_image, tuple(bbox))
+
+                # Extract text embedding when embeddings are enabled
+                text_emb = None
+                if text_embedder is not None:
+                    det_features = det["features"]
+                    # Reconstruct text from features if available, or use
+                    # a representative text snippet from the detection
+                    det_text = det.get("text", "")
+                    if not det_text and det_features:
+                        det_text = str(det_features.get("_text", ""))
+                    if det_text:
+                        text_emb = text_embedder.embed(det_text)
+
+                pred_label, pred_conf = clf.predict(
+                    det["features"],
+                    image_features=img_feat,
+                    text_embedding=text_emb,
+                )
+
+                # Store in cache for next time (Phase 4.3)
+                if use_cache:
+                    try:
+                        from .corrections.classifier import encode_features as _ef
+
+                        vec = _ef(
+                            det["features"],
+                            image_features=img_feat,
+                            text_embedding=text_emb,
+                        )
+                        store.cache_features(did, vec.tolist(), feat_version)
+                    except Exception:
+                        pass
 
             # Always write confidence
             store._conn.execute(
@@ -1281,8 +1340,48 @@ def _apply_ml_feedback(
 
         store._conn.commit()
 
+        # ── Pass 4: drift detection (Phase 4.1) ───────────────────
+        if getattr(cfg, "ml_drift_enabled", False):
+            try:
+                from .corrections.classifier import encode_features
+                from .corrections.drift_detection import DriftDetector
+
+                drift_stats_path = Path(
+                    getattr(cfg, "ml_drift_stats_path", "data/drift_stats.json")
+                )
+                if drift_stats_path.exists():
+                    drift_threshold = getattr(cfg, "ml_drift_threshold", 0.3)
+                    detector = DriftDetector.load(
+                        drift_stats_path, threshold=drift_threshold
+                    )
+                    dets = store.get_detections_for_page(doc_id, page_num)
+                    for det in dets:
+                        if not det["features"]:
+                            continue
+                        vec = encode_features(det["features"])
+                        dr = detector.check(vec)
+                        if dr.is_drifted:
+                            drift_warnings.append(
+                                {
+                                    "detection_id": det["detection_id"],
+                                    "drift_fraction": dr.drift_fraction,
+                                    "flagged_features": dr.flagged_features,
+                                }
+                            )
+                    if drift_warnings:
+                        log.info(
+                            "Drift: %d/%d detections flagged on page %d",
+                            len(drift_warnings),
+                            len(dets),
+                            page_num,
+                        )
+            except Exception:
+                log.debug("Drift detection failed", exc_info=True)
+
     except Exception:
         log.debug("ML feedback failed", exc_info=True)
+
+    return drift_warnings
 
 
 # ── Document-level result ──────────────────────────────────────────────

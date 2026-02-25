@@ -78,9 +78,10 @@ def main() -> int:
     store = CorrectionStore(args.db)
 
     # 2. Snapshot before training
+    snap_path = None
     try:
-        snap = store.snapshot(tag="pre_training")
-        print(f"Snapshot saved: {snap}")
+        snap_path = store.snapshot(tag="pre_training")
+        print(f"Snapshot saved: {snap_path}")
     except Exception as exc:
         print(f"Warning: snapshot failed: {exc}")
 
@@ -125,6 +126,18 @@ def main() -> int:
     else:
         print("  Ensemble: disabled (single GBM)")
 
+    # 5b. Fit drift detector on training data (Phase 4.1)
+    try:
+        from plancheck.corrections.drift_detection import DriftDetector
+
+        drift_stats_path = args.db.parent / "drift_stats.json"
+        drift_det = DriftDetector(threshold=0.3)
+        drift_det.fit(jsonl_path)
+        drift_det.save(drift_stats_path)
+        print(f"  Drift stats saved: {drift_stats_path}")
+    except Exception as exc:
+        print(f"Warning: drift stats generation failed: {exc}")
+
     # 6. Record training run in the database
     holdout_preds = metrics.get("holdout_predictions")
     try:
@@ -133,6 +146,9 @@ def main() -> int:
             model_path=str(args.model),
             notes="CLI train",
             holdout_predictions=holdout_preds,
+            hyperparams=metrics.get("hyperparams"),
+            feature_set=metrics.get("feature_set"),
+            feature_version=metrics.get("feature_version", 0),
         )
         print(f"  Training run recorded: {run_id}")
     except Exception as exc:
@@ -160,7 +176,8 @@ def main() -> int:
                 )
                 print("  Use --force to accept the model anyway.")
                 try:
-                    store.restore_snapshot(tag="pre_training")
+                    if snap_path:
+                        store.restore_snapshot(snap_path)
                     print("  Restored pre-training snapshot.")
                 except Exception as restore_exc:
                     print(f"  Warning: rollback failed: {restore_exc}")

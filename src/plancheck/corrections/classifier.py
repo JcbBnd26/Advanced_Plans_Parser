@@ -23,6 +23,10 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
+# Feature schema version — increment when _NUMERIC_KEYS or ZONE_VALUES change.
+# Used by the feature cache to invalidate stale entries.
+FEATURE_VERSION: int = 5
+
 # Zone values for one-hot encoding — must match ZoneTag enum in analysis.zoning
 ZONE_VALUES: list[str] = [
     "border",
@@ -400,6 +404,34 @@ class ElementClassifier:
         metrics["ensemble_members"] = ensemble_members
         metrics["holdout_predictions"] = holdout_predictions
 
+        # Hyperparameters & feature set metadata (Phase 4.4)
+        hyperparams: dict = {}
+        if not ensemble:
+            hyperparams = {
+                "n_estimators": 200,
+                "max_depth": 3,
+                "learning_rate": 0.1,
+                "min_samples_leaf": 5,
+                "subsample": 0.8,
+                "random_state": 42,
+                "calibrated": calibrated_clf is not None,
+            }
+        else:
+            hyperparams = {
+                "ensemble": True,
+                "members": ensemble_members,
+                "calibrated": calibrated_clf is not None,
+            }
+        metrics["hyperparams"] = hyperparams
+        metrics["feature_set"] = {
+            "numeric_keys": len(_NUMERIC_KEYS),
+            "zone_values": len(ZONE_VALUES),
+            "base_dim": len(_NUMERIC_KEYS) + len(ZONE_VALUES),
+            "total_dim": X_train.shape[1],
+            "feature_version": FEATURE_VERSION,
+        }
+        metrics["feature_version"] = FEATURE_VERSION
+
         # Persist
         import joblib
 
@@ -513,6 +545,28 @@ class ElementClassifier:
             text_embedding = None  # model doesn't expect embedding dims
         x = encode_features(feature_dict, image_features, text_embedding).reshape(1, -1)
         # If model was trained with fewer features, trim to match
+        if self._n_features_in is not None and x.shape[1] > self._n_features_in:
+            x = x[:, : self._n_features_in]
+        proba = self._model.predict_proba(x)[0]
+        idx = int(np.argmax(proba))
+        label = self._model.classes_[idx]
+        return str(label), float(proba[idx])
+
+    def predict_from_vector(self, vector: np.ndarray) -> Tuple[str, float]:
+        """Predict from a pre-encoded feature vector (e.g. from cache).
+
+        Parameters
+        ----------
+        vector : numpy.ndarray
+            1-D float array already encoded by :func:`encode_features`.
+
+        Returns
+        -------
+        tuple[str, float]
+            ``(predicted_label, confidence)``.
+        """
+        self._load_model()
+        x = np.asarray(vector, dtype=np.float64).reshape(1, -1)
         if self._n_features_in is not None and x.shape[1] > self._n_features_in:
             x = x[:, : self._n_features_in]
         proba = self._model.predict_proba(x)[0]

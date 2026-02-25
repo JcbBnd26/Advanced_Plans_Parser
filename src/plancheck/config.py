@@ -435,6 +435,20 @@ class GroupingConfig:
     # Hidden dimension for GNN layers.
     ml_gnn_hidden_dim: int = 64
 
+    # ── ML drift & retraining (Phase 4) ───────────────────────────
+    # Enable data-drift detection during pipeline runs.
+    ml_drift_enabled: bool = False
+    # Path to the drift reference statistics file.
+    ml_drift_stats_path: str = "data/drift_stats.json"
+    # Fraction of flagged features to consider a vector drifted [0,1].
+    ml_drift_threshold: float = 0.3
+    # Number of new corrections to trigger an automatic retrain.
+    ml_retrain_threshold: int = 50
+    # Check for retrain eligibility on application startup.
+    ml_retrain_on_startup: bool = False
+    # Enable feature caching for expensive embeddings.
+    ml_feature_cache_enabled: bool = True
+
     def __post_init__(self) -> None:
         """Validate field ranges to catch misconfiguration early."""
         # -- Thresholds that must be in [0, 1] --
@@ -459,6 +473,7 @@ class GroupingConfig:
             "tocr_mojibake_threshold",
             "font_metrics_confidence_min",
             "ml_relabel_confidence",
+            "ml_drift_threshold",
         ]
         for name in _unit:
             _check_range(name, getattr(self, name), 0.0, 1.0)
@@ -510,6 +525,7 @@ class GroupingConfig:
             "overlay_region_outline_width",
             "overlay_span_outline_width",
             "ml_min_training_examples",
+            "ml_retrain_threshold",
         ]
         for name in _pos_ints:
             val = getattr(self, name)

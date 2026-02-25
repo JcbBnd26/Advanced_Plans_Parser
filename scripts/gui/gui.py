@@ -116,6 +116,7 @@ class PlanParserGUI:
         from overlay_viewer import OverlayViewerTab
         from tab_annotation import AnnotationTab
         from tab_diagnostics import DiagnosticsTab
+        from tab_mlops import MLOpsTab
         from tab_pipeline import PipelineTab
         from tab_recreation import RecreationTab
         from tab_runs import RunsTab
@@ -125,6 +126,7 @@ class PlanParserGUI:
         self._runs_tab = RunsTab(self.notebook, self.state)
         self._overlay_tab = OverlayViewerTab(self.notebook, gui_state=self.state)
         self._diagnostics_tab = DiagnosticsTab(self.notebook, self.state)
+        self._mlops_tab = MLOpsTab(self.notebook, self.state)
         self._recreation_tab = RecreationTab(self.notebook, self.state)
         self._annotation_tab = AnnotationTab(self.notebook, gui_state=self.state)
 
