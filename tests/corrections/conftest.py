@@ -52,4 +52,11 @@ def sample_features() -> dict:
         "kw_revision_pattern": 0,
         "kw_title_block_pattern": 0,
         "kw_detail_pattern": 0,
+        # Discriminative features (v3)
+        "text_density": 0.001,
+        "x_dist_to_right_margin": 0.3,
+        "line_width_variance": 0.0,
+        # OCR confidence features (v4)
+        "mean_token_confidence": 0.95,
+        "min_token_confidence": 0.8,
     }

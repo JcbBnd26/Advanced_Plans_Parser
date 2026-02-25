@@ -182,6 +182,18 @@ class CorrectionStore:
             )
             self._conn.commit()
 
+        # holdout_preds_json on training_runs (Phase 1.2)
+        tr_cols = {
+            r["name"]
+            for r in self._conn.execute("PRAGMA table_info(training_runs)").fetchall()
+        }
+        if "holdout_preds_json" not in tr_cols:
+            self._conn.execute(
+                "ALTER TABLE training_runs "
+                "ADD COLUMN holdout_preds_json TEXT DEFAULT ''"
+            )
+            self._conn.commit()
+
     def close(self) -> None:
         """Close the underlying database connection."""
         self._conn.close()
@@ -644,33 +656,27 @@ class CorrectionStore:
     # ── training set ───────────────────────────────────────────────────
 
     @staticmethod
-    def _deterministic_split(detection_id: str) -> str:
-        """Assign a deterministic train/val/test split using MD5.
+    def _deterministic_sort_key(detection_id: str) -> str:
+        """Return a deterministic sort key for a detection_id.
 
-        Uses ``hashlib.md5`` instead of Python's ``hash()`` to ensure
-        the same detection_id always maps to the same split, regardless
-        of ``PYTHONHASHSEED``, Python version, or host machine.
-
-        Split ratio: 70 % train, 20 % val, 10 % test.
+        Uses ``hashlib.md5`` to produce a stable hex digest that is
+        consistent across ``PYTHONHASHSEED`` values, Python versions,
+        and machines.
         """
-        h = int(hashlib.md5(detection_id.encode()).hexdigest()[-1], 16) % 10
-        if h < 7:
-            return "train"
-        elif h < 9:
-            return "val"
-        else:
-            return "test"
+        return hashlib.md5(detection_id.encode()).hexdigest()
 
     def build_training_set(self) -> int:
         """Rebuild the ``training_examples`` table from corrections.
 
         For each non-delete correction, creates a training example
         whose label is the *corrected* element type.  The split is
-        **stratified** by label then assigned deterministically via
-        ``hashlib.md5(detection_id)`` so the same id always lands in
-        the same split across runs, machines, and Python versions.
+        **truly stratified**: within each label group, examples are
+        sorted by a deterministic MD5 hash of ``detection_id`` then
+        the first 70 % are assigned to ``train``, the next 20 % to
+        ``val``, and the remaining 10 % to ``test``.
 
-        Split ratio (per class): 70 % train, 20 % val, 10 % test.
+        This guarantees every class with ≥2 examples has
+        representation in at least two splits.
 
         Returns the number of examples inserted.
         """
@@ -687,7 +693,7 @@ class CorrectionStore:
             "  AND c.detection_id IS NOT NULL"
         ).fetchall()
 
-        # ── Stratified split: group by label, assign within each group ──
+        # ── Stratified split: group by label, force distribution ────
         by_label: dict[str, list] = defaultdict(list)
         for r in rows:
             by_label[r["corrected_element_type"]].append(r)
@@ -695,9 +701,19 @@ class CorrectionStore:
         now = _utcnow_iso()
         count = 0
         for _label, group in sorted(by_label.items()):
-            for r in group:
+            # Sort deterministically within this class using MD5
+            group.sort(key=lambda r: self._deterministic_sort_key(r["detection_id"]))
+            n = len(group)
+            train_end = max(1, int(n * 0.7))  # at least 1 in train
+            val_end = max(train_end + 1, int(n * 0.9)) if n >= 2 else train_end
+            for i, r in enumerate(group):
                 features_json = r["corrected_features_json"] or r["features_json"]
-                split = self._deterministic_split(r["detection_id"])
+                if i < train_end:
+                    split = "train"
+                elif i < val_end:
+                    split = "val"
+                else:
+                    split = "test"
                 self._conn.execute(
                     "INSERT INTO training_examples "
                     "(example_id, source, correction_id, detection_id, "
@@ -832,7 +848,11 @@ class CorrectionStore:
     # ── training runs ──────────────────────────────────────────────────
 
     def save_training_run(
-        self, metrics: dict, model_path: str = "", notes: str = ""
+        self,
+        metrics: dict,
+        model_path: str = "",
+        notes: str = "",
+        holdout_predictions: list[dict] | None = None,
     ) -> str:
         """Persist a training-run record and return its ``run_…`` ID.
 
@@ -845,13 +865,17 @@ class CorrectionStore:
             Path to the saved model file (informational).
         notes : str
             Free-text annotation for this run.
+        holdout_predictions : list[dict] | None
+            Optional list of ``{"label_true", "label_pred", "confidence"}``
+            dicts from the validation set evaluation.
         """
         run_id = _gen_id("run_")
+        hp_json = json.dumps(holdout_predictions) if holdout_predictions else ""
         self._conn.execute(
             "INSERT INTO training_runs "
             "(run_id, trained_at, n_train, n_val, accuracy, f1_macro, f1_weighted, "
-            " labels_json, per_class_json, model_path, notes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " labels_json, per_class_json, model_path, notes, holdout_preds_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 _utcnow_iso(),
@@ -864,6 +888,7 @@ class CorrectionStore:
                 json.dumps(metrics.get("per_class", {})),
                 model_path,
                 notes,
+                hp_json,
             ),
         )
         self._conn.commit()
@@ -877,13 +902,15 @@ class CorrectionStore:
         list[dict]
             Each dict has: ``run_id``, ``trained_at``, ``n_train``,
             ``n_val``, ``accuracy``, ``f1_macro``, ``f1_weighted``,
-            ``labels``, ``per_class``, ``model_path``, ``notes``.
+            ``labels``, ``per_class``, ``model_path``, ``notes``,
+            ``holdout_predictions``.
         """
         rows = self._conn.execute(
             "SELECT * FROM training_runs ORDER BY trained_at DESC"
         ).fetchall()
         results: list[dict[str, Any]] = []
         for r in rows:
+            hp_raw = r["holdout_preds_json"] if "holdout_preds_json" in r.keys() else ""
             results.append(
                 {
                     "run_id": r["run_id"],
@@ -897,6 +924,63 @@ class CorrectionStore:
                     "per_class": json.loads(r["per_class_json"]),
                     "model_path": r["model_path"],
                     "notes": r["notes"],
+                    "holdout_predictions": json.loads(hp_raw) if hp_raw else [],
                 }
             )
         return results
+
+    def compare_runs(self, run_id_a: str, run_id_b: str) -> dict[str, Any]:
+        """Compare two training runs and return metric deltas.
+
+        Parameters
+        ----------
+        run_id_a, run_id_b : str
+            Run IDs to compare.  Convention: *a* is the baseline (older),
+            *b* is the candidate (newer).
+
+        Returns
+        -------
+        dict
+            ``f1_weighted_delta``, ``accuracy_delta``,
+            ``improved_classes``, ``regressed_classes``,
+            ``per_class_deltas``.
+
+        Raises
+        ------
+        ValueError
+            If either *run_id* is not found.
+        """
+        history = {r["run_id"]: r for r in self.get_training_history()}
+        if run_id_a not in history:
+            raise ValueError(f"Run not found: {run_id_a}")
+        if run_id_b not in history:
+            raise ValueError(f"Run not found: {run_id_b}")
+
+        a = history[run_id_a]
+        b = history[run_id_b]
+
+        f1_delta = b["f1_weighted"] - a["f1_weighted"]
+        acc_delta = b["accuracy"] - a["accuracy"]
+
+        # Per-class F1 deltas
+        all_classes = sorted(set(a["per_class"]) | set(b["per_class"]))
+        per_class_deltas: dict[str, float] = {}
+        improved: list[str] = []
+        regressed: list[str] = []
+        for cls in all_classes:
+            f1_a = a["per_class"].get(cls, {}).get("f1", 0.0)
+            f1_b = b["per_class"].get(cls, {}).get("f1", 0.0)
+            delta = f1_b - f1_a
+            per_class_deltas[cls] = round(delta, 6)
+            if delta > 0.005:
+                improved.append(cls)
+            elif delta < -0.005:
+                regressed.append(cls)
+
+        return {
+            "f1_weighted_delta": round(f1_delta, 6),
+            "accuracy_delta": round(acc_delta, 6),
+            "improved_classes": improved,
+            "regressed_classes": regressed,
+            "per_class_deltas": per_class_deltas,
+        }

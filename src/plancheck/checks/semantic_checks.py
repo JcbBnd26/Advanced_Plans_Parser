@@ -47,6 +47,26 @@ class CheckResult:
         return d
 
 
+# ── Severity attenuation based on OCR confidence ────────────────────
+
+_SEVERITY_DOWNGRADE = {"error": "warning", "warning": "info"}
+
+
+def _adjusted_severity(base: str, mean_ocr_conf: float, threshold: float = 0.6) -> str:
+    """Downgrade severity when mean OCR confidence is below *threshold*.
+
+    - ``error`` → ``warning``
+    - ``warning`` → ``info``
+    - ``info`` stays ``info``
+
+    When *mean_ocr_conf* ≥ *threshold* (or is exactly 1.0, i.e. PDF-only),
+    the base severity is returned unchanged.
+    """
+    if mean_ocr_conf >= threshold:
+        return base
+    return _SEVERITY_DOWNGRADE.get(base, base)
+
+
 # ── Individual checks ────────────────────────────────────────────────
 
 # 1. Notes numbering ─────────────────────────────────────────────────
@@ -959,11 +979,16 @@ def run_all_checks(
     title_blocks: Sequence[Any] | None = None,
     blocks: Sequence[Any] | None = None,
     page: int = 0,
+    mean_ocr_confidence: float = 1.0,
 ) -> List[CheckResult]:
     """Run all semantic checks and return a combined list of findings.
 
     Each parameter is optional — checks that require missing inputs are
     silently skipped, so callers can supply only what they have.
+
+    When *mean_ocr_confidence* is below the attenuation threshold (0.6),
+    finding severities are automatically downgraded (error→warning,
+    warning→info) to reflect reduced trust in OCR-derived data.
     """
     notes_columns = notes_columns or []
     abbreviation_regions = abbreviation_regions or []
@@ -1049,5 +1074,10 @@ def run_all_checks(
     # 15. Revision missing number
     if revision_regions:
         findings.extend(check_revision_missing_number(revision_regions, page=page))
+
+    # ── Post-process: attenuate severity on low OCR confidence ──────
+    if mean_ocr_confidence < 1.0:
+        for f in findings:
+            f.severity = _adjusted_severity(f.severity, mean_ocr_confidence)
 
     return findings

@@ -804,6 +804,10 @@ def _inject_symbols(
     _RE_COMPOSITE = re.compile(r"\d+\s*[%/°±]\s*\d+")
 
     for m in matches:
+        # Confidence gate: skip OCR tokens below reconcile confidence threshold
+        if m.ocr_confidence < cfg.ocr_reconcile_confidence:
+            continue
+
         ocr_text = m.ocr_box.text
 
         # Pre-filter: must contain at least one allowed symbol

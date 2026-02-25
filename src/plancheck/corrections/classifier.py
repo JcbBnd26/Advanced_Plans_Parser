@@ -4,7 +4,12 @@ Trains on JSONL exported by :meth:`CorrectionStore.export_training_jsonl`
 and predicts ``(label, confidence)`` for new feature dicts.
 
 Uses :class:`~sklearn.ensemble.GradientBoostingClassifier` with balanced
-class weighting via ``compute_sample_weight``.
+class weighting via ``compute_sample_weight``.  When ensemble mode is
+enabled, combines GBM + HistGradientBoosting (+ optional LightGBM/XGBoost)
+via soft-voting for more robust predictions.  Post-training, the model
+is wrapped with isotonic calibration via
+:class:`~sklearn.calibration.CalibratedClassifierCV` so that
+``predict_proba`` returns well-calibrated probabilities.
 """
 
 from __future__ import annotations
@@ -70,31 +75,47 @@ _NUMERIC_KEYS: list[str] = [
     "text_density",
     "x_dist_to_right_margin",
     "line_width_variance",
+    # OCR confidence features (added in v4)
+    "mean_token_confidence",
+    "min_token_confidence",
 ]
 
 _DEFAULT_MODEL_PATH = Path("data/element_classifier.pkl")
 
 
-def encode_features(feature_dict: dict) -> np.ndarray:
+def encode_features(
+    feature_dict: dict,
+    image_features: np.ndarray | None = None,
+) -> np.ndarray:
     """Convert a feature dict to a flat float array.
 
     The ``zone`` string is one-hot encoded into binary columns
     (one per :data:`ZONE_VALUES`).  All other keys are cast to float.
 
+    When *image_features* is provided (from
+    :func:`~plancheck.corrections.image_features.extract_image_features`),
+    the CNN embedding is appended to the end of the vector.
+
     Parameters
     ----------
     feature_dict : dict
         Output of :func:`~plancheck.corrections.features.featurize`.
+    image_features : numpy.ndarray, optional
+        1-D float array of CNN image embeddings (512-d for ResNet-18).
 
     Returns
     -------
     numpy.ndarray
-        1-D float64 array of length ``len(_NUMERIC_KEYS) + len(ZONE_VALUES)``.
+        1-D float64 array of length ``len(_NUMERIC_KEYS) + len(ZONE_VALUES)``
+        (+ ``image_features.shape[0]`` when vision is active).
     """
     numeric = [float(feature_dict.get(k, 0.0)) for k in _NUMERIC_KEYS]
     zone = feature_dict.get("zone", "unknown")
     one_hot = [1.0 if zone == z else 0.0 for z in ZONE_VALUES]
-    return np.array(numeric + one_hot, dtype=np.float64)
+    base = np.array(numeric + one_hot, dtype=np.float64)
+    if image_features is not None and len(image_features) > 0:
+        return np.concatenate([base, image_features.astype(np.float64)])
+    return base
 
 
 class ElementClassifier:
@@ -102,7 +123,14 @@ class ElementClassifier:
 
     Wraps ``sklearn.ensemble.GradientBoostingClassifier`` with helpers
     for encoding features, training from JSONL, and predicting labels.
-    Uses balanced sample weights to handle class imbalance.
+    Uses balanced sample weights to handle class imbalance.  After
+    training, the model is calibrated using isotonic regression so
+    that confidence scores are well-calibrated.
+
+    When *ensemble=True* is passed to :meth:`train`, a soft-voting
+    ensemble of GBM + HistGBM (+ optional LightGBM / XGBoost) is
+    used instead.  Falls back gracefully if optional packages are
+    not installed.
 
     Parameters
     ----------
@@ -113,10 +141,128 @@ class ElementClassifier:
     def __init__(self, model_path: Path = _DEFAULT_MODEL_PATH) -> None:
         self.model_path = Path(model_path)
         self._model = None
+        self._raw_model = None
+
+    # ── Private estimator builders ────────────────────────────────
+
+    @staticmethod
+    def _build_gbm(sample_weights=None):
+        """Build a GradientBoostingClassifier."""
+        from sklearn.ensemble import GradientBoostingClassifier
+
+        return GradientBoostingClassifier(
+            n_estimators=200,
+            max_depth=3,
+            learning_rate=0.1,
+            min_samples_leaf=5,
+            subsample=0.8,
+            random_state=42,
+        )
+
+    @staticmethod
+    def _build_hist_gbm():
+        """Build a HistGradientBoostingClassifier (sklearn built-in)."""
+        from sklearn.ensemble import HistGradientBoostingClassifier
+
+        return HistGradientBoostingClassifier(
+            max_iter=200,
+            max_depth=5,
+            learning_rate=0.1,
+            min_samples_leaf=10,
+            random_state=42,
+        )
+
+    @staticmethod
+    def _build_lgbm():
+        """Build a LGBMClassifier if *lightgbm* is installed, else None."""
+        try:
+            from lightgbm import LGBMClassifier
+
+            return LGBMClassifier(
+                n_estimators=200,
+                max_depth=5,
+                learning_rate=0.1,
+                min_child_samples=5,
+                subsample=0.8,
+                random_state=42,
+                verbose=-1,
+            )
+        except ImportError:
+            log.info("lightgbm not installed — skipping LGBMClassifier.")
+            return None
+
+    @staticmethod
+    def _build_xgb():
+        """Build an XGBClassifier if *xgboost* is installed, else None."""
+        try:
+            from xgboost import XGBClassifier
+
+            return XGBClassifier(
+                n_estimators=200,
+                max_depth=5,
+                learning_rate=0.1,
+                subsample=0.8,
+                random_state=42,
+                use_label_encoder=False,
+                eval_metric="mlogloss",
+                verbosity=0,
+            )
+        except ImportError:
+            log.info("xgboost not installed — skipping XGBClassifier.")
+            return None
+
+    def _build_ensemble(self):
+        """Build a VotingClassifier with available estimators.
+
+        Always includes GBM + HistGBM.  Adds LightGBM and XGBoost
+        when the packages are installed.
+
+        Returns
+        -------
+        VotingClassifier
+            Soft-voting ensemble.
+        list[str]
+            Names of the constituent estimators.
+        """
+        from sklearn.ensemble import VotingClassifier
+
+        estimators: list[tuple] = [
+            ("gbm", self._build_gbm()),
+            ("hist_gbm", self._build_hist_gbm()),
+        ]
+
+        lgbm = self._build_lgbm()
+        if lgbm is not None:
+            estimators.append(("lgbm", lgbm))
+
+        xgb = self._build_xgb()
+        if xgb is not None:
+            estimators.append(("xgb", xgb))
+
+        names = [name for name, _ in estimators]
+        log.info(
+            "Building ensemble with %d estimators: %s",
+            len(estimators),
+            ", ".join(names),
+        )
+
+        return (
+            VotingClassifier(
+                estimators=estimators,
+                voting="soft",
+            ),
+            names,
+        )
 
     # ── Training ───────────────────────────────────────────────────
 
-    def train(self, jsonl_path: Path) -> dict:
+    def train(
+        self,
+        jsonl_path: Path,
+        *,
+        calibrate: bool = True,
+        ensemble: bool = False,
+    ) -> dict:
         """Train a new model from exported JSONL.
 
         Parameters
@@ -124,19 +270,28 @@ class ElementClassifier:
         jsonl_path : Path
             Path to the JSONL file written by
             :meth:`CorrectionStore.export_training_jsonl`.
+        calibrate : bool
+            If *True* (default), apply isotonic calibration via
+            :class:`~sklearn.calibration.CalibratedClassifierCV`
+            so that ``predict_proba`` values are well-calibrated.
+        ensemble : bool
+            If *True*, use a soft-voting ensemble of GBM + HistGBM
+            (+ optional LightGBM / XGBoost).  Defaults to *False*
+            (single GBM).
 
         Returns
         -------
         dict
             Training metrics: ``accuracy``, ``per_class``,
-            ``confusion_matrix``, ``labels``, ``n_train``, ``n_val``.
+            ``confusion_matrix``, ``labels``, ``n_train``, ``n_val``,
+            ``calibrated``, ``ensemble``, ``ensemble_members``,
+            ``holdout_predictions``.
 
         Raises
         ------
         ValueError
             If fewer than 10 training examples are available.
         """
-        from sklearn.ensemble import GradientBoostingClassifier
         from sklearn.utils.class_weight import compute_sample_weight
 
         from .metrics import compute_metrics
@@ -165,16 +320,35 @@ class ElementClassifier:
         # Balanced class weighting
         sample_weights = compute_sample_weight("balanced", y_train)
 
-        # Fit — regularised defaults to reduce overfitting on small data
-        clf = GradientBoostingClassifier(
-            n_estimators=200,
-            max_depth=3,
-            learning_rate=0.1,
-            min_samples_leaf=5,
-            subsample=0.8,
-            random_state=42,
+        # Build and fit the model (single GBM or ensemble)
+        ensemble_members: list[str] = []
+        if ensemble:
+            clf, ensemble_members = self._build_ensemble()
+            # VotingClassifier doesn't natively forward sample_weight
+            # to all estimators.  Fit manually to pass weights to GBM.
+            clf.fit(X_train, y_train, sample_weight=sample_weights)
+            raw_model = clf  # keep ref for feature importance
+        else:
+            from sklearn.ensemble import GradientBoostingClassifier
+
+            clf = GradientBoostingClassifier(
+                n_estimators=200,
+                max_depth=3,
+                learning_rate=0.1,
+                min_samples_leaf=5,
+                subsample=0.8,
+                random_state=42,
+            )
+            clf.fit(X_train, y_train, sample_weight=sample_weights)
+            raw_model = clf
+
+        # ── Confidence calibration (isotonic regression) ──────────
+        calibrated_clf = self._calibrate(
+            clf,
+            X_train,
+            y_train,
+            calibrate=calibrate,
         )
-        clf.fit(X_train, y_train, sample_weight=sample_weights)
 
         # Evaluate on validation set (or training set if no val)
         eval_on_train = not bool(val_ex)
@@ -186,37 +360,128 @@ class ElementClassifier:
         eval_ex = val_ex if val_ex else train_ex
         X_eval = np.array([encode_features(e["features"]) for e in eval_ex])
         y_eval = [e["label"] for e in eval_ex]
-        y_pred = clf.predict(X_eval).tolist()
+        # Use calibrated model for evaluation when available
+        eval_model = calibrated_clf if calibrated_clf is not None else clf
+        y_pred = eval_model.predict(X_eval).tolist()
+
+        # Capture per-example holdout predictions for model comparison
+        holdout_predictions: list[dict] = []
+        if val_ex:
+            proba = eval_model.predict_proba(X_eval)
+            proba_max = proba.max(axis=1).tolist()
+            for i, ex in enumerate(val_ex):
+                holdout_predictions.append(
+                    {
+                        "label_true": y_eval[i],
+                        "label_pred": y_pred[i],
+                        "confidence": round(proba_max[i], 6),
+                    }
+                )
 
         labels = sorted(set(y_train) | set(y_eval))
         metrics = compute_metrics(y_eval, y_pred, labels=labels)
         metrics["n_train"] = len(train_ex)
         metrics["n_val"] = len(val_ex)
         metrics["eval_on_train"] = eval_on_train
+        metrics["calibrated"] = calibrated_clf is not None
+        metrics["ensemble"] = ensemble
+        metrics["ensemble_members"] = ensemble_members
+        metrics["holdout_predictions"] = holdout_predictions
 
         # Persist
         import joblib
 
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump({"model": clf, "classes": labels}, self.model_path)
+        payload: dict = {"model": raw_model, "classes": labels}
+        if calibrated_clf is not None:
+            payload["calibrated_model"] = calibrated_clf
+        if ensemble:
+            payload["ensemble_members"] = ensemble_members
+        # Record the expected feature vector length so that predict()
+        # can detect whether the model was trained with image features.
+        payload["n_features_in"] = X_train.shape[1]
+        joblib.dump(payload, self.model_path)
 
-        self._model = clf
+        self._raw_model = raw_model
+        self._model = calibrated_clf if calibrated_clf is not None else raw_model
+        self._n_features_in: int | None = X_train.shape[1]
 
         return metrics
 
     # ── Prediction ─────────────────────────────────────────────────
 
+    @staticmethod
+    def _calibrate(
+        clf,
+        X_train: np.ndarray,
+        y_train: list[str],
+        *,
+        calibrate: bool = True,
+    ):
+        """Wrap *clf* with isotonic calibration.
+
+        Returns the calibrated estimator, or *None* if calibration is
+        skipped or fails (e.g. too few examples per class for CV).
+        """
+        if not calibrate:
+            return None
+        try:
+            from sklearn.calibration import CalibratedClassifierCV
+
+            n_unique = len(set(y_train))
+            n_samples = len(y_train)
+            # Need enough samples for cross-validation folds
+            cv_folds = min(5, max(2, n_samples // max(n_unique, 1)))
+            if n_samples < cv_folds * n_unique:
+                log.warning(
+                    "Too few samples (%d) for calibration CV — skipping.",
+                    n_samples,
+                )
+                return None
+
+            cal = CalibratedClassifierCV(
+                estimator=clf,
+                method="isotonic",
+                cv=cv_folds,
+            )
+            cal.fit(X_train, y_train)
+            log.info(
+                "Model calibrated with isotonic regression (cv=%d).",
+                cv_folds,
+            )
+            return cal
+        except Exception:
+            log.warning("Calibration failed — using raw model.", exc_info=True)
+            return None
+
     def _load_model(self) -> None:
-        """Lazy-load the model from disk."""
+        """Lazy-load the model from disk.
+
+        Prefers ``calibrated_model`` when present in the pickle for
+        backward compatibility with pre-calibration model files.
+        """
         if self._model is not None:
             return
         import joblib
 
         data = joblib.load(self.model_path)
-        self._model = data["model"]
+        self._raw_model = data.get("model")
+        self._model = data.get("calibrated_model", data["model"])
+        self._n_features_in: int | None = data.get("n_features_in")
 
-    def predict(self, feature_dict: dict) -> Tuple[str, float]:
+    def predict(
+        self,
+        feature_dict: dict,
+        image_features: np.ndarray | None = None,
+    ) -> Tuple[str, float]:
         """Predict element type and confidence for a single feature dict.
+
+        Parameters
+        ----------
+        feature_dict : dict
+            Hand-crafted features from :func:`featurize`.
+        image_features : numpy.ndarray, optional
+            CNN image embedding for the element's visual crop.
 
         Returns
         -------
@@ -225,14 +490,30 @@ class ElementClassifier:
             maximum class probability.
         """
         self._load_model()
-        x = encode_features(feature_dict).reshape(1, -1)
+        # Only append image features if the model was trained with them.
+        # Base vector length = len(_NUMERIC_KEYS) + len(ZONE_VALUES).
+        base_dim = len(_NUMERIC_KEYS) + len(ZONE_VALUES)
+        if self._n_features_in is not None and self._n_features_in <= base_dim:
+            image_features = None  # model doesn't expect vision dims
+        x = encode_features(feature_dict, image_features).reshape(1, -1)
         proba = self._model.predict_proba(x)[0]
         idx = int(np.argmax(proba))
         label = self._model.classes_[idx]
         return str(label), float(proba[idx])
 
-    def predict_batch(self, feature_dicts: List[dict]) -> List[Tuple[str, float]]:
+    def predict_batch(
+        self,
+        feature_dicts: List[dict],
+        image_features_list: List[np.ndarray] | None = None,
+    ) -> List[Tuple[str, float]]:
         """Predict element types for a batch of feature dicts.
+
+        Parameters
+        ----------
+        feature_dicts : list[dict]
+            Hand-crafted features from :func:`featurize`.
+        image_features_list : list[numpy.ndarray], optional
+            Parallel list of CNN image embeddings (one per element).
 
         Returns
         -------
@@ -242,7 +523,19 @@ class ElementClassifier:
         if not feature_dicts:
             return []
         self._load_model()
-        X = np.array([encode_features(f) for f in feature_dicts])
+        # Only use image features if the model was trained with them
+        base_dim = len(_NUMERIC_KEYS) + len(ZONE_VALUES)
+        if self._n_features_in is not None and self._n_features_in <= base_dim:
+            image_features_list = None  # model doesn't expect vision dims
+        if image_features_list is not None:
+            X = np.array(
+                [
+                    encode_features(f, img)
+                    for f, img in zip(feature_dicts, image_features_list)
+                ]
+            )
+        else:
+            X = np.array([encode_features(f) for f in feature_dicts])
         probas = self._model.predict_proba(X)
         results: list[tuple[str, float]] = []
         for row in probas:
@@ -256,20 +549,33 @@ class ElementClassifier:
         return self.model_path.is_file()
 
     def get_feature_importance(self) -> dict[str, float]:
-        """Return feature-name → importance mapping from the trained model.
+        """Return feature-name -> importance mapping from the trained model.
 
-        Uses the model's ``feature_importances_`` property.
-        Returns an empty dict if no model is loaded or importances
-        cannot be computed.
+        Uses the raw (uncalibrated) model's ``feature_importances_``
+        property.  For ensemble models, extracts importances from the
+        first GBM estimator.  Returns an empty dict if no model is
+        loaded or importances cannot be computed.
         """
         self._load_model()
-        if self._model is None:
+        # Prefer the raw model — calibrated wrappers don't expose
+        # feature_importances_ directly.
+        model = self._raw_model if self._raw_model is not None else self._model
+        if model is None:
             return {}
+
+        # For VotingClassifier, extract the first named estimator
+        from sklearn.ensemble import VotingClassifier
+
+        if isinstance(model, VotingClassifier):
+            try:
+                model = model.estimators_[0]
+            except (IndexError, AttributeError):
+                pass
 
         feature_names = list(_NUMERIC_KEYS) + [f"zone_{z}" for z in ZONE_VALUES]
 
         try:
-            importances = np.asarray(self._model.feature_importances_)
+            importances = np.asarray(model.feature_importances_)
         except Exception:
             return {}
 
@@ -282,3 +588,83 @@ class ElementClassifier:
                 zip(feature_names, importances), key=lambda x: -x[1]
             )
         }
+
+    def calibration_curve(self, jsonl_path: Path) -> dict:
+        """Compute calibration curves for each class.
+
+        Parameters
+        ----------
+        jsonl_path : Path
+            Path to the JSONL file with ``features``, ``label``, and
+            ``split`` keys (typically the training export).
+
+        Returns
+        -------
+        dict
+            ``{"curves": {label: {"mean_predicted": [...], "fraction_positive": [...]}},
+              "ece": float}``
+            where ``ece`` is the Expected Calibration Error (weighted).
+        """
+        self._load_model()
+        if self._model is None:
+            return {"curves": {}, "ece": 0.0}
+
+        examples: list[dict] = []
+        with open(jsonl_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    examples.append(json.loads(line))
+
+        # Use validation examples when available, else all
+        val_ex = [e for e in examples if e.get("split") == "val"]
+        if not val_ex:
+            val_ex = examples
+        if not val_ex:
+            return {"curves": {}, "ece": 0.0}
+
+        X = np.array([encode_features(e["features"]) for e in val_ex])
+        y_true = [e["label"] for e in val_ex]
+        probas = self._model.predict_proba(X)
+        classes = list(self._model.classes_)
+
+        from sklearn.calibration import calibration_curve as _sk_cal_curve
+
+        curves: dict[str, dict] = {}
+        total_ece = 0.0
+        total_weight = 0
+
+        for i, cls in enumerate(classes):
+            y_binary = np.array([1 if yt == cls else 0 for yt in y_true])
+            p_cls = probas[:, i]
+            n_pos = int(y_binary.sum())
+            if n_pos == 0 or n_pos == len(y_binary):
+                continue  # skip classes with no positive/negative examples
+            try:
+                frac_pos, mean_pred = _sk_cal_curve(
+                    y_binary,
+                    p_cls,
+                    n_bins=min(10, max(3, n_pos)),
+                    strategy="uniform",
+                )
+                curves[cls] = {
+                    "mean_predicted": [round(float(v), 4) for v in mean_pred],
+                    "fraction_positive": [round(float(v), 4) for v in frac_pos],
+                }
+                # Per-class ECE contribution
+                bin_counts = np.histogram(
+                    p_cls,
+                    bins=len(frac_pos),
+                    range=(0, 1),
+                )[0]
+                ece = float(
+                    np.sum(np.abs(frac_pos - mean_pred) * bin_counts)
+                    / max(len(p_cls), 1)
+                )
+                total_ece += ece * n_pos
+                total_weight += n_pos
+            except Exception:
+                continue
+
+        weighted_ece = total_ece / total_weight if total_weight > 0 else 0.0
+        return {"curves": curves, "ece": round(weighted_ece, 4)}

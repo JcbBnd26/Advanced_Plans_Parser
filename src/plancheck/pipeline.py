@@ -346,6 +346,9 @@ class PageResult:
     title_blocks: List[TitleBlockInfo] = field(default_factory=list)
     page_zones: List[PageZone] = field(default_factory=list)
 
+    # Layout model predictions (Phase 2.2)
+    layout_predictions: list = field(default_factory=list)
+
     # Checks
     semantic_findings: List[CheckResult] = field(default_factory=list)
 
@@ -354,6 +357,7 @@ class PageResult:
 
     # Optional OCR artefacts
     ocr_tokens: Optional[List[GlyphBox]] = None
+    ocr_confs: Optional[List[float]] = None
     reconcile_result: Optional[ReconcileResult] = None
     background_image: Optional[Image.Image] = None
 
@@ -548,6 +552,7 @@ def _run_vocr_stage(
             sr_vocr.status = "success"
     pr.stages["vocr"] = sr_vocr
     pr.ocr_tokens = ocr_tokens
+    pr.ocr_confs = ocr_confs
     return ocr_tokens, ocr_confs
 
 
@@ -760,6 +765,23 @@ def _run_analysis_stage(
     pr.title_blocks = title_block_infos
     pr.page_zones = page_zones
 
+    # Optional: LayoutLMv3-based layout detection (Phase 2.2)
+    if cfg.ml_layout_enabled and pr.background_image is not None:
+        try:
+            from .analysis.layout_model import predict_layout
+
+            layout_preds = predict_layout(
+                pr.background_image,
+                boxes,
+                page_w,
+                page_h,
+                model_name_or_path=cfg.ml_layout_model_path,
+            )
+            pr.layout_predictions = layout_preds
+            log.info("Layout model: %d predictions", len(layout_preds))
+        except Exception:
+            log.debug("Layout model prediction failed", exc_info=True)
+
 
 def _run_checks_stage(
     pr: PageResult,
@@ -770,6 +792,10 @@ def _run_checks_stage(
     from .checks.semantic_checks import run_all_checks
 
     with run_stage("checks", cfg) as sr_chk:
+        # Compute mean OCR confidence for severity attenuation
+        _mean_conf = 1.0
+        if pr.ocr_confs:
+            _mean_conf = sum(pr.ocr_confs) / len(pr.ocr_confs)
         findings = run_all_checks(
             notes_columns=pr.notes_columns,
             abbreviation_regions=pr.abbreviation_regions,
@@ -781,6 +807,7 @@ def _run_checks_stage(
             title_blocks=pr.title_blocks,
             blocks=pr.blocks,
             page=page_num,
+            mean_ocr_confidence=_mean_conf,
         )
         sr_chk.counts = {"findings": len(findings)}
         sr_chk.status = "success"
@@ -1003,7 +1030,13 @@ def run_pipeline(
         # 3.  Confidence scoring: write model confidence to each
         #     detection row for display (coloured dots in the GUI).
         #
-        _apply_ml_feedback(correction_store, doc_id, page_num, cfg)
+        _apply_ml_feedback(
+            correction_store,
+            doc_id,
+            page_num,
+            cfg,
+            page_image=pr.background_image,
+        )
 
     # Stage 9: export (no-op in library mode)
     with run_stage("export", cfg) as sr_exp:
@@ -1016,9 +1049,6 @@ def run_pipeline(
 
 
 # ── ML feedback loop ───────────────────────────────────────────────────
-
-# Minimum confidence for the ML classifier to override a rule-based label.
-_ML_RELABEL_CONFIDENCE: float = 0.80
 
 
 def _bbox_iou(
@@ -1042,6 +1072,7 @@ def _apply_ml_feedback(
     doc_id: str,
     page_num: int,
     cfg: GroupingConfig,
+    page_image: Any = None,
 ) -> None:
     """Apply prior corrections + ML predictions to this page's detections.
 
@@ -1053,13 +1084,18 @@ def _apply_ml_feedback(
        matched, update the detection's ``element_type`` (and bbox if
        reshaped).  Delete-corrections hide the detection.
 
-    2. **ML relabelling**: if a trained :class:`ElementClassifier` exists,
-       run it over every *uncorrected* detection.  When the model
-       disagrees with the rule-based label **and** model confidence ≥
-       ``_ML_RELABEL_CONFIDENCE``, update the detection's label.
+    2. **ML relabelling**: if ``cfg.ml_enabled`` is *True* and a trained
+       :class:`ElementClassifier` exists, run it over every *uncorrected*
+       detection.  When the model disagrees with the rule-based label
+       **and** model confidence ≥ ``cfg.ml_relabel_confidence``, update
+       the detection's label.
 
     3. **Confidence scoring**: write model confidence to every detection
        regardless of whether the label was changed.
+
+    When *page_image* is provided and ``cfg.ml_vision_enabled`` is True,
+    CNN image embeddings are extracted for each detection and appended
+    to the feature vector.
     """
     try:
         dets = store.get_detections_for_page(doc_id, page_num)
@@ -1129,18 +1165,47 @@ def _apply_ml_feedback(
         store._conn.commit()
 
         # ── Pass 2 + 3: ML relabelling + confidence scoring ───────
+        if not cfg.ml_enabled:
+            return
+
         from .corrections.classifier import ElementClassifier
 
-        clf = ElementClassifier()
+        clf = ElementClassifier(model_path=Path(cfg.ml_model_path))
         if not clf.model_exists():
             return
+
+        # Optionally set up CNN image feature extractor
+        img_extractor = None
+        if cfg.ml_vision_enabled and page_image is not None:
+            try:
+                from .corrections.image_features import (
+                    ImageFeatureExtractor,
+                    is_vision_available,
+                )
+
+                if is_vision_available():
+                    img_extractor = ImageFeatureExtractor(
+                        backbone=cfg.ml_vision_backbone
+                    )
+            except Exception:
+                log.debug("Vision feature extractor init failed", exc_info=True)
 
         # Refresh detections after pass 1 modifications
         dets = store.get_detections_for_page(doc_id, page_num)
         for det in dets:
             if not det["features"]:
                 continue
-            pred_label, pred_conf = clf.predict(det["features"])
+
+            # Extract image features when vision is enabled
+            img_feat = None
+            if img_extractor is not None:
+                bbox = det["bbox"]
+                if bbox:
+                    img_feat = img_extractor.extract(page_image, tuple(bbox))
+
+            pred_label, pred_conf = clf.predict(
+                det["features"], image_features=img_feat
+            )
             did = det["detection_id"]
 
             # Always write confidence
@@ -1154,7 +1219,7 @@ def _apply_ml_feedback(
             if (
                 did not in corrected_det_ids
                 and pred_label != det["element_type"]
-                and pred_conf >= _ML_RELABEL_CONFIDENCE
+                and pred_conf >= cfg.ml_relabel_confidence
             ):
                 log.info(
                     "ML relabel: %s %s → %s (conf=%.2f)",

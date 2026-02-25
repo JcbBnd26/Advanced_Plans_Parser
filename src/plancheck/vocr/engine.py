@@ -68,29 +68,28 @@ def _get_ocr(cfg: "GroupingConfig | None" = None):
         _ocr_cache.move_to_end(key)
         return _ocr_cache[key]
 
-    if key not in _ocr_cache:
-        import os
+    import os
 
-        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
-        from paddleocr import PaddleOCR
+    from paddleocr import PaddleOCR
 
-        tier = key[0] if key[0] in _MODEL_TIERS else "mobile"
-        det_model, rec_model = _MODEL_TIERS[tier]
+    tier = key[0] if key[0] in _MODEL_TIERS else "mobile"
+    det_model, rec_model = _MODEL_TIERS[tier]
 
-        _ocr_cache[key] = PaddleOCR(
-            text_detection_model_name=det_model,
-            text_recognition_model_name=rec_model,
-            use_doc_orientation_classify=key[1],
-            use_doc_unwarping=key[2],
-            use_textline_orientation=key[3],
+    _ocr_cache[key] = PaddleOCR(
+        text_detection_model_name=det_model,
+        text_recognition_model_name=rec_model,
+        use_doc_orientation_classify=key[1],
+        use_doc_unwarping=key[2],
+        use_textline_orientation=key[3],
+    )
+    # Evict oldest entry if cache exceeds max size
+    while len(_ocr_cache) > _MAX_CACHE:
+        evicted_key, _ = _ocr_cache.popitem(last=False)
+        log.info(
+            "Evicted PaddleOCR engine %s from cache (max=%d)",
+            evicted_key,
+            _MAX_CACHE,
         )
-        # Evict oldest entry if cache exceeds max size
-        while len(_ocr_cache) > _MAX_CACHE:
-            evicted_key, _ = _ocr_cache.popitem(last=False)
-            log.info(
-                "Evicted PaddleOCR engine %s from cache (max=%d)",
-                evicted_key,
-                _MAX_CACHE,
-            )
     return _ocr_cache[key]

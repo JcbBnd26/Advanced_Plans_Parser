@@ -23,6 +23,15 @@ ocr = [
     "paddlepaddle>=3.0.0,<3.3; python_version<'3.13'",
     "paddleocr>=3.0.0; python_version<'3.13'",
 ]
+vision = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "timm>=1.0.0",
+]
+layout = [
+    "transformers>=4.30.0",
+    "torch>=2.0.0",
+]
 dev = [
     "pytest>=8.0.0",
 ]

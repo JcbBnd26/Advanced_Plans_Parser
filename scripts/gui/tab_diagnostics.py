@@ -273,6 +273,114 @@ class DiagnosticsTab:
 
         self._boxes_path: Path | None = None
 
+        # ── 6. ML Calibration ───────────────────────────────────────
+        cal_section = CollapsibleFrame(self._inner, "ML Calibration")
+        cal_section.grid(row=row, column=0, sticky="ew", **pad)
+        row += 1
+
+        cc = cal_section.content
+        cc.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            cc,
+            text="Generate a reliability diagram and ECE for the trained model.",
+            foreground="gray",
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
+        cal_btns = ttk.Frame(cc)
+        cal_btns.grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Button(
+            cal_btns,
+            text="Generate Reliability Diagram",
+            command=self._run_calibration_diagram,
+        ).pack(side="left", padx=2)
+
+        self._cal_canvas_frame = ttk.Frame(cc)
+        self._cal_canvas_frame.grid(row=2, column=0, sticky="ew", pady=2)
+
+        # ── 7. Model Comparison ──────────────────────────────────────
+        cmp_section = CollapsibleFrame(self._inner, "Model Comparison")
+        cmp_section.grid(row=row, column=0, sticky="ew", **pad)
+        row += 1
+
+        mc = cmp_section.content
+        mc.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            mc,
+            text="Compare two training runs side-by-side.",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(mc, text="Run A:").grid(row=1, column=0, sticky="w", pady=2)
+        self._cmp_run_a = tk.StringVar()
+        self._cmp_combo_a = ttk.Combobox(
+            mc,
+            textvariable=self._cmp_run_a,
+            state="readonly",
+            width=40,
+        )
+        self._cmp_combo_a.grid(row=1, column=1, sticky="w", padx=4)
+
+        ttk.Label(mc, text="Run B:").grid(row=2, column=0, sticky="w", pady=2)
+        self._cmp_run_b = tk.StringVar()
+        self._cmp_combo_b = ttk.Combobox(
+            mc,
+            textvariable=self._cmp_run_b,
+            state="readonly",
+            width=40,
+        )
+        self._cmp_combo_b.grid(row=2, column=1, sticky="w", padx=4)
+
+        cmp_btns = ttk.Frame(mc)
+        cmp_btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            cmp_btns,
+            text="Refresh Runs",
+            command=self._refresh_training_runs,
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            cmp_btns,
+            text="Compare",
+            command=self._compare_runs,
+        ).pack(side="left", padx=2)
+
+        # ── 8. Layout Model (LayoutLMv3) ─────────────────────────────
+        layout_section = CollapsibleFrame(self._inner, "Layout Model (LayoutLMv3)")
+        layout_section.grid(row=row, column=0, sticky="ew", **pad)
+        row += 1
+
+        lm = layout_section.content
+        lm.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            lm,
+            text="Run LayoutLMv3 layout detection on the current page.",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(lm, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
+        self._layout_model_var = tk.StringVar(value="microsoft/layoutlmv3-base")
+        ttk.Entry(lm, textvariable=self._layout_model_var, width=50).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=4,
+        )
+
+        layout_btns = ttk.Frame(lm)
+        layout_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            layout_btns,
+            text="Run Layout Detection",
+            command=self._run_layout_detection,
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            layout_btns,
+            text="Check Availability",
+            command=self._check_layout_avail,
+        ).pack(side="left", padx=2)
+
         # ── Log panel ────────────────────────────────────────────────
         self.log_panel = LogPanel(self.frame, height=8)
         self.log_panel.grid(
@@ -525,6 +633,209 @@ class DiagnosticsTab:
             self.log_panel.write(f"Error: {e}", "ERROR")
 
     # ------------------------------------------------------------------
+    # ML Calibration
+    # ------------------------------------------------------------------
+
+    def _run_calibration_diagram(self) -> None:
+        db_path = _project / "data" / "corrections.db"
+        model_path = _project / "data" / "element_classifier.pkl"
+        jsonl_path = _project / "data" / "training_data.jsonl"
+
+        if not model_path.exists():
+            messagebox.showwarning(
+                "No Model", "No trained model found. Run training first."
+            )
+            return
+        if not jsonl_path.exists():
+            messagebox.showwarning(
+                "No Data",
+                "No training_data.jsonl found. Run training first to generate it.",
+            )
+            return
+
+        self.log_panel.clear()
+        self._worker = PipelineWorker(self.root, self.log_panel)
+
+        def target():
+            from plancheck.corrections.classifier import ElementClassifier
+
+            clf = ElementClassifier(model_path=model_path)
+            result = clf.calibration_curve(jsonl_path)
+            return result
+
+        def on_done(result, error, elapsed):
+            if error or not result:
+                return
+            ece = result.get("ece", 0.0)
+            curves = result.get("curves", {})
+            self.log_panel.write(
+                f"Expected Calibration Error (ECE): {ece:.4f}",
+                "INFO",
+            )
+            for cls_name, data in curves.items():
+                n_bins = len(data["mean_predicted"])
+                self.log_panel.write(
+                    f"  {cls_name}: {n_bins} bins",
+                    "INFO",
+                )
+            self._draw_reliability_diagram(curves, ece)
+
+        self._worker.run(target, on_done=on_done)
+
+    def _draw_reliability_diagram(self, curves: dict, ece: float) -> None:
+        """Render a reliability diagram into the calibration canvas frame."""
+        # Clear previous
+        for w in self._cal_canvas_frame.winfo_children():
+            w.destroy()
+
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+        except ImportError:
+            self.log_panel.write(
+                "matplotlib not installed — cannot render diagram.",
+                "WARNING",
+            )
+            return
+
+        fig = Figure(figsize=(5, 4), dpi=96)
+        ax = fig.add_subplot(111)
+        ax.plot([0, 1], [0, 1], "k--", lw=1, label="Perfectly calibrated")
+
+        for cls_name, data in curves.items():
+            mp = data["mean_predicted"]
+            fp = data["fraction_positive"]
+            ax.plot(mp, fp, "o-", markersize=4, label=cls_name)
+
+        ax.set_xlabel("Mean predicted probability")
+        ax.set_ylabel("Fraction of positives")
+        ax.set_title(f"Reliability Diagram  (ECE = {ece:.4f})")
+        ax.legend(loc="lower right", fontsize=7)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self._cal_canvas_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="x", expand=True)
+
+    # ------------------------------------------------------------------
+    # Model Comparison
+    # ------------------------------------------------------------------
+
+    def _refresh_training_runs(self) -> None:
+        db_path = _project / "data" / "corrections.db"
+        if not db_path.exists():
+            messagebox.showwarning(
+                "No Database",
+                "corrections.db not found.",
+            )
+            return
+
+        from plancheck.corrections.store import CorrectionStore
+
+        store = CorrectionStore(db_path)
+        history = store.get_training_history()
+        store.close()
+
+        if not history:
+            messagebox.showinfo("No Runs", "No training runs found.")
+            return
+
+        display_values = []
+        for run in history:
+            display_values.append(
+                f"{run['run_id']} | F1={run['f1_weighted']:.3f} | {run['trained_at'][:16]}"
+            )
+
+        self._cmp_combo_a["values"] = display_values
+        self._cmp_combo_b["values"] = display_values
+        if len(display_values) >= 2:
+            self._cmp_combo_a.current(0)
+            self._cmp_combo_b.current(1)
+        elif len(display_values) == 1:
+            self._cmp_combo_a.current(0)
+            self._cmp_combo_b.current(0)
+
+        self.log_panel.write(
+            f"Loaded {len(history)} training run(s).",
+            "INFO",
+        )
+
+    def _compare_runs(self) -> None:
+        run_a_str = self._cmp_run_a.get()
+        run_b_str = self._cmp_run_b.get()
+        if not run_a_str or not run_b_str:
+            messagebox.showwarning(
+                "Select Runs",
+                "Select two training runs to compare.",
+            )
+            return
+
+        db_path = _project / "data" / "corrections.db"
+        from plancheck.corrections.store import CorrectionStore
+
+        store = CorrectionStore(db_path)
+        history = store.get_training_history()
+        store.close()
+
+        # Extract run_id from the display string ("run_xxxx | ...")
+        id_a = run_a_str.split(" | ")[0].strip()
+        id_b = run_b_str.split(" | ")[0].strip()
+
+        run_a = next((r for r in history if r["run_id"] == id_a), None)
+        run_b = next((r for r in history if r["run_id"] == id_b), None)
+
+        if not run_a or not run_b:
+            messagebox.showwarning("Not Found", "Could not find selected runs.")
+            return
+
+        self.log_panel.clear()
+        self.log_panel.write(
+            f"Comparing {id_a} vs {id_b}",
+            "INFO",
+        )
+        self.log_panel.write(
+            f"{'Metric':<25} {'Run A':>10} {'Run B':>10} {'Delta':>10}",
+            "INFO",
+        )
+        self.log_panel.write("-" * 57, "INFO")
+
+        for metric in ("accuracy", "f1_macro", "f1_weighted"):
+            va = run_a.get(metric, 0.0)
+            vb = run_b.get(metric, 0.0)
+            delta = vb - va
+            sign = "+" if delta >= 0 else ""
+            self.log_panel.write(
+                f"{metric:<25} {va:>10.4f} {vb:>10.4f} {sign}{delta:>9.4f}",
+                "INFO",
+            )
+
+        # Per-class comparison
+        pc_a = run_a.get("per_class", {})
+        pc_b = run_b.get("per_class", {})
+        all_classes = sorted(set(pc_a.keys()) | set(pc_b.keys()))
+        if all_classes:
+            self.log_panel.write("", "INFO")
+            self.log_panel.write(
+                f"{'Class':<20} {'F1(A)':>8} {'F1(B)':>8} {'Delta':>8}",
+                "INFO",
+            )
+            self.log_panel.write("-" * 46, "INFO")
+            for cls in all_classes:
+                f1_a = pc_a.get(cls, {}).get("f1", 0.0)
+                f1_b = pc_b.get(cls, {}).get("f1", 0.0)
+                delta = f1_b - f1_a
+                sign = "+" if delta >= 0 else ""
+                self.log_panel.write(
+                    f"{cls:<20} {f1_a:>8.4f} {f1_b:>8.4f} {sign}{delta:>7.4f}",
+                    "INFO",
+                )
+
+    # ------------------------------------------------------------------
     # Grouping Playground
     # ------------------------------------------------------------------
 
@@ -578,5 +889,90 @@ class DiagnosticsTab:
         def on_done(result, error, elapsed):
             if not error:
                 self.log_panel.write("Grouping complete.", "SUCCESS")
+
+        self._worker.run(target, on_done=on_done)
+
+    # ------------------------------------------------------------------
+    # Layout Model (LayoutLMv3)
+    # ------------------------------------------------------------------
+
+    def _check_layout_avail(self) -> None:
+        """Check if LayoutLMv3 dependencies are available."""
+        self.log_panel.clear()
+        try:
+            from plancheck.analysis.layout_model import is_layout_available
+
+            avail = is_layout_available()
+            if avail:
+                self.log_panel.write(
+                    "LayoutLMv3 is available (transformers + torch installed).",
+                    "SUCCESS",
+                )
+            else:
+                self.log_panel.write(
+                    "LayoutLMv3 NOT available. Install with: pip install 'plancheck[layout]'",
+                    "WARNING",
+                )
+        except Exception as exc:
+            self.log_panel.write(f"Error checking availability: {exc}", "ERROR")
+
+    def _run_layout_detection(self) -> None:
+        """Run LayoutLMv3 layout detection on the current page."""
+        pdf, _, _ = self._get_pdf_and_pages()
+        if pdf is None:
+            return
+        model_name = self._layout_model_var.get().strip()
+        if not model_name:
+            messagebox.showwarning("No Model", "Enter a LayoutLMv3 model name or path.")
+            return
+
+        self.log_panel.clear()
+        self._worker = PipelineWorker(self.root, self.log_panel)
+
+        def target():
+            from plancheck import GlyphBox, GroupingConfig, extract_tokens
+            from plancheck.analysis.layout_model import (
+                is_layout_available,
+                predict_layout,
+            )
+            from plancheck.ingest import render_page_image
+
+            if not is_layout_available():
+                raise RuntimeError(
+                    "LayoutLMv3 not available. "
+                    "Install with: pip install 'plancheck[layout]'"
+                )
+
+            print(f"Loading page from {pdf}...")
+            cfg = GroupingConfig()
+            tokens, pw, ph = extract_tokens(str(pdf), 0, cfg)
+            image = render_page_image(pdf, 0, resolution=150)
+
+            print(f"Running layout detection ({model_name})...")
+            preds = predict_layout(
+                image,
+                tokens,
+                pw,
+                ph,
+                model_name_or_path=model_name,
+            )
+
+            print(f"\nLayout predictions: {len(preds)}")
+            for p in preds:
+                bbox = p.bbox
+                print(
+                    f"  {p.label:20s} conf={p.confidence:.3f} "
+                    f"bbox=({bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}) "
+                    f"tokens={len(p.token_indices)}"
+                )
+            return preds
+
+        def on_done(result, error, elapsed):
+            if not error:
+                n = len(result) if result else 0
+                self.log_panel.write(
+                    f"Layout detection complete: {n} regions ({elapsed:.1f}s).",
+                    "SUCCESS",
+                )
 
         self._worker.run(target, on_done=on_done)

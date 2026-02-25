@@ -262,3 +262,254 @@ class TestElementClassifier:
                 zone = ex["features"].get("zone", "unknown")
                 label = ex["label"]
                 assert zone != label, f"Label leakage: zone={zone!r} == label={label!r}"
+
+    # ── Phase 1.1: Confidence Calibration ─────────────────────────
+
+    def test_train_saves_calibrated_model(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """Training should persist both raw and calibrated models."""
+        import joblib
+
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl)
+
+        assert metrics["calibrated"] is True
+
+        data = joblib.load(model_path)
+        assert "model" in data
+        assert "calibrated_model" in data
+        assert "classes" in data
+
+    def test_predict_uses_calibrated_model(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+        sample_features: dict,
+    ) -> None:
+        """Predictions should come from the calibrated model."""
+        import joblib
+
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        clf.train(training_jsonl)
+
+        # Verify the loaded model is the calibrated one
+        clf2 = ElementClassifier(model_path=model_path)
+        label, conf = clf2.predict(sample_features)
+        assert isinstance(label, str)
+        assert 0.0 <= conf <= 1.0
+
+        # Confirm _model is the calibrated variant
+        data = joblib.load(model_path)
+        assert clf2._model is not None
+        # The loaded model should be the calibrated wrapper type
+        from sklearn.calibration import CalibratedClassifierCV
+
+        assert isinstance(clf2._model, CalibratedClassifierCV)
+
+    def test_backward_compat_no_calibrated_key(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+        sample_features: dict,
+    ) -> None:
+        """Loading a pickle without calibrated_model should still work."""
+        import joblib
+
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        clf.train(training_jsonl)
+
+        # Simulate a pre-calibration pickle by removing calibrated_model
+        data = joblib.load(model_path)
+        del data["calibrated_model"]
+        joblib.dump(data, model_path)
+
+        clf2 = ElementClassifier(model_path=model_path)
+        label, conf = clf2.predict(sample_features)
+        assert isinstance(label, str)
+        assert 0.0 <= conf <= 1.0
+        # Should fall back to raw "model"
+        assert clf2._raw_model is not None
+
+    def test_train_no_calibration_flag(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """calibrate=False should skip calibration."""
+        import joblib
+
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl, calibrate=False)
+
+        assert metrics["calibrated"] is False
+
+        data = joblib.load(model_path)
+        assert "model" in data
+        assert "calibrated_model" not in data
+
+    def test_calibration_curve_returns_valid_structure(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """calibration_curve() should return curves and ECE."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        clf.train(training_jsonl)
+
+        result = clf.calibration_curve(training_jsonl)
+        assert "curves" in result
+        assert "ece" in result
+        assert isinstance(result["ece"], float)
+        assert 0.0 <= result["ece"] <= 1.0
+
+        # At least one class should have curve data
+        assert len(result["curves"]) > 0
+        for cls_name, curve_data in result["curves"].items():
+            assert "mean_predicted" in curve_data
+            assert "fraction_positive" in curve_data
+            assert len(curve_data["mean_predicted"]) == len(
+                curve_data["fraction_positive"]
+            )
+
+    def test_feature_importance_works_with_calibrated_model(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """Feature importance should work even with a calibrated model."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        clf.train(training_jsonl)
+
+        importance = clf.get_feature_importance()
+        assert isinstance(importance, dict)
+        assert len(importance) > 0
+
+    # ── Phase 1.2: Model Versioning ──────────────────────────────
+
+    def test_train_returns_holdout_predictions(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """train() metrics should include holdout_predictions list."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl)
+
+        hp = metrics.get("holdout_predictions")
+        assert isinstance(hp, list)
+        # We have 5 val examples in the fixture
+        assert len(hp) == 5
+        for entry in hp:
+            assert "label_true" in entry
+            assert "label_pred" in entry
+            assert "confidence" in entry
+            assert 0.0 <= entry["confidence"] <= 1.0
+
+    # ── Phase 1.3: Ensemble ──────────────────────────────────────
+
+    def test_ensemble_train_and_predict(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+        sample_features: dict,
+    ) -> None:
+        """Ensemble training should produce valid predictions."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl, ensemble=True)
+
+        assert metrics["ensemble"] is True
+        assert "gbm" in metrics["ensemble_members"]
+        assert "hist_gbm" in metrics["ensemble_members"]
+        assert "accuracy" in metrics
+        assert 0.0 <= metrics["accuracy"] <= 1.0
+
+        # Predict should work
+        label, conf = clf.predict(sample_features)
+        assert isinstance(label, str)
+        assert label in ["header", "notes_column", "legend"]
+        assert 0.0 <= conf <= 1.0
+
+    def test_ensemble_persists_member_names(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """Pickle should store ensemble_members list."""
+        import joblib
+
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        clf.train(training_jsonl, ensemble=True)
+
+        data = joblib.load(model_path)
+        assert "ensemble_members" in data
+        assert "gbm" in data["ensemble_members"]
+
+    def test_ensemble_feature_importance(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """Feature importance should work with ensemble model."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        clf.train(training_jsonl, ensemble=True)
+
+        importance = clf.get_feature_importance()
+        assert isinstance(importance, dict)
+        assert len(importance) > 0
+
+    def test_ensemble_with_calibration(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+        sample_features: dict,
+    ) -> None:
+        """Ensemble + calibration should both work together."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl, ensemble=True, calibrate=True)
+
+        assert metrics["ensemble"] is True
+        assert metrics["calibrated"] is True
+
+        label, conf = clf.predict(sample_features)
+        assert isinstance(label, str)
+        assert 0.0 <= conf <= 1.0
+
+    def test_ensemble_without_calibration(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """Ensemble + calibrate=False should skip calibration."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl, ensemble=True, calibrate=False)
+
+        assert metrics["ensemble"] is True
+        assert metrics["calibrated"] is False
+
+    def test_single_model_has_ensemble_false(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """Default (no ensemble) should set ensemble=False in metrics."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl)
+
+        assert metrics["ensemble"] is False
+        assert metrics["ensemble_members"] == []

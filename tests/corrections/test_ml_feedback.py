@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
+from plancheck.config import GroupingConfig
 from plancheck.corrections.classifier import _NUMERIC_KEYS, ElementClassifier
 from plancheck.corrections.store import CorrectionStore
 
@@ -242,7 +243,7 @@ class TestApplyMlFeedback:
 
         store = CorrectionStore(db_path=tmp_path / "test.db")
         doc_id = _register_doc(store)
-        cfg = MagicMock()  # GroupingConfig mock
+        cfg = GroupingConfig()  # real config — ml_enabled=True by default
 
         # Save a detection
         det_id = store.save_detection(
@@ -293,7 +294,7 @@ class TestApplyMlFeedback:
 
         store = CorrectionStore(db_path=tmp_path / "test.db")
         doc_id = _register_doc(store)
-        cfg = MagicMock()
+        cfg = GroupingConfig()
 
         det_id = store.save_detection(
             doc_id=doc_id,
@@ -339,7 +340,7 @@ class TestApplyMlFeedback:
 
         store = CorrectionStore(db_path=tmp_path / "test.db")
         doc_id = _register_doc(store)
-        cfg = MagicMock()
+        cfg = GroupingConfig()
 
         store.save_detection(
             doc_id=doc_id,
@@ -357,11 +358,11 @@ class TestApplyMlFeedback:
     def test_ml_relabel_with_model(self, tmp_path: Path) -> None:
         """When a model exists and is confident, it should relabel uncorrected detections."""
         from plancheck.corrections.classifier import ElementClassifier
-        from plancheck.pipeline import _ML_RELABEL_CONFIDENCE, _apply_ml_feedback
+        from plancheck.pipeline import _apply_ml_feedback
 
         store = CorrectionStore(db_path=tmp_path / "test.db")
         doc_id = _register_doc(store)
-        cfg = MagicMock()
+        cfg = GroupingConfig()
 
         model_path = _train_model(tmp_path)
 
@@ -397,7 +398,7 @@ class TestApplyMlFeedback:
 
         store = CorrectionStore(db_path=tmp_path / "test.db")
         doc_id = _register_doc(store)
-        cfg = MagicMock()
+        cfg = GroupingConfig()
 
         model_path = _train_model(tmp_path)
 
@@ -435,3 +436,76 @@ class TestApplyMlFeedback:
         det = next(d for d in dets if d["detection_id"] == det_id)
         # User's correction should be preserved (notes_column from pass 1)
         assert det["element_type"] == "notes_column"
+
+    def test_ml_disabled_skips_relabelling(self, tmp_path: Path) -> None:
+        """When cfg.ml_enabled is False, ML relabelling should be skipped entirely."""
+        from plancheck.corrections.classifier import ElementClassifier
+        from plancheck.pipeline import _apply_ml_feedback
+
+        store = CorrectionStore(db_path=tmp_path / "test.db")
+        doc_id = _register_doc(store)
+        cfg = GroupingConfig(ml_enabled=False)
+
+        model_path = _train_model(tmp_path)
+        cfg.ml_model_path = str(model_path)
+
+        det_id = store.save_detection(
+            doc_id=doc_id,
+            page=0,
+            run_id="run1",
+            element_type="header",
+            bbox=(100, 200, 400, 300),
+            text_content="test",
+            features=_make_features(zone="legend"),
+        )
+
+        _apply_ml_feedback(store, doc_id, 0, cfg)
+
+        # ML should not have touched the detection — label stays header
+        dets = store.get_detections_for_page(doc_id, 0)
+        det = next(d for d in dets if d["detection_id"] == det_id)
+        assert det["element_type"] == "header"
+        # Confidence should not have been set by ML either
+        assert det["confidence"] is None
+
+    def test_ml_relabel_confidence_from_config(self, tmp_path: Path) -> None:
+        """The ML relabel threshold should come from cfg.ml_relabel_confidence."""
+        from plancheck.corrections.classifier import ElementClassifier
+        from plancheck.pipeline import _apply_ml_feedback
+
+        store = CorrectionStore(db_path=tmp_path / "test.db")
+        doc_id = _register_doc(store)
+
+        model_path = _train_model(tmp_path)
+
+        det_id = store.save_detection(
+            doc_id=doc_id,
+            page=0,
+            run_id="run1",
+            element_type="header",
+            bbox=(100, 200, 400, 300),
+            text_content="test",
+            features=_make_features(zone="header"),
+        )
+
+        # Use a very high threshold so ML never relabels
+        cfg = GroupingConfig(ml_relabel_confidence=0.9999)
+        cfg.ml_model_path = str(model_path)
+
+        real_clf = ElementClassifier(model_path=model_path)
+        with patch(
+            "plancheck.corrections.classifier.ElementClassifier",
+            return_value=real_clf,
+        ) as mock_cls:
+            mock_cls.return_value = real_clf
+            _apply_ml_feedback(store, doc_id, 0, cfg)
+
+        dets = store.get_detections_for_page(doc_id, 0)
+        det = next(d for d in dets if d["detection_id"] == det_id)
+        # Even though model may disagree, the extreme threshold prevents relabelling
+        # (confidence will be set but label is preserved unless confidence >= 0.9999)
+        assert det["confidence"] is not None
+        assert 0.0 <= det["confidence"] <= 1.0
+        # With threshold at 0.9999, label should stay as "header" unless the
+        # model has near-perfect confidence — which is unlikely on 15 examples
+        assert det["element_type"] == "header"

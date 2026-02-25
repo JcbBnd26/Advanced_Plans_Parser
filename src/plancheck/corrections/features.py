@@ -3,7 +3,7 @@
 Converts pipeline objects into flat feature dicts suitable for
 JSON serialisation and downstream classification.
 
-Feature schema (35 keys):
+Feature schema (37 keys):
   - 3 font metrics: font_size_pt, font_size_max_pt, font_size_min_pt
   - 8 text properties: is_all_caps, is_bold, token_count, row_count,
         text_length, avg_chars_per_token, unique_word_ratio,
@@ -19,6 +19,7 @@ Feature schema (35 keys):
   - 1 zone: zone (string, one-hot encoded by classifier)
   - 3 discriminative: text_density, x_dist_to_right_margin,
         line_width_variance
+  - 2 OCR confidence: mean_token_confidence, min_token_confidence
 """
 
 from __future__ import annotations
@@ -241,6 +242,11 @@ def featurize(
     else:
         line_width_variance = 0.0
 
+    # ── OCR confidence features (v4) ───────────────────────────────
+    confs = [b.confidence for b in boxes]
+    mean_token_confidence = round(statistics.mean(confs), 4) if confs else 1.0
+    min_token_confidence = round(min(confs), 4) if confs else 1.0
+
     return {
         "font_size_pt": round(font_size_pt, 2),
         "font_size_max_pt": round(font_size_max_pt, 2),
@@ -270,6 +276,8 @@ def featurize(
         "text_density": text_density,
         "x_dist_to_right_margin": x_dist_to_right_margin,
         "line_width_variance": line_width_variance,
+        "mean_token_confidence": mean_token_confidence,
+        "min_token_confidence": min_token_confidence,
         **kw_scores,
     }
 
@@ -321,6 +329,7 @@ def featurize_region(
     has_colon = 0
     has_period_after_num = 0
 
+    all_text_str = ""
     if header_block is not None:
         boxes = header_block.get_all_boxes()
         if boxes:
@@ -328,8 +337,8 @@ def featurize_region(
             font_size_pt = float(statistics.median(sizes))
             font_size_max_pt = float(max(sizes))
             font_size_min_pt = float(min(sizes))
-            all_text = " ".join(b.text for b in boxes)
-            alpha = [c for c in all_text if c.isalpha()]
+            all_text_str = " ".join(b.text for b in boxes)
+            alpha = [c for c in all_text_str if c.isalpha()]
             upper = sum(1 for c in alpha if c.isupper())
             is_all_caps = int((upper / max(len(alpha), 1)) > 0.8) if alpha else 0
             fnames = [b.fontname for b in boxes if b.fontname]
@@ -337,19 +346,12 @@ def featurize_region(
             is_bold = int(bc > len(fnames) / 2) if fnames else 0
             token_count = max(token_count, len(boxes))
             row_count = len(header_block.rows)
-            text_length = len(all_text)
-            contains_digit = int(any(c.isdigit() for c in all_text))
+            text_length = len(all_text_str)
+            contains_digit = int(any(c.isdigit() for c in all_text_str))
             first_text = boxes[0].text if boxes else ""
             starts_with_digit = int(bool(first_text) and first_text[0].isdigit())
             has_colon = int(any(":" in b.text for b in boxes))
             has_period_after_num = int(bool(re.match(r"^\d+\.", first_text)))
-
-    # Text-content features (from header if available)
-    all_text_str = ""
-    if header_block is not None:
-        hb = header_block.get_all_boxes()
-        if hb:
-            all_text_str = " ".join(b.text for b in hb)
 
     words = all_text_str.split()
     n_words = len(words)
@@ -365,6 +367,16 @@ def featurize_region(
     text_density = round(text_length / area, 6)
     x_dist_to_right_margin = round((pw - x1) / pw, 4)
     line_width_variance = 0.0  # regions don't have per-row data
+
+    # ── OCR confidence features (v4) ───────────────────────────────
+    if header_block is not None:
+        hboxes = header_block.get_all_boxes()
+        hconfs = [b.confidence for b in hboxes] if hboxes else []
+        mean_token_confidence = round(statistics.mean(hconfs), 4) if hconfs else 1.0
+        min_token_confidence = round(min(hconfs), 4) if hconfs else 1.0
+    else:
+        mean_token_confidence = 1.0
+        min_token_confidence = 1.0
 
     return {
         "font_size_pt": round(font_size_pt, 2),
@@ -395,5 +407,7 @@ def featurize_region(
         "text_density": text_density,
         "x_dist_to_right_margin": x_dist_to_right_margin,
         "line_width_variance": line_width_variance,
+        "mean_token_confidence": mean_token_confidence,
+        "min_token_confidence": min_token_confidence,
         **kw_scores,
     }

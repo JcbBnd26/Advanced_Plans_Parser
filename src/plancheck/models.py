@@ -276,6 +276,7 @@ class GlyphBox:
     origin: str = "text"
     fontname: str = ""
     font_size: float = 0.0
+    confidence: float = 1.0
 
     def width(self) -> float:
         """Horizontal extent in points."""
@@ -305,6 +306,7 @@ class GlyphBox:
             "origin": self.origin,
             "fontname": self.fontname,
             "font_size": round(self.font_size, 3),
+            "confidence": round(self.confidence, 4),
         }
 
     @classmethod
@@ -320,6 +322,7 @@ class GlyphBox:
             origin=d.get("origin", "text"),
             fontname=d.get("fontname", ""),
             font_size=d.get("font_size", 0.0),
+            confidence=d.get("confidence", 1.0),
         )
 
 

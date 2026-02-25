@@ -99,6 +99,7 @@ def _ocr_one_tile(
                     y1=max(ys) / sy,
                     text=text,
                     origin="ocr_full",
+                    confidence=float(conf),
                 )
             )
             confidences.append(conf)

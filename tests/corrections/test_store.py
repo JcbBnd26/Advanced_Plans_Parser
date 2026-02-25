@@ -388,3 +388,150 @@ class TestTrainingRuns:
 
     def test_empty_history(self, tmp_store: CorrectionStore) -> None:
         assert tmp_store.get_training_history() == []
+
+    def test_save_training_run_with_holdout_preds(
+        self, tmp_store: CorrectionStore
+    ) -> None:
+        """Holdout predictions are persisted and retrieved."""
+        holdout = [
+            {"label_true": "header", "label_pred": "header", "confidence": 0.95},
+            {"label_true": "notes_column", "label_pred": "header", "confidence": 0.6},
+        ]
+        metrics = {
+            "accuracy": 0.80,
+            "f1_macro": 0.75,
+            "f1_weighted": 0.78,
+            "n_train": 50,
+            "n_val": 10,
+            "labels": ["header", "notes_column"],
+            "per_class": {
+                "header": {"precision": 0.9, "recall": 0.8, "f1": 0.85, "support": 5},
+                "notes_column": {
+                    "precision": 0.7,
+                    "recall": 0.8,
+                    "f1": 0.74,
+                    "support": 5,
+                },
+            },
+        }
+        run_id = tmp_store.save_training_run(
+            metrics,
+            model_path="model.pkl",
+            notes="holdout test",
+            holdout_predictions=holdout,
+        )
+        history = tmp_store.get_training_history()
+        assert len(history) == 1
+        assert history[0]["run_id"] == run_id
+        assert len(history[0]["holdout_predictions"]) == 2
+        assert history[0]["holdout_predictions"][0]["label_true"] == "header"
+        assert history[0]["holdout_predictions"][1]["confidence"] == 0.6
+
+    def test_save_training_run_without_holdout_preds(
+        self, tmp_store: CorrectionStore
+    ) -> None:
+        """Omitting holdout_predictions returns empty list on retrieval."""
+        metrics = {
+            "accuracy": 0.80,
+            "n_train": 10,
+            "n_val": 5,
+            "labels": [],
+            "per_class": {},
+        }
+        tmp_store.save_training_run(metrics, notes="no holdout")
+        history = tmp_store.get_training_history()
+        assert history[0]["holdout_predictions"] == []
+
+    def test_compare_runs_shows_deltas(self, tmp_store: CorrectionStore) -> None:
+        """compare_runs returns correct per-class and aggregate deltas."""
+        m_a = {
+            "accuracy": 0.80,
+            "f1_macro": 0.75,
+            "f1_weighted": 0.78,
+            "n_train": 50,
+            "n_val": 10,
+            "labels": ["header", "notes_column"],
+            "per_class": {
+                "header": {"precision": 0.9, "recall": 0.8, "f1": 0.85, "support": 5},
+                "notes_column": {
+                    "precision": 0.7,
+                    "recall": 0.8,
+                    "f1": 0.74,
+                    "support": 5,
+                },
+            },
+        }
+        m_b = {
+            "accuracy": 0.90,
+            "f1_macro": 0.88,
+            "f1_weighted": 0.89,
+            "n_train": 80,
+            "n_val": 20,
+            "labels": ["header", "notes_column"],
+            "per_class": {
+                "header": {"precision": 0.95, "recall": 0.9, "f1": 0.92, "support": 10},
+                "notes_column": {
+                    "precision": 0.85,
+                    "recall": 0.85,
+                    "f1": 0.85,
+                    "support": 10,
+                },
+            },
+        }
+        rid_a = tmp_store.save_training_run(m_a, notes="baseline")
+        rid_b = tmp_store.save_training_run(m_b, notes="candidate")
+
+        cmp = tmp_store.compare_runs(rid_a, rid_b)
+        assert cmp["f1_weighted_delta"] == pytest.approx(0.11, abs=1e-4)
+        assert cmp["accuracy_delta"] == pytest.approx(0.10, abs=1e-4)
+        assert "header" in cmp["improved_classes"]
+        assert "notes_column" in cmp["improved_classes"]
+        assert cmp["regressed_classes"] == []
+        assert cmp["per_class_deltas"]["header"] == pytest.approx(0.07, abs=1e-4)
+
+    def test_compare_runs_detects_regression(self, tmp_store: CorrectionStore) -> None:
+        """compare_runs correctly identifies regressed classes."""
+        m_a = {
+            "accuracy": 0.90,
+            "f1_macro": 0.88,
+            "f1_weighted": 0.89,
+            "n_train": 50,
+            "n_val": 10,
+            "labels": ["header"],
+            "per_class": {
+                "header": {"precision": 0.95, "recall": 0.9, "f1": 0.92, "support": 10},
+            },
+        }
+        m_b = {
+            "accuracy": 0.80,
+            "f1_macro": 0.75,
+            "f1_weighted": 0.78,
+            "n_train": 50,
+            "n_val": 10,
+            "labels": ["header"],
+            "per_class": {
+                "header": {"precision": 0.80, "recall": 0.7, "f1": 0.74, "support": 10},
+            },
+        }
+        rid_a = tmp_store.save_training_run(m_a, notes="good")
+        rid_b = tmp_store.save_training_run(m_b, notes="bad")
+
+        cmp = tmp_store.compare_runs(rid_a, rid_b)
+        assert cmp["f1_weighted_delta"] < 0
+        assert "header" in cmp["regressed_classes"]
+        assert cmp["improved_classes"] == []
+
+    def test_compare_runs_missing_id(self, tmp_store: CorrectionStore) -> None:
+        """compare_runs raises ValueError for unknown run IDs."""
+        m = {
+            "accuracy": 0.80,
+            "n_train": 10,
+            "n_val": 5,
+            "labels": [],
+            "per_class": {},
+        }
+        rid = tmp_store.save_training_run(m, notes="only")
+        with pytest.raises(ValueError, match="Run not found"):
+            tmp_store.compare_runs(rid, "run_nonexistent")
+        with pytest.raises(ValueError, match="Run not found"):
+            tmp_store.compare_runs("run_nonexistent", rid)

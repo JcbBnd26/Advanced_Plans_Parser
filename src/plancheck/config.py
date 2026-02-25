@@ -402,6 +402,16 @@ class GroupingConfig:
     ml_enabled: bool = True
     # Minimum training examples required before allowing model training.
     ml_min_training_examples: int = 10
+    # Enable soft-voting ensemble (GBM + HistGBM + optional LightGBM/XGBoost).
+    ml_ensemble_enabled: bool = False
+    # Enable CNN image-feature extraction (requires torch + timm).
+    ml_vision_enabled: bool = False
+    # timm backbone model name (e.g. "resnet18", "efficientnet_b0").
+    ml_vision_backbone: str = "resnet18"
+    # Enable LayoutLMv3-based page layout detection (requires transformers + torch).
+    ml_layout_enabled: bool = False
+    # LayoutLMv3 model name or path to fine-tuned checkpoint.
+    ml_layout_model_path: str = "microsoft/layoutlmv3-base"
 
     def __post_init__(self) -> None:
         """Validate field ranges to catch misconfiguration early."""
