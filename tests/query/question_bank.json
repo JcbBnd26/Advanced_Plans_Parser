@@ -1,0 +1,531 @@
+{
+    "version": "1.0",
+    "description": "Ground-truth question bank for evaluating the plan document query engine. Each entry has a question, expected answer (reference), required_keywords (must appear in a good answer), and optional metadata.",
+    "questions": [
+        {
+            "id": "q01",
+            "question": "What is the project name shown on the title block?",
+            "topic": "title_block",
+            "expected_answer": "The project name should be extracted from the title block region of the plan.",
+            "required_keywords": [
+                "project",
+                "name"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q02",
+            "question": "What is the sheet number?",
+            "topic": "title_block",
+            "expected_answer": "The sheet number should be found in the title block metadata.",
+            "required_keywords": [
+                "sheet"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q03",
+            "question": "What date was this drawing last revised?",
+            "topic": "revisions",
+            "expected_answer": "The revision date should come from the revision table on the sheet.",
+            "required_keywords": [
+                "date",
+                "revis"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q04",
+            "question": "List all general notes on this sheet.",
+            "topic": "notes",
+            "expected_answer": "All note items from the notes column should be enumerated.",
+            "required_keywords": [
+                "note"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q05",
+            "question": "What abbreviations are defined on this plan?",
+            "topic": "abbreviations",
+            "expected_answer": "Abbreviation entries should be listed with their full-form expansions.",
+            "required_keywords": [
+                "abbreviat"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q06",
+            "question": "What does the abbreviation 'GYP. BD.' stand for?",
+            "topic": "abbreviations",
+            "expected_answer": "Gypsum Board.",
+            "required_keywords": [
+                "gypsum",
+                "board"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q07",
+            "question": "Describe the legend symbols shown on the sheet.",
+            "topic": "legends",
+            "expected_answer": "Legend entries with their descriptions should be listed.",
+            "required_keywords": [
+                "legend",
+                "symbol"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q08",
+            "question": "What fire rating requirements are mentioned in the notes?",
+            "topic": "compliance",
+            "expected_answer": "Fire rating references from general notes, e.g. 1-hour, 2-hour rated assemblies.",
+            "required_keywords": [
+                "fire",
+                "rat"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q09",
+            "question": "Are there any accessibility requirements mentioned?",
+            "topic": "compliance",
+            "expected_answer": "ADA or accessibility references from notes.",
+            "required_keywords": [
+                "access"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q10",
+            "question": "What structural materials are specified?",
+            "topic": "materials",
+            "expected_answer": "Steel, concrete, wood, or other structural materials mentioned in notes or details.",
+            "required_keywords": [
+                "material"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q11",
+            "question": "What concrete strength (PSI) is specified?",
+            "topic": "materials",
+            "expected_answer": "Concrete compressive strength specification, e.g. 3000 PSI, 4000 PSI.",
+            "required_keywords": [
+                "concrete",
+                "psi"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q12",
+            "question": "What is the revision history of this sheet?",
+            "topic": "revisions",
+            "expected_answer": "Revision entries with dates and descriptions.",
+            "required_keywords": [
+                "revision"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q13",
+            "question": "Are there any references to IBC or building code sections?",
+            "topic": "compliance",
+            "expected_answer": "Building code references found in notes, e.g. IBC 2021 Section references.",
+            "required_keywords": [
+                "code",
+                "IBC"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q14",
+            "question": "What standard details are referenced on this sheet?",
+            "topic": "standard_details",
+            "expected_answer": "Detail callouts referenced in the plan.",
+            "required_keywords": [
+                "detail"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q15",
+            "question": "Summarize the key information on this sheet in 3-5 sentences.",
+            "topic": "summary",
+            "expected_answer": "A concise summary covering the sheet type, key notes, and major content areas.",
+            "required_keywords": [],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q16",
+            "question": "What dimensions or measurements are noted on this sheet?",
+            "topic": "dimensions",
+            "expected_answer": "Dimensions extracted from notes, details, or annotations.",
+            "required_keywords": [
+                "dimension"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q17",
+            "question": "What roof specifications are mentioned?",
+            "topic": "materials",
+            "expected_answer": "Roofing material specs, slopes, or assembly descriptions.",
+            "required_keywords": [
+                "roof"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q18",
+            "question": "What insulation requirements are specified in the notes?",
+            "topic": "materials",
+            "expected_answer": "Insulation type, R-value, or thickness specifications.",
+            "required_keywords": [
+                "insulat"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q19",
+            "question": "What waterproofing or moisture barriers are mentioned?",
+            "topic": "materials",
+            "expected_answer": "Waterproofing or vapor barrier specifications from notes.",
+            "required_keywords": [
+                "water",
+                "moisture"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q20",
+            "question": "What contractor responsibilities are outlined in the notes?",
+            "topic": "notes",
+            "expected_answer": "Contractor responsibilities described in general or specific notes.",
+            "required_keywords": [
+                "contractor"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q21",
+            "question": "Are there any seismic design requirements mentioned?",
+            "topic": "compliance",
+            "expected_answer": "Seismic design category, SDC, or earthquake-related requirements.",
+            "required_keywords": [
+                "seismic"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q22",
+            "question": "What welding specifications or standards are referenced?",
+            "topic": "materials",
+            "expected_answer": "Welding standards such as AWS D1.1 or similar references.",
+            "required_keywords": [
+                "weld"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q23",
+            "question": "What is the occupancy classification for this building?",
+            "topic": "compliance",
+            "expected_answer": "Occupancy group classification per IBC, e.g. B, A-2, S-1.",
+            "required_keywords": [
+                "occupancy"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q24",
+            "question": "What foundation details or specifications are shown?",
+            "topic": "structural",
+            "expected_answer": "Foundation type, depth, reinforcement details.",
+            "required_keywords": [
+                "foundation"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q25",
+            "question": "What MEP (Mechanical, Electrical, Plumbing) references are on this sheet?",
+            "topic": "cross_reference",
+            "expected_answer": "References to MEP drawings or coordination notes.",
+            "required_keywords": [
+                "mechanical",
+                "electrical",
+                "plumbing"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q26",
+            "question": "What type of plan sheet is this (e.g., floor plan, elevation, detail)?",
+            "topic": "title_block",
+            "expected_answer": "The sheet type derived from the title block or sheet name.",
+            "required_keywords": [
+                "plan",
+                "sheet"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q27",
+            "question": "What scale is this drawing shown at?",
+            "topic": "title_block",
+            "expected_answer": "Drawing scale, e.g. 1/4\" = 1'-0\" or NTS.",
+            "required_keywords": [
+                "scale"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q28",
+            "question": "Who is the architect or engineer of record?",
+            "topic": "title_block",
+            "expected_answer": "The AOR or EOR name from the title block.",
+            "required_keywords": [
+                "architect",
+                "engineer"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q29",
+            "question": "Are there any notes about inspection or testing requirements?",
+            "topic": "notes",
+            "expected_answer": "Special inspection or testing requirements from notes.",
+            "required_keywords": [
+                "inspect"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q30",
+            "question": "What floor or level does this sheet correspond to?",
+            "topic": "title_block",
+            "expected_answer": "Floor/level identifier from the sheet metadata.",
+            "required_keywords": [
+                "floor",
+                "level"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q31",
+            "question": "What paint or finish specifications are mentioned?",
+            "topic": "materials",
+            "expected_answer": "Paint types, finish specifications from notes.",
+            "required_keywords": [
+                "paint",
+                "finish"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q32",
+            "question": "What door or window schedule information is shown?",
+            "topic": "schedule",
+            "expected_answer": "Door/window types, sizes, or schedule entries.",
+            "required_keywords": [
+                "door",
+                "window"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q33",
+            "question": "Are there demolition notes in this plan?",
+            "topic": "notes",
+            "expected_answer": "Demolition work scope described in notes.",
+            "required_keywords": [
+                "demolit"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q34",
+            "question": "What are the setback or property line dimensions?",
+            "topic": "dimensions",
+            "expected_answer": "Property line setbacks or boundary dimensions.",
+            "required_keywords": [
+                "setback",
+                "property"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q35",
+            "question": "What HVAC equipment or systems are referenced?",
+            "topic": "mep",
+            "expected_answer": "HVAC units, ductwork, or system types referenced.",
+            "required_keywords": [
+                "HVAC"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q36",
+            "question": "What electrical panel or circuit information is shown?",
+            "topic": "mep",
+            "expected_answer": "Electrical panel schedules or circuit specifications.",
+            "required_keywords": [
+                "electrical",
+                "panel"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q37",
+            "question": "What plumbing fixtures or specifications are noted?",
+            "topic": "mep",
+            "expected_answer": "Plumbing fixture types or pipe specifications.",
+            "required_keywords": [
+                "plumbing",
+                "fixture"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q38",
+            "question": "What are the egress requirements for this area?",
+            "topic": "compliance",
+            "expected_answer": "Exit path, egress width, or occupant load requirements.",
+            "required_keywords": [
+                "egress",
+                "exit"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q39",
+            "question": "Is there a note about the drawing being subject to final field verification?",
+            "topic": "notes",
+            "expected_answer": "Field verification or 'verify in field' disclaimer note.",
+            "required_keywords": [
+                "field",
+                "verif"
+            ],
+            "difficulty": "easy"
+        },
+        {
+            "id": "q40",
+            "question": "What soil or geotechnical conditions are referenced?",
+            "topic": "structural",
+            "expected_answer": "Soil bearing capacity, geotechnical report references.",
+            "required_keywords": [
+                "soil",
+                "geotech"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q41",
+            "question": "Are there any sustainability or LEED requirements mentioned?",
+            "topic": "compliance",
+            "expected_answer": "Green building, LEED, or sustainability references.",
+            "required_keywords": [
+                "LEED",
+                "sustainab"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q42",
+            "question": "What steel grades or specifications are called out?",
+            "topic": "materials",
+            "expected_answer": "Steel grade designations like A992, A36, or ASTM references.",
+            "required_keywords": [
+                "steel"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q43",
+            "question": "What notes reference coordination with other trades?",
+            "topic": "notes",
+            "expected_answer": "Coordination notes referencing other disciplines.",
+            "required_keywords": [
+                "coordinat"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q44",
+            "question": "Compare the notes on page 1 versus page 2.",
+            "topic": "comparison",
+            "expected_answer": "A comparison of note contents across two pages.",
+            "required_keywords": [
+                "page"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q45",
+            "question": "What anchor bolt specifications are mentioned?",
+            "topic": "materials",
+            "expected_answer": "Anchor bolt size, type, or embedment depth.",
+            "required_keywords": [
+                "anchor",
+                "bolt"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q46",
+            "question": "What is the building height or number of stories?",
+            "topic": "compliance",
+            "expected_answer": "Building height or story count from title block or notes.",
+            "required_keywords": [
+                "height",
+                "stor"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q47",
+            "question": "What construction type is specified (e.g., Type I, Type V)?",
+            "topic": "compliance",
+            "expected_answer": "IBC construction type classification.",
+            "required_keywords": [
+                "construction",
+                "type"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q48",
+            "question": "What are the key room names or zones identified on this sheet?",
+            "topic": "zones",
+            "expected_answer": "Room names or zone labels extracted from the plan.",
+            "required_keywords": [
+                "room",
+                "zone"
+            ],
+            "difficulty": "medium"
+        },
+        {
+            "id": "q49",
+            "question": "Are there any phasing or sequencing notes?",
+            "topic": "notes",
+            "expected_answer": "Construction phasing or sequencing information.",
+            "required_keywords": [
+                "phase",
+                "sequenc"
+            ],
+            "difficulty": "hard"
+        },
+        {
+            "id": "q50",
+            "question": "What quality control or quality assurance requirements are specified?",
+            "topic": "notes",
+            "expected_answer": "QC/QA procedures or requirements from notes.",
+            "required_keywords": [
+                "quality"
+            ],
+            "difficulty": "hard"
+        }
+    ]
+}

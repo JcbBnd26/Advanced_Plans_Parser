@@ -45,6 +45,25 @@ class MatchRecord:
     match_type: str  # "iou", "center", "unmatched"
     ocr_confidence: float = 0.0
 
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "ocr_box": self.ocr_box.to_dict(),
+            "pdf_box": self.pdf_box.to_dict() if self.pdf_box else None,
+            "match_type": self.match_type,
+            "ocr_confidence": round(self.ocr_confidence, 4),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "MatchRecord":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        return cls(
+            ocr_box=GlyphBox.from_dict(d["ocr_box"]),
+            pdf_box=GlyphBox.from_dict(d["pdf_box"]) if d.get("pdf_box") else None,
+            match_type=d.get("match_type", "unmatched"),
+            ocr_confidence=d.get("ocr_confidence", 0.0),
+        )
+
 
 @dataclass
 class ReconcileResult:
@@ -54,6 +73,25 @@ class ReconcileResult:
     all_ocr_tokens: List[GlyphBox] = field(default_factory=list)
     matches: List[MatchRecord] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "added_tokens": [t.to_dict() for t in self.added_tokens],
+            "all_ocr_tokens": [t.to_dict() for t in self.all_ocr_tokens],
+            "matches": [m.to_dict() for m in self.matches],
+            "stats": dict(self.stats),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ReconcileResult":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        return cls(
+            added_tokens=[GlyphBox.from_dict(t) for t in d.get("added_tokens", [])],
+            all_ocr_tokens=[GlyphBox.from_dict(t) for t in d.get("all_ocr_tokens", [])],
+            matches=[MatchRecord.from_dict(m) for m in d.get("matches", [])],
+            stats=d.get("stats", {}),
+        )
 
 
 @dataclass

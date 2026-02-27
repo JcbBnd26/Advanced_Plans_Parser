@@ -185,21 +185,46 @@ class TestLLMClient:
             client.chat("system", "user")
 
     def test_ollama_not_installed_raises(self):
-        with patch("plancheck.checks.llm_checks._OLLAMA_AVAILABLE", False):
+        with patch("plancheck.llm.client._OLLAMA_AVAILABLE", False):
             client = LLMClient(provider="ollama")
             with pytest.raises(RuntimeError, match="ollama package not installed"):
                 client.chat("system", "user")
 
     def test_openai_not_installed_raises(self):
-        with patch("plancheck.checks.llm_checks._OPENAI_AVAILABLE", False):
-            client = LLMClient(provider="openai")
+        with patch("plancheck.llm.client._OPENAI_AVAILABLE", False):
+            client = LLMClient(provider="openai", policy="cloud_allowed")
             with pytest.raises(RuntimeError, match="openai package not installed"):
                 client.chat("system", "user")
 
     def test_anthropic_not_installed_raises(self):
-        with patch("plancheck.checks.llm_checks._ANTHROPIC_AVAILABLE", False):
-            client = LLMClient(provider="anthropic")
+        with patch("plancheck.llm.client._ANTHROPIC_AVAILABLE", False):
+            client = LLMClient(provider="anthropic", policy="cloud_allowed")
             with pytest.raises(RuntimeError, match="anthropic package not installed"):
+                client.chat("system", "user")
+
+    def test_local_only_blocks_cloud_openai(self):
+        client = LLMClient(provider="openai", policy="local_only")
+        with pytest.raises(RuntimeError, match="llm_policy is 'local_only'"):
+            client.chat("system", "user")
+
+    def test_local_only_blocks_cloud_anthropic(self):
+        client = LLMClient(provider="anthropic", policy="local_only")
+        with pytest.raises(RuntimeError, match="llm_policy is 'local_only'"):
+            client.chat("system", "user")
+
+    def test_local_only_allows_ollama(self):
+        """local_only should not block ollama — it's a local provider."""
+        with patch("plancheck.llm.client._OLLAMA_AVAILABLE", False):
+            client = LLMClient(provider="ollama", policy="local_only")
+            # Should fail with 'not installed', not with policy error
+            with pytest.raises(RuntimeError, match="ollama package not installed"):
+                client.chat("system", "user")
+
+    def test_cloud_allowed_permits_openai(self):
+        with patch("plancheck.llm.client._OPENAI_AVAILABLE", False):
+            client = LLMClient(provider="openai", policy="cloud_allowed")
+            # Should fail with 'not installed', not with policy error
+            with pytest.raises(RuntimeError, match="openai package not installed"):
                 client.chat("system", "user")
 
 
@@ -214,7 +239,7 @@ class TestRunLLMChecks:
         assert results == []
 
     def test_no_provider_available_returns_empty(self):
-        with patch("plancheck.checks.llm_checks._OLLAMA_AVAILABLE", False):
+        with patch("plancheck.llm.client._OLLAMA_AVAILABLE", False):
             notes = MagicMock()
             notes.text = "Some construction note"
             results = run_llm_checks(notes_columns=[notes], provider="ollama")
@@ -250,7 +275,7 @@ class TestRunLLMChecks:
 
         with (
             patch("plancheck.checks.llm_checks.LLMClient", return_value=mock_client),
-            patch("plancheck.checks.llm_checks._OLLAMA_AVAILABLE", True),
+            patch("plancheck.llm.client._OLLAMA_AVAILABLE", True),
         ):
             results = run_llm_checks(
                 notes_columns=[notes],
@@ -276,7 +301,7 @@ class TestRunLLMChecks:
 
         with (
             patch("plancheck.checks.llm_checks.LLMClient", return_value=mock_client),
-            patch("plancheck.checks.llm_checks._OLLAMA_AVAILABLE", True),
+            patch("plancheck.llm.client._OLLAMA_AVAILABLE", True),
         ):
             results = run_llm_checks(
                 notes_columns=[notes],
@@ -309,7 +334,7 @@ class TestRunLLMChecks:
 
         with (
             patch("plancheck.checks.llm_checks.LLMClient", return_value=mock_client),
-            patch("plancheck.checks.llm_checks._OLLAMA_AVAILABLE", True),
+            patch("plancheck.llm.client._OLLAMA_AVAILABLE", True),
         ):
             results = run_llm_checks(
                 notes_columns=[notes],

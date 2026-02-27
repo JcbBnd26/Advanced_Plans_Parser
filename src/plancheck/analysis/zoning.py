@@ -106,6 +106,40 @@ class PageZone:
             return 0.0
         return self.overlap_area(other_bbox) / other_area
 
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "tag": self.tag.value if isinstance(self.tag, ZoneTag) else str(self.tag),
+            "bbox": [
+                round(self.x0, 3),
+                round(self.y0, 3),
+                round(self.x1, 3),
+                round(self.y1, 3),
+            ],
+            "confidence": round(self.confidence, 4),
+            "children": [c.to_dict() for c in self.children],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PageZone":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        bbox = d.get("bbox", [0, 0, 0, 0])
+        tag_val = d.get("tag", "unknown")
+        try:
+            tag = ZoneTag(tag_val)
+        except ValueError:
+            tag = ZoneTag.unknown
+        children = [cls.from_dict(c) for c in d.get("children", [])]
+        return cls(
+            tag=tag,
+            x0=bbox[0],
+            y0=bbox[1],
+            x1=bbox[2],
+            y1=bbox[3],
+            confidence=d.get("confidence", 1.0),
+            children=children,
+        )
+
 
 # ── Zone detection ─────────────────────────────────────────────────────
 

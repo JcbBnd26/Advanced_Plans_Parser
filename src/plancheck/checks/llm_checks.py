@@ -34,48 +34,9 @@ from typing import Any, Dict, List, Optional, Sequence
 
 log = logging.getLogger(__name__)
 
-# ── Availability probes ────────────────────────────────────────────────
+# ── Availability (delegated to plancheck.llm) ──────────────────────────
 
-_OLLAMA_AVAILABLE = False
-_OPENAI_AVAILABLE = False
-_ANTHROPIC_AVAILABLE = False
-
-try:
-    import ollama as _ollama_mod  # noqa: F401
-
-    _OLLAMA_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    import openai as _openai_mod  # noqa: F401
-
-    _OPENAI_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    import anthropic as _anthropic_mod  # noqa: F401
-
-    _ANTHROPIC_AVAILABLE = True
-except ImportError:
-    pass
-
-
-def is_llm_available(provider: str = "ollama") -> bool:
-    """Return True if the given provider's client library is installed.
-
-    Parameters
-    ----------
-    provider : str
-        One of ``"ollama"``, ``"openai"``, ``"anthropic"``.
-    """
-    return {
-        "ollama": _OLLAMA_AVAILABLE,
-        "openai": _OPENAI_AVAILABLE,
-        "anthropic": _ANTHROPIC_AVAILABLE,
-    }.get(provider, False)
-
+from plancheck.llm.client import is_llm_available  # noqa: E402, F401 — re-export
 
 # ── Prompt templates ───────────────────────────────────────────────────
 
@@ -117,115 +78,13 @@ Analyse these notes and return findings as a JSON array.\
 """
 
 
-# ── LLM Client ────────────────────────────────────────────────────────
+# ── LLM Client (re-exported from plancheck.llm) ──────────────────────
+# The canonical implementation now lives in plancheck.llm.client.
+# We re-export here for backwards compatibility so existing code that does
+#   from plancheck.checks.llm_checks import LLMClient
+# continues to work.
 
-
-class LLMClient:
-    """Thin wrapper around LLM provider APIs.
-
-    Parameters
-    ----------
-    provider : str
-        ``"ollama"``, ``"openai"``, or ``"anthropic"``.
-    model : str
-        Model name (e.g. ``"llama3.1:8b"``, ``"gpt-4o-mini"``).
-    api_key : str
-        API key (not needed for ollama).
-    api_base : str
-        Base URL (relevant for ollama; default ``http://localhost:11434``).
-    temperature : float
-        LLM temperature (0.0–2.0).
-    """
-
-    def __init__(
-        self,
-        provider: str = "ollama",
-        model: str = "llama3.1:8b",
-        api_key: str = "",
-        api_base: str = "http://localhost:11434",
-        temperature: float = 0.1,
-    ) -> None:
-        self.provider = provider
-        self.model = model
-        self.api_key = api_key
-        self.api_base = api_base
-        self.temperature = temperature
-
-    def chat(self, system_prompt: str, user_prompt: str) -> str:
-        """Send a chat message and return the assistant's response text.
-
-        Raises
-        ------
-        RuntimeError
-            If the provider library is not installed or the API call fails.
-        """
-        if self.provider == "ollama":
-            return self._chat_ollama(system_prompt, user_prompt)
-        elif self.provider == "openai":
-            return self._chat_openai(system_prompt, user_prompt)
-        elif self.provider == "anthropic":
-            return self._chat_anthropic(system_prompt, user_prompt)
-        else:
-            raise ValueError(f"Unknown LLM provider: {self.provider!r}")
-
-    def _chat_ollama(self, system_prompt: str, user_prompt: str) -> str:
-        if not _OLLAMA_AVAILABLE:
-            raise RuntimeError("ollama package not installed")
-
-        import ollama
-
-        client = ollama.Client(host=self.api_base)
-        response = client.chat(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            options={"temperature": self.temperature},
-        )
-        return response["message"]["content"]
-
-    def _chat_openai(self, system_prompt: str, user_prompt: str) -> str:
-        if not _OPENAI_AVAILABLE:
-            raise RuntimeError("openai package not installed")
-
-        import openai
-
-        client = openai.OpenAI(
-            api_key=self.api_key or None,
-            base_url=(
-                self.api_base if self.api_base != "http://localhost:11434" else None
-            ),
-        )
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=self.temperature,
-        )
-        return response.choices[0].message.content or ""
-
-    def _chat_anthropic(self, system_prompt: str, user_prompt: str) -> str:
-        if not _ANTHROPIC_AVAILABLE:
-            raise RuntimeError("anthropic package not installed")
-
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=self.api_key or None)
-        response = client.messages.create(
-            model=self.model,
-            max_tokens=2048,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-            temperature=self.temperature,
-        )
-        # Anthropic returns a list of content blocks
-        return "".join(
-            block.text for block in response.content if hasattr(block, "text")
-        )
-
+from plancheck.llm.client import LLMClient  # noqa: F401 — re-export
 
 # ── Response parsing ───────────────────────────────────────────────────
 
@@ -307,6 +166,7 @@ def run_llm_checks(
     api_key: str = "",
     api_base: str = "http://localhost:11434",
     temperature: float = 0.1,
+    policy: str = "local_only",
 ) -> list:
     """Run LLM-assisted semantic checks on notes columns.
 
@@ -381,6 +241,7 @@ def run_llm_checks(
         api_key=api_key,
         api_base=api_base,
         temperature=temperature,
+        policy=policy,
     )
 
     user_prompt = _USER_PROMPT_TEMPLATE.format(page=page, notes_text=notes_text)

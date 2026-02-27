@@ -46,6 +46,18 @@ class CheckResult:
             d["details"] = self.details
         return d
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "CheckResult":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        return cls(
+            check_id=d.get("check_id", ""),
+            severity=d.get("severity", "info"),
+            message=d.get("message", ""),
+            page=d.get("page", 0),
+            bbox=tuple(d["bbox"]) if d.get("bbox") else None,
+            details=d.get("details", {}),
+        )
+
 
 # ── Severity attenuation based on OCR confidence ────────────────────
 

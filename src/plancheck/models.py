@@ -110,6 +110,41 @@ class GraphicElement:
         """Check if this element is small enough to be a legend symbol."""
         return self.width() <= max_size and self.height() <= max_size
 
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        d: dict = {
+            "page": self.page,
+            "element_type": self.element_type,
+            "x0": round(self.x0, 3),
+            "y0": round(self.y0, 3),
+            "x1": round(self.x1, 3),
+            "y1": round(self.y1, 3),
+            "linewidth": round(self.linewidth, 3),
+        }
+        if self.stroke_color is not None:
+            d["stroke_color"] = list(self.stroke_color)
+        if self.fill_color is not None:
+            d["fill_color"] = list(self.fill_color)
+        if self.pts is not None:
+            d["pts"] = [[round(x, 3), round(y, 3)] for x, y in self.pts]
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "GraphicElement":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        return cls(
+            page=d["page"],
+            element_type=d["element_type"],
+            x0=d["x0"],
+            y0=d["y0"],
+            x1=d["x1"],
+            y1=d["y1"],
+            stroke_color=tuple(d["stroke_color"]) if d.get("stroke_color") else None,
+            fill_color=tuple(d["fill_color"]) if d.get("fill_color") else None,
+            linewidth=d.get("linewidth", 1.0),
+            pts=[(p[0], p[1]) for p in d["pts"]] if d.get("pts") else None,
+        )
+
 
 @dataclass
 class LegendEntry:
@@ -127,6 +162,31 @@ class LegendEntry:
         """Combined bounding box of symbol and description."""
         return _multi_bbox([self.symbol_bbox, self.description_bbox])
 
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        d: dict = {"page": self.page, "description": self.description}
+        if self.symbol is not None:
+            d["symbol"] = self.symbol.to_dict()
+        d["symbol_bbox"] = list(self.symbol_bbox) if self.symbol_bbox else None
+        d["description_bbox"] = (
+            list(self.description_bbox) if self.description_bbox else None
+        )
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LegendEntry":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        symbol = GraphicElement.from_dict(d["symbol"]) if d.get("symbol") else None
+        return cls(
+            page=d["page"],
+            symbol=symbol,
+            symbol_bbox=tuple(d["symbol_bbox"]) if d.get("symbol_bbox") else None,
+            description=d.get("description", ""),
+            description_bbox=(
+                tuple(d["description_bbox"]) if d.get("description_bbox") else None
+            ),
+        )
+
 
 @dataclass
 class LegendRegion(HeaderTextMixin):
@@ -143,6 +203,43 @@ class LegendRegion(HeaderTextMixin):
         """Combined bounding box of header, entries, and enclosing box."""
         return _region_bbox(self.header, self.entries, self.box_bbox)
 
+    def to_dict(self, blocks: Optional[List["BlockCluster"]] = None) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        header_idx = None
+        if blocks is not None and self.header is not None:
+            try:
+                header_idx = blocks.index(self.header)
+            except ValueError:
+                pass
+        return {
+            "page": self.page,
+            "header_block_index": header_idx,
+            "header_text": self.header_text(),
+            "entries": [e.to_dict() for e in self.entries],
+            "is_boxed": self.is_boxed,
+            "box_bbox": list(self.box_bbox) if self.box_bbox else None,
+            "confidence": round(self.confidence, 4),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, d: dict, blocks: Optional[List["BlockCluster"]] = None
+    ) -> "LegendRegion":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        header = None
+        hi = d.get("header_block_index")
+        if blocks is not None and hi is not None and 0 <= hi < len(blocks):
+            header = blocks[hi]
+        entries = [LegendEntry.from_dict(e) for e in d.get("entries", [])]
+        return cls(
+            page=d["page"],
+            header=header,
+            entries=entries,
+            is_boxed=d.get("is_boxed", False),
+            box_bbox=tuple(d["box_bbox"]) if d.get("box_bbox") else None,
+            confidence=d.get("confidence", 0.0),
+        )
+
 
 @dataclass
 class AbbreviationEntry:
@@ -157,6 +254,27 @@ class AbbreviationEntry:
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of code and meaning."""
         return _multi_bbox([self.code_bbox, self.meaning_bbox])
+
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "page": self.page,
+            "code": self.code,
+            "meaning": self.meaning,
+            "code_bbox": list(self.code_bbox) if self.code_bbox else None,
+            "meaning_bbox": list(self.meaning_bbox) if self.meaning_bbox else None,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AbbreviationEntry":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        return cls(
+            page=d["page"],
+            code=d.get("code", ""),
+            meaning=d.get("meaning", ""),
+            code_bbox=tuple(d["code_bbox"]) if d.get("code_bbox") else None,
+            meaning_bbox=tuple(d["meaning_bbox"]) if d.get("meaning_bbox") else None,
+        )
 
 
 @dataclass
@@ -174,6 +292,43 @@ class AbbreviationRegion(HeaderTextMixin):
         """Combined bounding box of header, entries, and enclosing box."""
         return _region_bbox(self.header, self.entries, self.box_bbox)
 
+    def to_dict(self, blocks: Optional[List["BlockCluster"]] = None) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        header_idx = None
+        if blocks is not None and self.header is not None:
+            try:
+                header_idx = blocks.index(self.header)
+            except ValueError:
+                pass
+        return {
+            "page": self.page,
+            "header_block_index": header_idx,
+            "header_text": self.header_text(),
+            "entries": [e.to_dict() for e in self.entries],
+            "is_boxed": self.is_boxed,
+            "box_bbox": list(self.box_bbox) if self.box_bbox else None,
+            "confidence": round(self.confidence, 4),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, d: dict, blocks: Optional[List["BlockCluster"]] = None
+    ) -> "AbbreviationRegion":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        header = None
+        hi = d.get("header_block_index")
+        if blocks is not None and hi is not None and 0 <= hi < len(blocks):
+            header = blocks[hi]
+        entries = [AbbreviationEntry.from_dict(e) for e in d.get("entries", [])]
+        return cls(
+            page=d["page"],
+            header=header,
+            entries=entries,
+            is_boxed=d.get("is_boxed", False),
+            box_bbox=tuple(d["box_bbox"]) if d.get("box_bbox") else None,
+            confidence=d.get("confidence", 0.0),
+        )
+
 
 @dataclass
 class RevisionEntry:
@@ -190,6 +345,27 @@ class RevisionEntry:
         if self.row_bbox:
             return self.row_bbox
         return (0, 0, 0, 0)
+
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "page": self.page,
+            "number": self.number,
+            "description": self.description,
+            "date": self.date,
+            "row_bbox": list(self.row_bbox) if self.row_bbox else None,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RevisionEntry":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        return cls(
+            page=d["page"],
+            number=d.get("number", ""),
+            description=d.get("description", ""),
+            date=d.get("date", ""),
+            row_bbox=tuple(d["row_bbox"]) if d.get("row_bbox") else None,
+        )
 
 
 @dataclass
@@ -211,6 +387,41 @@ class MiscTitleRegion:
             return self.text_block.bbox()
         return (0, 0, 0, 0)
 
+    def to_dict(self, blocks: Optional[List["BlockCluster"]] = None) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        text_block_idx = None
+        if blocks is not None and self.text_block is not None:
+            try:
+                text_block_idx = blocks.index(self.text_block)
+            except ValueError:
+                pass
+        return {
+            "page": self.page,
+            "text": self.text,
+            "text_block_index": text_block_idx,
+            "is_boxed": self.is_boxed,
+            "box_bbox": list(self.box_bbox) if self.box_bbox else None,
+            "confidence": round(self.confidence, 4),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, d: dict, blocks: Optional[List["BlockCluster"]] = None
+    ) -> "MiscTitleRegion":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        text_block = None
+        tbi = d.get("text_block_index")
+        if blocks is not None and tbi is not None and 0 <= tbi < len(blocks):
+            text_block = blocks[tbi]
+        return cls(
+            page=d["page"],
+            text=d.get("text", ""),
+            text_block=text_block,
+            is_boxed=d.get("is_boxed", False),
+            box_bbox=tuple(d["box_bbox"]) if d.get("box_bbox") else None,
+            confidence=d.get("confidence", 0.0),
+        )
+
 
 @dataclass
 class RevisionRegion(HeaderTextMixin):
@@ -227,6 +438,43 @@ class RevisionRegion(HeaderTextMixin):
         """Combined bounding box of header, entries, and enclosing box."""
         return _region_bbox(self.header, self.entries, self.box_bbox)
 
+    def to_dict(self, blocks: Optional[List["BlockCluster"]] = None) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        header_idx = None
+        if blocks is not None and self.header is not None:
+            try:
+                header_idx = blocks.index(self.header)
+            except ValueError:
+                pass
+        return {
+            "page": self.page,
+            "header_block_index": header_idx,
+            "header_text": self.header_text(),
+            "entries": [e.to_dict() for e in self.entries],
+            "is_boxed": self.is_boxed,
+            "box_bbox": list(self.box_bbox) if self.box_bbox else None,
+            "confidence": round(self.confidence, 4),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, d: dict, blocks: Optional[List["BlockCluster"]] = None
+    ) -> "RevisionRegion":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        header = None
+        hi = d.get("header_block_index")
+        if blocks is not None and hi is not None and 0 <= hi < len(blocks):
+            header = blocks[hi]
+        entries = [RevisionEntry.from_dict(e) for e in d.get("entries", [])]
+        return cls(
+            page=d["page"],
+            header=header,
+            entries=entries,
+            is_boxed=d.get("is_boxed", False),
+            box_bbox=tuple(d["box_bbox"]) if d.get("box_bbox") else None,
+            confidence=d.get("confidence", 0.0),
+        )
+
 
 @dataclass
 class StandardDetailEntry:
@@ -241,6 +489,31 @@ class StandardDetailEntry:
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of sheet number and description."""
         return _multi_bbox([self.sheet_bbox, self.description_bbox])
+
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "page": self.page,
+            "sheet_number": self.sheet_number,
+            "description": self.description,
+            "sheet_bbox": list(self.sheet_bbox) if self.sheet_bbox else None,
+            "description_bbox": (
+                list(self.description_bbox) if self.description_bbox else None
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "StandardDetailEntry":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        return cls(
+            page=d["page"],
+            sheet_number=d.get("sheet_number", ""),
+            description=d.get("description", ""),
+            sheet_bbox=tuple(d["sheet_bbox"]) if d.get("sheet_bbox") else None,
+            description_bbox=(
+                tuple(d["description_bbox"]) if d.get("description_bbox") else None
+            ),
+        )
 
 
 @dataclass
@@ -261,6 +534,51 @@ class StandardDetailRegion(HeaderTextMixin):
     def bbox(self) -> Tuple[float, float, float, float]:
         """Combined bounding box of header, entries, and enclosing box."""
         return _region_bbox(self.header, self.entries, self.box_bbox)
+
+    def to_dict(self, blocks: Optional[List["BlockCluster"]] = None) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        header_idx = None
+        if blocks is not None and self.header is not None:
+            try:
+                header_idx = blocks.index(self.header)
+            except ValueError:
+                pass
+        return {
+            "page": self.page,
+            "header_block_index": header_idx,
+            "header_text": self.header_text(),
+            "subheader": self.subheader,
+            "subheader_bbox": (
+                list(self.subheader_bbox) if self.subheader_bbox else None
+            ),
+            "entries": [e.to_dict() for e in self.entries],
+            "is_boxed": self.is_boxed,
+            "box_bbox": list(self.box_bbox) if self.box_bbox else None,
+            "confidence": round(self.confidence, 4),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, d: dict, blocks: Optional[List["BlockCluster"]] = None
+    ) -> "StandardDetailRegion":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        header = None
+        hi = d.get("header_block_index")
+        if blocks is not None and hi is not None and 0 <= hi < len(blocks):
+            header = blocks[hi]
+        entries = [StandardDetailEntry.from_dict(e) for e in d.get("entries", [])]
+        return cls(
+            page=d["page"],
+            header=header,
+            subheader=d.get("subheader"),
+            subheader_bbox=(
+                tuple(d["subheader_bbox"]) if d.get("subheader_bbox") else None
+            ),
+            entries=entries,
+            is_boxed=d.get("is_boxed", False),
+            box_bbox=tuple(d["box_bbox"]) if d.get("box_bbox") else None,
+            confidence=d.get("confidence", 0.0),
+        )
 
 
 @dataclass
@@ -441,6 +759,24 @@ class RowBand:
         xs1 = [b.x1 for b in self.boxes]
         ys1 = [b.y1 for b in self.boxes]
         return (min(xs0), min(ys0), max(xs1), max(ys1))
+
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "page": self.page,
+            "boxes": [b.to_dict() for b in self.boxes],
+            "column_id": self.column_id,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RowBand":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        boxes = [GlyphBox.from_dict(b) for b in d.get("boxes", [])]
+        return cls(
+            page=d["page"],
+            boxes=boxes,
+            column_id=d.get("column_id"),
+        )
 
 
 @dataclass
@@ -741,3 +1077,20 @@ class SuspectRegion:
             "source_label": self.source_label,
             "block_index": self.block_index,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "SuspectRegion":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        bbox = d.get("bbox", [0, 0, 0, 0])
+        return cls(
+            page=d["page"],
+            x0=bbox[0],
+            y0=bbox[1],
+            x1=bbox[2],
+            y1=bbox[3],
+            word_text=d.get("word_text", ""),
+            context=d.get("context", ""),
+            reason=d.get("reason", ""),
+            source_label=d.get("source_label", ""),
+            block_index=d.get("block_index", -1),
+        )

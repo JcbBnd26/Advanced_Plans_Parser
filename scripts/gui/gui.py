@@ -1,16 +1,15 @@
 """
 Advanced Plan Parser – Master GUI Controller.
 
-Slim orchestrator that wires up six tabs via a shared GuiState.
+Slim orchestrator that wires up five tabs via a shared GuiState.
 
 Tabs
 ----
 1. Pipeline       – PDF selection, OCR toggles, config knobs, run with embedded log
 2. Runs & Reports – Browse runs/, inspect manifests, open reports/artifacts
-3. Visual Debug   – Overlay viewer with 11 layer types + knobs
-4. Diagnostics    – Font metrics, benchmark, VOCRPP, tuning, grouping playground
-5. Sheet Recreation – Generate text-only PDFs from runs
-6. Annotation     – Interactive detection correction UI for ML training
+3. Diagnostics    – Font metrics, benchmark, VOCRPP, tuning, grouping playground
+4. Sheet Recreation – Generate text-only PDFs from runs
+5. Annotation     – Interactive detection correction UI for ML training
 
 Architecture
 ------------
@@ -113,22 +112,22 @@ class PlanParserGUI:
         self.notebook.grid(row=0, column=0, sticky="nsew")
 
         # ── Import and create each tab ────────────────────────────────
-        from overlay_viewer import OverlayViewerTab
         from tab_annotation import AnnotationTab
         from tab_diagnostics import DiagnosticsTab
         from tab_mlops import MLOpsTab
         from tab_pipeline import PipelineTab
+        from tab_query import QueryTab
         from tab_recreation import RecreationTab
         from tab_runs import RunsTab
         from widgets import StatusBar
 
         self._pipeline_tab = PipelineTab(self.notebook, self.state)
         self._runs_tab = RunsTab(self.notebook, self.state)
-        self._overlay_tab = OverlayViewerTab(self.notebook, gui_state=self.state)
         self._diagnostics_tab = DiagnosticsTab(self.notebook, self.state)
         self._mlops_tab = MLOpsTab(self.notebook, self.state)
         self._recreation_tab = RecreationTab(self.notebook, self.state)
         self._annotation_tab = AnnotationTab(self.notebook, gui_state=self.state)
+        self._query_tab = QueryTab(self.notebook, self.state)
 
         # ── Status bar ────────────────────────────────────────────────
         self._status_bar = StatusBar(self.root)
@@ -147,6 +146,7 @@ class PlanParserGUI:
         self.root.bind("<Control-Key-4>", lambda e: self.notebook.select(3))
         self.root.bind("<Control-Key-5>", lambda e: self.notebook.select(4))
         self.root.bind("<Control-Key-6>", lambda e: self.notebook.select(5))
+        self.root.bind("<Control-Key-7>", lambda e: self.notebook.select(6))
 
     def _quick_open_pdf(self) -> None:
         f = filedialog.askopenfilename(

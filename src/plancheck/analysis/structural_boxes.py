@@ -135,6 +135,55 @@ class StructuralBox:
             self.x0 - pad <= x <= self.x1 + pad and self.y0 - pad <= y <= self.y1 + pad
         )
 
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "page": self.page,
+            "bbox": [
+                round(self.x0, 3),
+                round(self.y0, 3),
+                round(self.x1, 3),
+                round(self.y1, 3),
+            ],
+            "box_type": (
+                self.box_type.value
+                if isinstance(self.box_type, BoxType)
+                else str(self.box_type)
+            ),
+            "confidence": round(self.confidence, 4),
+            "contained_block_indices": list(self.contained_block_indices),
+            "contained_text": self.contained_text,
+            "is_synthetic": self.is_synthetic,
+            "polygon": (
+                [[round(x, 3), round(y, 3)] for x, y in self.polygon]
+                if self.polygon
+                else None
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "StructuralBox":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        bbox = d.get("bbox", [0, 0, 0, 0])
+        bt = d.get("box_type", "unknown")
+        try:
+            box_type = BoxType(bt)
+        except ValueError:
+            box_type = BoxType.unknown
+        return cls(
+            page=d.get("page", 0),
+            x0=bbox[0],
+            y0=bbox[1],
+            x1=bbox[2],
+            y1=bbox[3],
+            box_type=box_type,
+            confidence=d.get("confidence", 0.0),
+            contained_block_indices=d.get("contained_block_indices", []),
+            contained_text=d.get("contained_text", ""),
+            is_synthetic=d.get("is_synthetic", False),
+            polygon=[(p[0], p[1]) for p in d["polygon"]] if d.get("polygon") else None,
+        )
+
 
 @dataclass
 class SemanticRegion:
@@ -163,6 +212,62 @@ class SemanticRegion:
     def area(self) -> float:
         """Area in square points, clamped to zero."""
         return max(0.0, self.x1 - self.x0) * max(0.0, self.y1 - self.y0)
+
+    def to_dict(self, blocks: Optional[List["BlockCluster"]] = None) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        anchor_idx = None
+        if blocks is not None and self.anchor_block is not None:
+            try:
+                anchor_idx = blocks.index(self.anchor_block)
+            except ValueError:
+                pass
+        child_indices = []
+        if blocks is not None:
+            for cb in self.child_blocks:
+                try:
+                    child_indices.append(blocks.index(cb))
+                except ValueError:
+                    pass
+        return {
+            "page": self.page,
+            "label": self.label,
+            "bbox": [
+                round(self.x0, 3),
+                round(self.y0, 3),
+                round(self.x1, 3),
+                round(self.y1, 3),
+            ],
+            "anchor_block_index": anchor_idx,
+            "child_block_indices": child_indices,
+            "confidence": round(self.confidence, 4),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, d: dict, blocks: Optional[List["BlockCluster"]] = None
+    ) -> "SemanticRegion":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        bbox = d.get("bbox", [0, 0, 0, 0])
+        anchor_block = None
+        ai = d.get("anchor_block_index")
+        if blocks is not None and ai is not None and 0 <= ai < len(blocks):
+            anchor_block = blocks[ai]
+        child_blocks = []
+        if blocks is not None:
+            for ci in d.get("child_block_indices", []):
+                if 0 <= ci < len(blocks):
+                    child_blocks.append(blocks[ci])
+        return cls(
+            page=d.get("page", 0),
+            label=d.get("label", ""),
+            x0=bbox[0],
+            y0=bbox[1],
+            x1=bbox[2],
+            y1=bbox[3],
+            anchor_block=anchor_block,
+            child_blocks=child_blocks,
+            confidence=d.get("confidence", 0.0),
+        )
 
 
 # ── 1. Box Detection ──────────────────────────────────────────────────

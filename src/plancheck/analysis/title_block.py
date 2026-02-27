@@ -109,8 +109,26 @@ class TitleBlockInfo:
             ],
         }
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "TitleBlockInfo":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        fields = [
+            TitleBlockField(
+                label=f["label"],
+                value=f.get("value", ""),
+                bbox=tuple(f["bbox"]) if f.get("bbox") else None,
+                confidence=f.get("confidence", 0.0),
+            )
+            for f in d.get("fields", [])
+        ]
+        return cls(
+            page=d.get("page", 0),
+            bbox=tuple(d["bbox"]) if d.get("bbox") else (0, 0, 0, 0),
+            fields=fields,
+            raw_text=d.get("raw_text", ""),
+            confidence=d.get("confidence", 0.0),
+        )
 
-# ── Label patterns ─────────────────────────────────────────────────────
 
 # Maps a normalised field key to regex patterns that match the label text
 # preceding the value.  Patterns are tried in order; first match wins.

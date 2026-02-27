@@ -1,0 +1,306 @@
+{
+    "version": "1.0",
+    "code": "IBC 2021",
+    "scope": "Egress Requirements (Chapter 10)",
+    "disclaimer": "This is an automated compliance screening tool. All findings are advisory suggestions for professional review. This tool does NOT make pass/fail determinations. Building codes require nuanced interpretation that only qualified professionals can provide.",
+    "requirements": [
+        {
+            "id": "IBC-1003.1",
+            "section": "1003.1",
+            "title": "Applicability of Egress Requirements",
+            "description": "Buildings or portions thereof shall be provided with a means of egress system as required by Chapter 10.",
+            "check_prompt": "Does the plan indicate a means of egress system? Look for exit signs, exit doors, exit paths, or egress notes.",
+            "keywords": [
+                "egress",
+                "exit",
+                "means of egress"
+            ],
+            "severity": "review",
+            "category": "general"
+        },
+        {
+            "id": "IBC-1004.1",
+            "section": "1004.1",
+            "title": "Occupant Load — Design",
+            "description": "The number of occupants for whom means of egress facilities shall be provided shall be determined by the maximum occupant load factor from Table 1004.5.",
+            "check_prompt": "Is an occupant load calculation shown or referenced on the plan? Look for occupant load, occupancy load, or occupant count values.",
+            "keywords": [
+                "occupant load",
+                "occupancy",
+                "occupant"
+            ],
+            "severity": "review",
+            "category": "occupant_load"
+        },
+        {
+            "id": "IBC-1004.5",
+            "section": "1004.5",
+            "title": "Occupant Load — Outdoor Areas",
+            "description": "Where outdoor areas are accessible from a building, the occupant load of the outdoor area shall be included in the total occupant load.",
+            "check_prompt": "Are there outdoor areas accessible from the building? If so, is their occupant load accounted for?",
+            "keywords": [
+                "outdoor",
+                "patio",
+                "deck",
+                "terrace"
+            ],
+            "severity": "note",
+            "category": "occupant_load"
+        },
+        {
+            "id": "IBC-1005.1",
+            "section": "1005.1",
+            "title": "Minimum Egress Width",
+            "description": "The total width of means of egress in inches shall not be less than the total occupant load served by the means of egress multiplied by the factor in Table 1005.1.",
+            "check_prompt": "Are egress corridor/exit widths dimensioned on the plan? Do they appear adequate for the occupant load? Look for corridor widths, exit door widths, or egress width notes.",
+            "keywords": [
+                "egress width",
+                "corridor width",
+                "exit width",
+                "44 inch",
+                "36 inch"
+            ],
+            "severity": "review",
+            "category": "egress_width"
+        },
+        {
+            "id": "IBC-1006.2.1",
+            "section": "1006.2.1",
+            "title": "Exit Access Travel Distance",
+            "description": "Exit access travel distance shall be measured from the most remote point within a story to the entrance to an exit along the natural and unobstructed path of egress travel.",
+            "check_prompt": "Is exit access travel distance shown or noted on the plan? Is it within the allowed maximum for the occupancy type (typically 200-300 feet)?",
+            "keywords": [
+                "travel distance",
+                "exit access",
+                "remote point"
+            ],
+            "severity": "review",
+            "category": "travel_distance"
+        },
+        {
+            "id": "IBC-1006.3",
+            "section": "1006.3",
+            "title": "Number of Exits",
+            "description": "Each story shall be provided with the minimum number of exits, or access to exits, as specified in Table 1006.3.4.",
+            "check_prompt": "How many exits are shown on the plan? For occupant loads over 500 the minimum is 3, over 1000 the minimum is 4. Does the number appear adequate?",
+            "keywords": [
+                "number of exits",
+                "exit",
+                "two exits",
+                "2 exits"
+            ],
+            "severity": "review",
+            "category": "number_of_exits"
+        },
+        {
+            "id": "IBC-1007.1",
+            "section": "1007.1",
+            "title": "Exit Separation",
+            "description": "Where two exits or exit access doorways are required, they shall be placed a distance apart equal to not less than one-half of the length of the maximum overall diagonal dimension of the area served.",
+            "check_prompt": "If two or more exits are shown, are they separated by at least half the diagonal distance of the area served? Look for exit locations and spacing.",
+            "keywords": [
+                "exit separation",
+                "half diagonal",
+                "remote",
+                "exit distance"
+            ],
+            "severity": "review",
+            "category": "exit_separation"
+        },
+        {
+            "id": "IBC-1010.1.1",
+            "section": "1010.1.1",
+            "title": "Door Size Requirements",
+            "description": "The minimum clear width of each door opening shall be not less than 32 inches. Exit doors serving an occupant load of 50 or more shall be not less than 36 inches.",
+            "check_prompt": "Are exit door widths shown on the plan? Are they at least 32 inches (or 36 inches for exits serving 50+ occupants)?",
+            "keywords": [
+                "door width",
+                "32 inch",
+                "36 inch",
+                "clear width",
+                "door size"
+            ],
+            "severity": "review",
+            "category": "doors"
+        },
+        {
+            "id": "IBC-1010.1.2",
+            "section": "1010.1.2",
+            "title": "Door Swing Direction",
+            "description": "Egress doors shall swing in the direction of egress travel where serving an occupant load of 50 or more.",
+            "check_prompt": "Do exit doors swing in the direction of egress travel? Look for door swing arcs or notes about door swing direction.",
+            "keywords": [
+                "door swing",
+                "swing direction",
+                "direction of egress"
+            ],
+            "severity": "note",
+            "category": "doors"
+        },
+        {
+            "id": "IBC-1011.2",
+            "section": "1011.2",
+            "title": "Stairway Width",
+            "description": "The width of stairways shall not be less than 44 inches. Stairways serving an occupant load of less than 50 shall have a width of not less than 36 inches.",
+            "check_prompt": "Are stairway widths shown on the plan? Are they at least 44 inches for general use or 36 inches for low occupancy?",
+            "keywords": [
+                "stair width",
+                "stairway",
+                "44 inch",
+                "36 inch"
+            ],
+            "severity": "review",
+            "category": "stairs"
+        },
+        {
+            "id": "IBC-1011.5",
+            "section": "1011.5",
+            "title": "Stair Riser and Tread Dimensions",
+            "description": "Stair riser heights shall be 7 inches maximum and 4 inches minimum. Stair tread depths shall be 11 inches minimum.",
+            "check_prompt": "Are stair riser heights and tread depths dimensioned? Risers should be max 7 inches and treads min 11 inches.",
+            "keywords": [
+                "riser",
+                "tread",
+                "7 inch",
+                "11 inch",
+                "stair dimension"
+            ],
+            "severity": "note",
+            "category": "stairs"
+        },
+        {
+            "id": "IBC-1011.11",
+            "section": "1011.11",
+            "title": "Handrails Required",
+            "description": "Stairways shall have handrails on each side. Stairways wider than 44 inches shall have intermediate handrails.",
+            "check_prompt": "Are handrails shown or noted for all stairways? Stairways over 44 inches wide need intermediate handrails.",
+            "keywords": [
+                "handrail",
+                "guardrail",
+                "stair rail"
+            ],
+            "severity": "note",
+            "category": "stairs"
+        },
+        {
+            "id": "IBC-1013.1",
+            "section": "1013.1",
+            "title": "Guards Required",
+            "description": "Guards shall be located along open-sided walking surfaces that are located more than 30 inches above the floor or grade below.",
+            "check_prompt": "Are guards shown for elevated walking surfaces more than 30 inches above grade? Look for guardrails at balconies, mezzanines, or elevated walkways.",
+            "keywords": [
+                "guard",
+                "guardrail",
+                "railing",
+                "30 inch"
+            ],
+            "severity": "review",
+            "category": "guards"
+        },
+        {
+            "id": "IBC-1015.2",
+            "section": "1015.2",
+            "title": "Exit Signs Required",
+            "description": "Exits and exit access doors shall be marked by an approved exit sign readily visible from any direction of egress travel.",
+            "check_prompt": "Are exit signs shown on the plan at exit doors and along exit access paths? Look for EXIT sign symbols or notes.",
+            "keywords": [
+                "exit sign",
+                "EXIT",
+                "illuminated sign"
+            ],
+            "severity": "review",
+            "category": "exit_signs"
+        },
+        {
+            "id": "IBC-1008.1",
+            "section": "1008.1",
+            "title": "Accessible Means of Egress Required",
+            "description": "Accessible means of egress shall comply with Section 1008. Each required accessible means of egress shall be continuous to a public way.",
+            "check_prompt": "Is an accessible means of egress ("ADA egress") shown or noted? Look for accessible exit routes, areas of refuge, or ADA egress notes.",
+            "keywords": [
+                "accessible",
+                "ADA",
+                "area of refuge",
+                "accessible egress"
+            ],
+            "severity": "review",
+            "category": "accessibility"
+        },
+        {
+            "id": "IBC-1020.1",
+            "section": "1020.1",
+            "title": "Corridor Fire-Resistance Rating",
+            "description": "Corridors shall have a fire-resistance rating as required by Table 1020.1 based on occupancy and sprinkler status.",
+            "check_prompt": "Are corridor fire-resistance ratings noted? Non-sprinklered buildings typically require 1-hour rated corridors. Look for fire rating notes on corridors.",
+            "keywords": [
+                "corridor",
+                "fire resistance",
+                "fire rat",
+                "1-hour",
+                "rated corridor"
+            ],
+            "severity": "review",
+            "category": "fire_resistance"
+        },
+        {
+            "id": "IBC-1023.2",
+            "section": "1023.2",
+            "title": "Exit Enclosure Construction",
+            "description": "Exit enclosures shall have a fire-resistance rating of not less than 1 hour where connecting less than four stories and not less than 2 hours where connecting four or more stories.",
+            "check_prompt": "Are exit stairwell enclosures shown with fire-resistance ratings? Look for rated stairwell walls (1-hour or 2-hour).",
+            "keywords": [
+                "exit enclosure",
+                "stairwell",
+                "fire-resistance",
+                "rated wall",
+                "2-hour"
+            ],
+            "severity": "review",
+            "category": "fire_resistance"
+        },
+        {
+            "id": "IBC-1030.1",
+            "section": "1030.1",
+            "title": "Emergency Escape and Rescue Openings",
+            "description": "Basements and sleeping rooms below the fourth story shall have at least one emergency escape and rescue opening.",
+            "check_prompt": "If there are sleeping rooms or basements, are emergency escape/rescue openings (egress windows) shown? Min 5.7 sq ft net clear opening.",
+            "keywords": [
+                "egress window",
+                "escape",
+                "rescue opening",
+                "5.7 sq ft"
+            ],
+            "severity": "note",
+            "category": "emergency_escape"
+        },
+        {
+            "id": "IBC-1009.1",
+            "section": "1009.1",
+            "title": "Accessible Route — Continuity",
+            "description": "Accessible routes within a site shall provide an accessible path of travel to all accessible spaces, elements, and facilities.",
+            "check_prompt": "Is a continuous accessible route shown from building entry to all accessible spaces? Look for ADA path notes or accessible route markings.",
+            "keywords": [
+                "accessible route",
+                "ADA",
+                "accessible path"
+            ],
+            "severity": "review",
+            "category": "accessibility"
+        },
+        {
+            "id": "IBC-1016.1",
+            "section": "1016.1",
+            "title": "Emergency Lighting",
+            "description": "The means of egress shall be illuminated at all times the building space served by the means of egress is occupied. Emergency lighting shall be provided in the means of egress.",
+            "check_prompt": "Are emergency lighting fixtures or notes shown along egress paths? Look for emergency lighting symbols, battery backup notes, or egress lighting plans.",
+            "keywords": [
+                "emergency light",
+                "egress lighting",
+                "illuminat",
+                "battery backup"
+            ],
+            "severity": "note",
+            "category": "emergency_systems"
+        }
+    ]
+}

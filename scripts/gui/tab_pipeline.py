@@ -15,7 +15,7 @@ import sys
 import tempfile
 import tkinter as tk
 from pathlib import Path
-from tkinter import colorchooser, filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 # Ensure imports work
@@ -23,7 +23,6 @@ _project = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_project / "scripts" / "runners"))
 sys.path.insert(0, str(_project / "scripts" / "utils"))
 
-from tag_list import TAG_DESCRIPTIONS, TAG_LIST
 from widgets import CollapsibleFrame, LogPanel, StageProgressBar
 from worker import PipelineWorker
 
@@ -139,10 +138,6 @@ class PipelineTab:
 
         # PDF state
         self.pdf_files: list[Path] = []
-        self.tag_data: dict = {}
-        self._tag_tooltip = None
-        self._tooltip_after_id = None
-        self._tooltip_tag = None
 
         # Config knob vars
         self._knob_vars: dict[str, tk.StringVar] = {}
@@ -400,70 +395,6 @@ class PipelineTab:
 
         row += 1
 
-        # ── Visual Debug Overlays (Tags) ─────────────────────────────
-        tag_frame = ttk.LabelFrame(
-            self._inner, text="Visual Debug Overlays", padding=10
-        )
-        tag_frame.grid(row=row, column=0, sticky="ew", **pad)
-        tag_frame.columnconfigure(1, weight=1)
-
-        # Tag dropdown
-        self.tag_var = tk.StringVar(value=TAG_LIST[0])
-        tag_dropdown = ttk.Combobox(
-            tag_frame,
-            textvariable=self.tag_var,
-            values=TAG_LIST,
-            state="readonly",
-            width=24,
-        )
-        tag_dropdown.grid(row=0, column=0, sticky="w")
-        ttk.Button(tag_frame, text="Add Tag", command=self._add_tag_to_list).grid(
-            row=0, column=1, sticky="w", padx=(5, 0)
-        )
-        ttk.Label(tag_frame, text="Overlay DPI:").grid(
-            row=0, column=2, sticky="e", padx=(20, 0)
-        )
-        overlay_dpi_spin = ttk.Spinbox(
-            tag_frame,
-            textvariable=self.resolution_var,
-            values=(72, 150, 200, 300),
-            width=8,
-            state="readonly",
-        )
-        overlay_dpi_spin.grid(row=0, column=3, sticky="w", padx=(5, 0))
-
-        # Scrollable tag list
-        tag_canvas = tk.Canvas(tag_frame, height=60, highlightthickness=0)
-        tag_sb = ttk.Scrollbar(tag_frame, orient="vertical", command=tag_canvas.yview)
-        self.tag_inner_frame = ttk.Frame(tag_canvas)
-        self.tag_inner_frame.bind(
-            "<Configure>",
-            lambda e: tag_canvas.configure(scrollregion=tag_canvas.bbox("all")),
-        )
-        tag_canvas.create_window((0, 0), window=self.tag_inner_frame, anchor="nw")
-        tag_canvas.configure(yscrollcommand=tag_sb.set)
-        tag_canvas.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=(5, 0))
-        tag_sb.grid(row=1, column=4, sticky="ns", pady=(5, 0))
-
-        # Mass action buttons
-        action_frame = ttk.Frame(tag_frame)
-        action_frame.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(5, 0))
-        for col, (txt, cmd) in enumerate(
-            [
-                ("Set Color", self._set_color_selected),
-                ("Remove", self._clear_selected_tags),
-                ("Ignore", self._ignore_selected_tags),
-                ("Unignore", self._unignore_selected_tags),
-                ("Select All", self._select_all_tags),
-                ("Deselect All", self._deselect_all_tags),
-            ]
-        ):
-            ttk.Button(action_frame, text=txt, command=cmd).grid(
-                row=0, column=col, padx=2
-            )
-
-        row += 1
-
         # ── Run Button ───────────────────────────────────────────────
         btn_frame = ttk.Frame(self._inner)
         btn_frame.grid(row=row, column=0, sticky="ew", **pad)
@@ -713,14 +644,6 @@ class PipelineTab:
 
         cfg = self._collect_config()
 
-        # Build color overrides
-        color_overrides = {}
-        for tag, data in self.tag_data.items():
-            if not data["ignored"]:
-                hex_c = data["color"].lstrip("#")
-                r, g, b = int(hex_c[0:2], 16), int(hex_c[2:4], 16), int(hex_c[4:6], 16)
-                color_overrides[tag] = (r, g, b, 200)
-
         runs_root = _project / "runs"
 
         self.log_panel.clear()
@@ -743,7 +666,6 @@ class PipelineTab:
                     resolution=resolution,
                     run_root=runs_root,
                     run_prefix=run_prefix,
-                    color_overrides=color_overrides if color_overrides else None,
                     cfg=cfg,
                 )
                 results.append(run_dir)
@@ -764,126 +686,3 @@ class PipelineTab:
     def _cancel_processing(self) -> None:
         if self._worker:
             self._worker.cancel()
-
-    # ------------------------------------------------------------------
-    # Tag management (preserved from original)
-    # ------------------------------------------------------------------
-
-    def _add_tag_to_list(self) -> None:
-        tag = self.tag_var.get()
-        if tag in self.tag_data:
-            return
-        row_frame = ttk.Frame(self.tag_inner_frame)
-        row_frame.pack(fill="x", pady=1)
-
-        selected_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(row_frame, variable=selected_var).pack(side="left")
-
-        color_btn = tk.Button(
-            row_frame,
-            text="  ",
-            bg="#D3D3D3",
-            width=2,
-            command=lambda t=tag: self._pick_tag_color(t),
-        )
-        color_btn.pack(side="left", padx=(0, 5))
-
-        label = ttk.Label(row_frame, text=tag)
-        label.pack(side="left")
-
-        status_label = ttk.Label(row_frame, text="", foreground="gray")
-        status_label.pack(side="left", padx=(5, 0))
-
-        self.tag_data[tag] = {
-            "color": "#D3D3D3",
-            "ignored": False,
-            "selected": selected_var,
-            "widgets": {
-                "row": row_frame,
-                "color_btn": color_btn,
-                "label": label,
-                "status": status_label,
-            },
-        }
-        label.bind("<Enter>", lambda e, t=tag: self._schedule_tooltip(t, e))
-        label.bind("<Leave>", lambda e: self._cancel_tooltip())
-
-    def _pick_tag_color(self, tag) -> None:
-        color = colorchooser.askcolor(
-            title=f"Choose color for {tag}", initialcolor=self.tag_data[tag]["color"]
-        )[1]
-        if color:
-            self.tag_data[tag]["color"] = color
-            self.tag_data[tag]["widgets"]["color_btn"].configure(bg=color)
-
-    def _set_color_selected(self) -> None:
-        selected = [t for t, d in self.tag_data.items() if d["selected"].get()]
-        if not selected:
-            messagebox.showinfo("No Selection", "Please check one or more tags first.")
-            return
-        color = colorchooser.askcolor(title="Choose color for selected tags")[1]
-        if color:
-            for tag in selected:
-                self.tag_data[tag]["color"] = color
-                self.tag_data[tag]["widgets"]["color_btn"].configure(bg=color)
-
-    def _clear_selected_tags(self) -> None:
-        for tag in [t for t, d in self.tag_data.items() if d["selected"].get()]:
-            self.tag_data[tag]["widgets"]["row"].destroy()
-            del self.tag_data[tag]
-
-    def _ignore_selected_tags(self) -> None:
-        for data in self.tag_data.values():
-            if data["selected"].get():
-                data["ignored"] = True
-                data["widgets"]["status"].configure(text="[IGNORED]")
-
-    def _unignore_selected_tags(self) -> None:
-        for data in self.tag_data.values():
-            if data["selected"].get():
-                data["ignored"] = False
-                data["widgets"]["status"].configure(text="")
-
-    def _select_all_tags(self) -> None:
-        for data in self.tag_data.values():
-            data["selected"].set(True)
-
-    def _deselect_all_tags(self) -> None:
-        for data in self.tag_data.values():
-            data["selected"].set(False)
-
-    # Tooltip helpers
-    def _schedule_tooltip(self, tag, event) -> None:
-        self._cancel_tooltip()
-        self._tooltip_tag = tag
-        self._tooltip_after_id = self.root.after(
-            500, lambda: self._show_tag_tooltip(tag, event)
-        )
-
-    def _cancel_tooltip(self) -> None:
-        if self._tooltip_after_id:
-            self.root.after_cancel(self._tooltip_after_id)
-            self._tooltip_after_id = None
-        self._hide_tag_tooltip()
-
-    def _show_tag_tooltip(self, tag, event) -> None:
-        desc = TAG_DESCRIPTIONS.get(tag, "No description available.")
-        x = event.widget.winfo_rootx() + 20
-        y = event.widget.winfo_rooty() + event.widget.winfo_height() + 5
-        self._hide_tag_tooltip()
-        self._tag_tooltip = tk.Toplevel(self.root)
-        self._tag_tooltip.wm_overrideredirect(True)
-        self._tag_tooltip.wm_geometry(f"+{x}+{y}")
-        tk.Label(
-            self._tag_tooltip,
-            text=desc,
-            background="#ffffe0",
-            relief="solid",
-            borderwidth=1,
-            font=(None, 10),
-        ).pack(ipadx=4, ipady=2)
-
-    def _hide_tag_tooltip(self) -> None:
-        if self._tag_tooltip:
-            self._tag_tooltip.destroy()
-            self._tag_tooltip = None

@@ -105,6 +105,22 @@ class StageResult:
             d["error"] = self.error
         return d
 
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "StageResult":
+        """Deserialize from a dict produced by :meth:`to_dict`."""
+        return cls(
+            stage=d["stage"],
+            enabled=d.get("enabled", False),
+            ran=d.get("ran", False),
+            status=d.get("status", "skipped"),
+            skip_reason=d.get("skip_reason"),
+            duration_ms=d.get("duration_ms", 0),
+            counts=d.get("counts", {}),
+            inputs=d.get("inputs", {}),
+            outputs=d.get("outputs", {}),
+            error=d.get("error"),
+        )
+
 
 # ── Dependency probes (cached at module level) ─────────────────────────
 
@@ -392,6 +408,184 @@ class PageResult:
                 for f in self.semantic_findings
             ],
         }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Full serialization of PageResult to a JSON-compatible dict.
+
+        Unlike :meth:`to_summary_dict`, this preserves all nested data
+        structures so that :meth:`from_dict` can reconstruct the full
+        ``PageResult``.  The ``background_image`` field is excluded
+        (not JSON-serializable; regenerate from the PDF if needed).
+        """
+        from .analysis.structural_boxes import SemanticRegion, StructuralBox
+        from .analysis.title_block import TitleBlockInfo
+        from .analysis.zoning import PageZone
+        from .checks.semantic_checks import CheckResult
+        from .reconcile.reconcile import ReconcileResult
+
+        blocks = self.blocks  # used for index-based references
+
+        d: Dict[str, Any] = {
+            "_version": 2,
+            "page": self.page,
+            "page_width": round(self.page_width, 3),
+            "page_height": round(self.page_height, 3),
+            "skew_degrees": round(self.skew_degrees, 4),
+            "page_quality": round(self.page_quality, 4),
+            "stages": {n: sr.to_dict() for n, sr in self.stages.items()},
+            # Core artefacts
+            "tokens": [t.to_dict() for t in self.tokens],
+            "blocks": [b.to_dict() for b in self.blocks],
+            "notes_columns": [nc.to_dict(blocks) for nc in self.notes_columns],
+            # Graphics
+            "graphics": [g.to_dict() for g in self.graphics],
+            # Analysis artefacts (index-based references into blocks)
+            "structural_boxes": [sb.to_dict() for sb in self.structural_boxes],
+            "semantic_regions": [sr.to_dict(blocks) for sr in self.semantic_regions],
+            "abbreviation_regions": [
+                r.to_dict(blocks) for r in self.abbreviation_regions
+            ],
+            "legend_regions": [r.to_dict(blocks) for r in self.legend_regions],
+            "revision_regions": [r.to_dict(blocks) for r in self.revision_regions],
+            "standard_detail_regions": [
+                r.to_dict(blocks) for r in self.standard_detail_regions
+            ],
+            "misc_title_regions": [r.to_dict(blocks) for r in self.misc_title_regions],
+            "title_blocks": [tb.to_dict() for tb in self.title_blocks],
+            "page_zones": [z.to_dict() for z in self.page_zones],
+            # Layout / drift
+            "layout_predictions": list(self.layout_predictions),
+            "drift_warnings": list(self.drift_warnings),
+            # Checks
+            "semantic_findings": [
+                f.to_dict() if hasattr(f, "to_dict") else {"raw": str(f)}
+                for f in self.semantic_findings
+            ],
+            # OCR artefacts
+            "ocr_tokens": (
+                [t.to_dict() for t in self.ocr_tokens] if self.ocr_tokens else None
+            ),
+            "ocr_confs": list(self.ocr_confs) if self.ocr_confs else None,
+            "reconcile_result": (
+                self.reconcile_result.to_dict() if self.reconcile_result else None
+            ),
+        }
+        return d
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "PageResult":
+        """Reconstruct a full PageResult from a dict produced by :meth:`to_dict`."""
+        from .analysis.structural_boxes import SemanticRegion, StructuralBox
+        from .analysis.title_block import TitleBlockInfo
+        from .analysis.zoning import PageZone
+        from .checks.semantic_checks import CheckResult
+        from .models import (
+            AbbreviationRegion,
+            BlockCluster,
+            GlyphBox,
+            GraphicElement,
+            LegendRegion,
+            MiscTitleRegion,
+            NotesColumn,
+            RevisionRegion,
+            StandardDetailRegion,
+        )
+        from .reconcile.reconcile import ReconcileResult
+
+        # 1. Tokens
+        tokens = [GlyphBox.from_dict(t) for t in d.get("tokens", [])]
+
+        # 2. Blocks (need tokens for line-based access)
+        blocks = [BlockCluster.from_dict(b, tokens) for b in d.get("blocks", [])]
+
+        # 3. Notes columns (need blocks for index-based references)
+        notes_columns = [
+            NotesColumn.from_dict(nc, blocks) for nc in d.get("notes_columns", [])
+        ]
+
+        # 4. Graphics
+        graphics = [GraphicElement.from_dict(g) for g in d.get("graphics", [])]
+
+        # 5. Analysis artefacts
+        structural_boxes = [
+            StructuralBox.from_dict(sb) for sb in d.get("structural_boxes", [])
+        ]
+        semantic_regions = [
+            SemanticRegion.from_dict(sr, blocks) for sr in d.get("semantic_regions", [])
+        ]
+        abbreviation_regions = [
+            AbbreviationRegion.from_dict(r, blocks)
+            for r in d.get("abbreviation_regions", [])
+        ]
+        legend_regions = [
+            LegendRegion.from_dict(r, blocks) for r in d.get("legend_regions", [])
+        ]
+        revision_regions = [
+            RevisionRegion.from_dict(r, blocks) for r in d.get("revision_regions", [])
+        ]
+        standard_detail_regions = [
+            StandardDetailRegion.from_dict(r, blocks)
+            for r in d.get("standard_detail_regions", [])
+        ]
+        misc_title_regions = [
+            MiscTitleRegion.from_dict(r, blocks)
+            for r in d.get("misc_title_regions", [])
+        ]
+        title_blocks_list = [
+            TitleBlockInfo.from_dict(tb) for tb in d.get("title_blocks", [])
+        ]
+        page_zones = [PageZone.from_dict(z) for z in d.get("page_zones", [])]
+
+        # 6. Stages
+        stages = {n: StageResult.from_dict(sr) for n, sr in d.get("stages", {}).items()}
+
+        # 7. Checks
+        findings_raw = d.get("semantic_findings", [])
+        semantic_findings = []
+        for f in findings_raw:
+            if isinstance(f, dict) and "check_id" in f:
+                semantic_findings.append(CheckResult.from_dict(f))
+
+        # 8. OCR artefacts
+        ocr_tokens = (
+            [GlyphBox.from_dict(t) for t in d["ocr_tokens"]]
+            if d.get("ocr_tokens")
+            else None
+        )
+        ocr_confs = list(d["ocr_confs"]) if d.get("ocr_confs") else None
+        reconcile_result = (
+            ReconcileResult.from_dict(d["reconcile_result"])
+            if d.get("reconcile_result")
+            else None
+        )
+
+        return cls(
+            page=d.get("page", 0),
+            page_width=d.get("page_width", 0.0),
+            page_height=d.get("page_height", 0.0),
+            skew_degrees=d.get("skew_degrees", 0.0),
+            page_quality=d.get("page_quality", 0.0),
+            stages=stages,
+            tokens=tokens,
+            blocks=blocks,
+            notes_columns=notes_columns,
+            graphics=graphics,
+            structural_boxes=structural_boxes,
+            semantic_regions=semantic_regions,
+            abbreviation_regions=abbreviation_regions,
+            legend_regions=legend_regions,
+            revision_regions=revision_regions,
+            standard_detail_regions=standard_detail_regions,
+            misc_title_regions=misc_title_regions,
+            title_blocks=title_blocks_list,
+            page_zones=page_zones,
+            layout_predictions=d.get("layout_predictions", []),
+            drift_warnings=d.get("drift_warnings", []),
+            semantic_findings=semantic_findings,
+            ocr_tokens=ocr_tokens,
+            ocr_confs=ocr_confs,
+            reconcile_result=reconcile_result,
+        )
 
 
 # ── Stage helpers (keep run_pipeline focused on orchestration) ─────────
@@ -826,6 +1020,7 @@ def _run_checks_stage(
                     api_key=cfg.llm_api_key,
                     api_base=cfg.llm_api_base,
                     temperature=cfg.llm_temperature,
+                    policy=cfg.llm_policy,
                 )
                 findings.extend(llm_findings)
             except Exception as exc:  # pragma: no cover
@@ -1419,6 +1614,44 @@ class DocumentResult:
                 for f in self.document_findings
             ],
         }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Full serialization of DocumentResult to a JSON-compatible dict."""
+        return {
+            "_version": 2,
+            "pdf_path": str(self.pdf_path) if self.pdf_path else None,
+            "pages": [pr.to_dict() for pr in self.pages],
+            "document_findings": [
+                f.to_dict() if hasattr(f, "to_dict") else {"raw": str(f)}
+                for f in self.document_findings
+            ],
+            "config": self.config.to_dict() if self.config else None,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "DocumentResult":
+        """Reconstruct a DocumentResult from a dict produced by :meth:`to_dict`."""
+        from .checks.semantic_checks import CheckResult
+
+        pages = [PageResult.from_dict(pd) for pd in d.get("pages", [])]
+        findings_raw = d.get("document_findings", [])
+        document_findings = []
+        for f in findings_raw:
+            if isinstance(f, dict) and "check_id" in f:
+                document_findings.append(CheckResult.from_dict(f))
+
+        cfg = None
+        if d.get("config"):
+            cfg = GroupingConfig.from_dict(d["config"])
+
+        pdf_path = Path(d["pdf_path"]) if d.get("pdf_path") else None
+
+        return cls(
+            pdf_path=pdf_path,
+            pages=pages,
+            document_findings=document_findings,
+            config=cfg,
+        )
 
 
 # ── Cross-page checks ─────────────────────────────────────────────────

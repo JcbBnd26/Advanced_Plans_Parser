@@ -428,6 +428,10 @@ class GroupingConfig:
     llm_api_base: str = "http://localhost:11434"
     # LLM temperature for generation (0.0 = deterministic).
     llm_temperature: float = 0.1
+    # LLM data-privacy policy: "local_only" (default – blocks cloud calls),
+    # "cloud_allowed" (permits cloud LLM APIs), or "cloud_with_consent"
+    # (prompts user for one-time consent before the first cloud call).
+    llm_policy: str = "local_only"
     # Enable cross-page GNN model (requires torch + torch-geometric).
     ml_gnn_enabled: bool = False
     # Path to trained GNN model checkpoint.
@@ -534,6 +538,13 @@ class GroupingConfig:
 
         # -- LLM temperature [0, 2] --
         _check_range("llm_temperature", self.llm_temperature, 0.0, 2.0)
+
+        # -- LLM policy must be a recognised value --
+        _allowed_policies = {"local_only", "cloud_allowed", "cloud_with_consent"}
+        if self.llm_policy not in _allowed_policies:
+            raise ConfigValidationError(
+                f"llm_policy={self.llm_policy!r} must be one of {sorted(_allowed_policies)}"
+            )
 
         # -- GNN hidden dim must be positive --
         if self.ml_gnn_hidden_dim < 1:
