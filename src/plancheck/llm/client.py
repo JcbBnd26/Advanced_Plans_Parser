@@ -6,7 +6,6 @@ project.  It is consumed by:
 
 * ``plancheck.checks.llm_checks`` (semantic checks)
 * ``plancheck.llm.query_engine`` (Phase 1.1)
-* ``plancheck.llm.compliance`` (Phase 1.2)
 * ``plancheck.llm.entity_extraction`` (Phase 1.3)
 
 The legacy ``LLMClient`` in ``checks/llm_checks.py`` is now a thin
@@ -118,9 +117,16 @@ class LLMClient:
         or ``"cloud_with_consent"``.
     cost_tracker : CostTracker | None
         Optional shared tracker to accumulate cost across calls.
+    max_retries : int
+        Maximum number of attempts for transient failures (default 3).
+        Uses exponential backoff (1s, 2s, 4s, …).
     """
 
     _CLOUD_PROVIDERS = {"openai", "anthropic"}
+
+    #: Cached provider client instances (class-level, shared across instances
+    #: with the same config).  Keyed by ``(provider, api_key, api_base)``.
+    _client_cache: dict[tuple[str, str, str], Any] = {}
 
     def __init__(
         self,
@@ -131,6 +137,7 @@ class LLMClient:
         temperature: float = 0.1,
         policy: str = "local_only",
         cost_tracker: CostTracker | None = None,
+        max_retries: int = 3,
     ) -> None:
         self.provider = provider
         self.model = model
@@ -139,6 +146,7 @@ class LLMClient:
         self.temperature = temperature
         self.policy = policy
         self.cost_tracker = cost_tracker or CostTracker()
+        self.max_retries = max(1, max_retries)
 
     # ── Policy helpers ─────────────────────────────────────────────
 
@@ -242,21 +250,76 @@ class LLMClient:
     # ── Provider dispatch ──────────────────────────────────────────
 
     def _dispatch(self, system_prompt: str, user_prompt: str) -> str:
-        if self.provider == "ollama":
-            return self._chat_ollama(system_prompt, user_prompt)
-        elif self.provider == "openai":
-            return self._chat_openai(system_prompt, user_prompt)
-        elif self.provider == "anthropic":
-            return self._chat_anthropic(system_prompt, user_prompt)
+        """Dispatch to the provider with retry + exponential backoff."""
+        last_exc: Exception | None = None
+        for attempt in range(self.max_retries):
+            try:
+                if self.provider == "ollama":
+                    return self._chat_ollama(system_prompt, user_prompt)
+                elif self.provider == "openai":
+                    return self._chat_openai(system_prompt, user_prompt)
+                elif self.provider == "anthropic":
+                    return self._chat_anthropic(system_prompt, user_prompt)
+                else:
+                    raise ValueError(f"Unknown LLM provider: {self.provider!r}")
+            except (ValueError, RuntimeError):
+                # Non-retryable errors (missing lib, bad provider, policy)
+                raise
+            except Exception as exc:
+                last_exc = exc
+                delay = 2**attempt  # 1s, 2s, 4s …
+                log.warning(
+                    "LLM call attempt %d/%d failed (%s), retrying in %ds…",
+                    attempt + 1,
+                    self.max_retries,
+                    exc,
+                    delay,
+                )
+                time.sleep(delay)
+
+        raise RuntimeError(
+            f"LLM call failed after {self.max_retries} attempts: {last_exc}"
+        ) from last_exc
+
+    # ── Client cache helpers ───────────────────────────────────────
+
+    def _get_or_create_client(self, provider: str) -> Any:
+        """Return a cached SDK client, creating one if needed."""
+        cache_key = (provider, self.api_key, self.api_base)
+        client = self._client_cache.get(cache_key)
+        if client is not None:
+            return client
+
+        if provider == "ollama":
+            import ollama
+
+            client = ollama.Client(host=self.api_base)
+        elif provider == "openai":
+            import openai
+
+            client = openai.OpenAI(
+                api_key=self.api_key or None,
+                base_url=(
+                    self.api_base if self.api_base != "http://localhost:11434" else None
+                ),
+            )
+        elif provider == "anthropic":
+            import anthropic
+
+            client = anthropic.Anthropic(api_key=self.api_key or None)
         else:
-            raise ValueError(f"Unknown LLM provider: {self.provider!r}")
+            raise ValueError(f"Unknown provider: {provider!r}")
+
+        self._client_cache[cache_key] = client
+        return client
+
+    # ── Provider implementations ───────────────────────────────────
 
     def _chat_ollama(self, system_prompt: str, user_prompt: str) -> str:
         if not _OLLAMA_AVAILABLE:
             raise RuntimeError("ollama package not installed")
-        import ollama
 
-        client = ollama.Client(host=self.api_base)
+        client = self._get_or_create_client("ollama")
         response = client.chat(
             model=self.model,
             messages=[
@@ -270,14 +333,8 @@ class LLMClient:
     def _chat_openai(self, system_prompt: str, user_prompt: str) -> str:
         if not _OPENAI_AVAILABLE:
             raise RuntimeError("openai package not installed")
-        import openai
 
-        client = openai.OpenAI(
-            api_key=self.api_key or None,
-            base_url=(
-                self.api_base if self.api_base != "http://localhost:11434" else None
-            ),
-        )
+        client = self._get_or_create_client("openai")
         response = client.chat.completions.create(
             model=self.model,
             messages=[
@@ -291,9 +348,8 @@ class LLMClient:
     def _chat_anthropic(self, system_prompt: str, user_prompt: str) -> str:
         if not _ANTHROPIC_AVAILABLE:
             raise RuntimeError("anthropic package not installed")
-        import anthropic
 
-        client = anthropic.Anthropic(api_key=self.api_key or None)
+        client = self._get_or_create_client("anthropic")
         response = client.messages.create(
             model=self.model,
             max_tokens=2048,

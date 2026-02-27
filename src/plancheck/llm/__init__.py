@@ -7,8 +7,8 @@ This package provides:
   structured-output helpers.
 * :mod:`~plancheck.llm.cost` — token counting and cost estimation.
 
-All Phase 1 components (query engine, compliance assistant, entity extraction)
-import the LLM client from this package rather than from
+All Phase 1 components (query engine, entity extraction) import the
+LLM client from this package rather than from
 ``plancheck.checks.llm_checks``.
 """
 

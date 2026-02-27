@@ -456,10 +456,12 @@ class EntityExtractor:
 
             if not value:
                 continue
-            if etype not in allowed_types:
-                # Accept it anyway but normalise
-                if etype not in ENTITY_TYPES:
-                    continue
+            # Keep entities whose type is in the allowed set OR is at
+            # least a recognised type (e.g. LLM returned "dimension"
+            # when we only asked for "material").  Discard truly
+            # unknown types.
+            if etype not in allowed_types and etype not in ENTITY_TYPES:
+                continue
 
             entities.append(
                 Entity(

@@ -145,18 +145,16 @@ def chunks_from_page_result(pr: Any) -> list[Chunk]:
             # Also add full-column text as a single chunk (for broader context)
             full = _safe_text(col, "full_text")
             if not full and blocks:
-                full = " ".join(
-                    (
-                        _safe_text(b, "text")
-                        or " ".join(
-                            getattr(box, "text", "")
-                            for box in getattr(b, "get_all_boxes", lambda: [])()
+                parts: list[str] = []
+                for b in blocks:
+                    t = _safe_text(b, "text")
+                    if not t and hasattr(b, "get_all_boxes"):
+                        t = " ".join(
+                            getattr(box, "text", "") for box in b.get_all_boxes()
                         )
-                        if hasattr(b, "get_all_boxes")
-                        else _safe_text(b, "text")
-                    )
-                    for b in blocks
-                )
+                    if t:
+                        parts.append(t)
+                full = " ".join(parts)
             if full.strip():
                 chunks.append(
                     Chunk(

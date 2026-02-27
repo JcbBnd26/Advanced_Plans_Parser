@@ -21,6 +21,7 @@ QueryResult          - Answer text + source citations + metadata.
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import logging
@@ -114,10 +115,16 @@ class QueryResult:
 
 
 class _ResponseCache:
-    """Simple in-memory LRU-style cache keyed by (query_hash, context_hash)."""
+    """True LRU cache keyed by (query_hash, context_hash).
+
+    Uses :class:`collections.OrderedDict` — accessing an entry moves it
+    to the end, so the *first* entry is always the least-recently-used.
+    """
 
     def __init__(self, max_size: int = 200) -> None:
-        self._store: dict[str, QueryResult] = {}
+        self._store: collections.OrderedDict[str, QueryResult] = (
+            collections.OrderedDict()
+        )
         self._max_size = max_size
 
     def _key(self, query: str, context: str) -> str:
@@ -125,14 +132,18 @@ class _ResponseCache:
         return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
     def get(self, query: str, context: str) -> QueryResult | None:
-        return self._store.get(self._key(query, context))
+        key = self._key(query, context)
+        result = self._store.get(key)
+        if result is not None:
+            self._store.move_to_end(key)  # mark as recently used
+        return result
 
     def put(self, query: str, context: str, result: QueryResult) -> None:
         key = self._key(query, context)
-        if len(self._store) >= self._max_size:
-            # Evict oldest entry
-            oldest = next(iter(self._store))
-            del self._store[oldest]
+        if key in self._store:
+            self._store.move_to_end(key)
+        elif len(self._store) >= self._max_size:
+            self._store.popitem(last=False)  # evict least-recently-used
         self._store[key] = result
 
     def clear(self) -> None:

@@ -46,7 +46,7 @@ def _load_from_pdf(pdf_path: str, page: int) -> "PageResult":
     cfg = GroupingConfig()
     print(f"Running pipeline on {pdf_path}, page {page} ...")
     pr = run_pipeline(pdf_path, page, cfg=cfg)
-    print(f"Pipeline complete — {pr.blocks.__len__()} blocks extracted.")
+    print(f"Pipeline complete — {len(pr.blocks)} blocks extracted.")
     return pr
 
 
