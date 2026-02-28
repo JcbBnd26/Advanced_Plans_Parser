@@ -1,5 +1,5 @@
 from .abbreviations import detect_abbreviation_regions
-from .graphics import extract_graphics
+from .graphics import extract_graphics, extract_graphics_from_data
 from .legends import detect_legend_regions
 from .misc_titles import detect_misc_title_regions
 from .region_helpers import filter_graphics_outside_regions

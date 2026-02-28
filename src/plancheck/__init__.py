@@ -16,7 +16,14 @@ from .analysis.zoning import zone_summary
 from .config import GroupingConfig
 from .export.overlay import draw_overlay
 from .grouping import build_clusters_v2, group_blocks, group_rows, mark_tables
-from .ingest import IngestError, PdfMeta, ingest_pdf, render_page_image
+from .ingest import (
+    IngestError,
+    PageContext,
+    PdfMeta,
+    build_page_context,
+    ingest_pdf,
+    render_page_image,
+)
 from .models import BlockCluster, GlyphBox, Line, RowBand, Span, SuspectRegion
 from .pipeline import (
     DocumentResult,
@@ -59,7 +66,9 @@ __all__ = [
     "run_pipeline",
     # Ingest
     "IngestError",
+    "PageContext",
     "PdfMeta",
+    "build_page_context",
     "ingest_pdf",
     "render_page_image",
     # Text OCR

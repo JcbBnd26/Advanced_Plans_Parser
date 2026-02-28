@@ -34,17 +34,10 @@ if TYPE_CHECKING:
     from .analysis.title_block import TitleBlockInfo
     from .analysis.zoning import PageZone
     from .checks.semantic_checks import CheckResult
-    from .models import (
-        AbbreviationRegion,
-        BlockCluster,
-        GlyphBox,
-        GraphicElement,
-        LegendRegion,
-        MiscTitleRegion,
-        NotesColumn,
-        RevisionRegion,
-        StandardDetailRegion,
-    )
+    from .ingest.ingest import PageContext
+    from .models import (AbbreviationRegion, BlockCluster, GlyphBox,
+                         GraphicElement, LegendRegion, MiscTitleRegion,
+                         NotesColumn, RevisionRegion, StandardDetailRegion)
     from .reconcile.reconcile import ReconcileResult
 
 log = logging.getLogger(__name__)
@@ -479,17 +472,9 @@ class PageResult:
         from .analysis.title_block import TitleBlockInfo
         from .analysis.zoning import PageZone
         from .checks.semantic_checks import CheckResult
-        from .models import (
-            AbbreviationRegion,
-            BlockCluster,
-            GlyphBox,
-            GraphicElement,
-            LegendRegion,
-            MiscTitleRegion,
-            NotesColumn,
-            RevisionRegion,
-            StandardDetailRegion,
-        )
+        from .models import (AbbreviationRegion, BlockCluster, GlyphBox,
+                             GraphicElement, LegendRegion, MiscTitleRegion,
+                             NotesColumn, RevisionRegion, StandardDetailRegion)
         from .reconcile.reconcile import ReconcileResult
 
         # 1. Tokens
@@ -593,18 +578,15 @@ class PageResult:
 
 def _run_ingest_stage(
     pr: PageResult,
-    pdf_path: Path,
-    page_num: int,
+    ctx: "PageContext",
     cfg: GroupingConfig,
     resolution: int,
 ) -> None:
-    """Stage 1: render background image."""
-    from .ingest import render_page_image
+    """Stage 1: render background image (from PageContext)."""
+    from .ingest import PageContext  # noqa: F811 (TYPE_CHECKING guard)
 
     with run_stage("ingest", cfg) as sr:
-        pr.background_image = render_page_image(
-            pdf_path, page_num, resolution=resolution
-        )
+        pr.background_image = ctx.background_image
         sr.counts = {"render_dpi": resolution}
         sr.status = "success"
     pr.stages["ingest"] = sr
@@ -612,15 +594,11 @@ def _run_ingest_stage(
 
 def _run_tocr_vocrpp_stages(
     pr: PageResult,
-    pdf_path: Path,
-    page_num: int,
+    ctx: "PageContext",
     cfg: GroupingConfig,
 ) -> tuple:
-    """Stages 2+3: TOCR and VOCRPP in parallel.  Returns (boxes, page_w, page_h, preprocess_img)."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    from .ingest import render_page_image
-    from .tocr.extract import extract_tocr_page
+    """Stages 2+3: TOCR then VOCRPP (sequential).  Returns (boxes, page_w, page_h, preprocess_img)."""
+    from .tocr.extract import extract_tocr_from_words
 
     boxes: list = []
     page_w = page_h = 0.0
@@ -629,7 +607,10 @@ def _run_tocr_vocrpp_stages(
     def _do_tocr():
         """Execute the text-layer OCR extraction stage."""
         with run_stage("tocr", cfg) as sr_t:
-            result = extract_tocr_page(pdf_path, page_num, cfg, mode="full")
+            result = extract_tocr_from_words(
+                ctx.words, ctx.page_num, ctx.page_width, ctx.page_height,
+                cfg, mode="full",
+            )
             b, pw, ph, diag = result.to_legacy_tuple()
             boxes[:] = b
             page_w_h = (pw, ph)
@@ -645,12 +626,7 @@ def _run_tocr_vocrpp_stages(
                 from .vocrpp.preprocess import OcrPreprocessConfig
                 from .vocrpp.preprocess import preprocess_image_for_ocr as _pp
 
-                ocr_res = (
-                    cfg.vocr_resolution
-                    if cfg.vocr_resolution > 0
-                    else cfg.ocr_reconcile_resolution
-                )
-                raw_img = render_page_image(pdf_path, page_num, resolution=ocr_res)
+                raw_img = ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
                 pp_cfg = OcrPreprocessConfig(
                     enabled=True,
                     grayscale=cfg.vocrpp_grayscale,
@@ -674,11 +650,9 @@ def _run_tocr_vocrpp_stages(
                 sr_v.status = "success"
             return sr_v
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        tocr_fut = pool.submit(_do_tocr)
-        vocrpp_fut = pool.submit(_do_vocrpp)
-        sr_tocr, (page_w, page_h) = tocr_fut.result()
-        sr_vocrpp = vocrpp_fut.result()
+    # Sequential execution — no thread pool overhead on CPU
+    sr_tocr, (page_w, page_h) = _do_tocr()
+    sr_vocrpp = _do_vocrpp()
 
     pr.stages["tocr"] = sr_tocr
     pr.stages["vocrpp"] = sr_vocrpp
@@ -710,16 +684,13 @@ def _run_prune_deskew(
 
 def _run_vocr_stage(
     pr: PageResult,
-    pdf_path: Path,
-    page_num: int,
+    ctx: "PageContext",
     cfg: GroupingConfig,
     page_w: float,
     page_h: float,
     preprocess_img,
 ) -> tuple:
     """Stage 4: Visual OCR.  Returns (ocr_tokens, ocr_confs)."""
-    from .ingest import render_page_image
-
     ocr_tokens = None
     ocr_confs = None
     with run_stage("vocr", cfg) as sr_vocr:
@@ -729,19 +700,11 @@ def _run_vocr_stage(
             ocr_img = (
                 preprocess_img
                 if preprocess_img is not None
-                else render_page_image(
-                    pdf_path,
-                    page_num,
-                    resolution=(
-                        cfg.vocr_resolution
-                        if cfg.vocr_resolution > 0
-                        else cfg.ocr_reconcile_resolution
-                    ),
-                )
+                else (ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image)
             )
             ocr_tokens, ocr_confs = extract_vocr_tokens(
                 page_image=ocr_img,
-                page_num=page_num,
+                page_num=ctx.page_num,
                 page_width=page_w,
                 page_height=page_h,
                 cfg=cfg,
@@ -756,8 +719,7 @@ def _run_vocr_stage(
 
 def _run_reconcile_stage(
     pr: PageResult,
-    pdf_path: Path,
-    page_num: int,
+    ctx: "PageContext",
     cfg: GroupingConfig,
     boxes: list,
     page_w: float,
@@ -768,7 +730,6 @@ def _run_reconcile_stage(
     sr_vocr: StageResult,
 ) -> list:
     """Stage 5: OCR reconciliation.  Returns updated boxes list."""
-    from .ingest import render_page_image
     from .tocr.preprocess import nms_prune
 
     reconcile_result = None
@@ -784,16 +745,12 @@ def _run_reconcile_stage(
             ocr_img_ = (
                 preprocess_img
                 if preprocess_img is not None
-                else render_page_image(
-                    pdf_path,
-                    page_num,
-                    resolution=cfg.ocr_reconcile_resolution,
-                )
+                else (ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image)
             )
             reconcile_result = _reconcile(
                 page_image=ocr_img_,
                 tokens=boxes,
-                page_num=page_num,
+                page_num=ctx.page_num,
                 page_width=page_w,
                 page_height=page_h,
                 cfg=cfg,
@@ -817,13 +774,8 @@ def _run_grouping_stage(
     page_h: float,
 ) -> tuple:
     """Stage 6: clustering and notes-column grouping.  Returns (blocks, notes_columns)."""
-    from .grouping import (
-        build_clusters_v2,
-        group_notes_columns,
-        link_continued_columns,
-        mark_headers,
-        mark_notes,
-    )
+    from .grouping import (build_clusters_v2, group_notes_columns,
+                           link_continued_columns, mark_headers, mark_notes)
 
     with run_stage("grouping", cfg) as sr_grp:
         blocks = build_clusters_v2(boxes, page_h, cfg)
@@ -845,8 +797,7 @@ def _run_grouping_stage(
 
 def _run_analysis_stage(
     pr: PageResult,
-    pdf_path: Path,
-    page_num: int,
+    ctx: "PageContext",
     cfg: GroupingConfig,
     blocks: list,
     boxes: list,
@@ -855,21 +806,19 @@ def _run_analysis_stage(
     page_h: float,
 ) -> None:
     """Stage 7: graphics, structural boxes, regions, title blocks, zones."""
-    from .analysis.legends import (
-        detect_abbreviation_regions,
-        detect_legend_regions,
-        detect_misc_title_regions,
-        detect_revision_regions,
-        detect_standard_detail_regions,
-        extract_graphics,
-        filter_graphics_outside_regions,
-    )
+    from .analysis import (detect_abbreviation_regions, detect_legend_regions,
+                           detect_misc_title_regions, detect_revision_regions,
+                           detect_standard_detail_regions,
+                           extract_graphics_from_data,
+                           filter_graphics_outside_regions)
     from .analysis.structural_boxes import detect_semantic_regions
     from .analysis.title_block import extract_title_blocks
     from .analysis.zoning import detect_zones
 
     with run_stage("analysis", cfg) as sr_ana:
-        graphics = extract_graphics(str(pdf_path), page_num)
+        graphics = extract_graphics_from_data(
+            ctx.page_num, ctx.lines, ctx.rects, ctx.curves,
+        )
         structural_boxes, semantic_regions = detect_semantic_regions(
             blocks=blocks,
             graphics=graphics,
@@ -927,7 +876,7 @@ def _run_analysis_stage(
             structural_boxes=structural_boxes,
             blocks=blocks,
             tokens=boxes,
-            page=page_num,
+            page=ctx.page_num,
         )
         page_zones = detect_zones(
             page_width=page_w,
@@ -1051,6 +1000,9 @@ def run_pipeline(
     Python objects.  Callers (scripts, GUI, tests) are responsible for
     serialisation and overlay production.
 
+    The PDF is opened **exactly once** via :func:`build_page_context`;
+    all stages consume the pre-extracted :class:`PageContext`.
+
     Each stage is delegated to a ``_run_*_stage`` helper for
     maintainability; this function handles only orchestration.
 
@@ -1073,16 +1025,36 @@ def run_pipeline(
     if cfg is None:
         cfg = GroupingConfig()
 
+    # ── Single PDF open: build PageContext ──────────────────────────
+    from .ingest import build_page_context
+    from .tocr.extract import build_extract_words_kwargs
+
+    # Determine OCR resolution (0 = skip OCR image render)
+    ocr_res = 0
+    if cfg.enable_vocr or cfg.enable_vocrpp or cfg.enable_reconcile:
+        ocr_res = (
+            cfg.vocr_resolution
+            if cfg.vocr_resolution > 0
+            else cfg.ocr_reconcile_resolution
+        )
+
+    ctx = build_page_context(
+        pdf_path,
+        page_num,
+        overlay_resolution=resolution,
+        ocr_resolution=ocr_res,
+        extract_words_kwargs=build_extract_words_kwargs(cfg, mode="full"),
+    )
+
     pr = PageResult(page=page_num)
 
     # Stage 1: ingest
-    _run_ingest_stage(pr, pdf_path, page_num, cfg, resolution)
+    _run_ingest_stage(pr, ctx, cfg, resolution)
 
-    # Stages 2+3: tocr ‖ vocrpp (parallel)
+    # Stages 2+3: tocr → vocrpp (sequential)
     boxes, page_w, page_h, preprocess_img = _run_tocr_vocrpp_stages(
         pr,
-        pdf_path,
-        page_num,
+        ctx,
         cfg,
     )
 
@@ -1093,8 +1065,7 @@ def run_pipeline(
     # Stage 4: vocr
     ocr_tokens, ocr_confs = _run_vocr_stage(
         pr,
-        pdf_path,
-        page_num,
+        ctx,
         cfg,
         page_w,
         page_h,
@@ -1104,8 +1075,7 @@ def run_pipeline(
     # Stage 5: reconcile
     boxes = _run_reconcile_stage(
         pr,
-        pdf_path,
-        page_num,
+        ctx,
         cfg,
         boxes,
         page_w,
@@ -1122,8 +1092,7 @@ def run_pipeline(
     # Stage 7: analysis
     _run_analysis_stage(
         pr,
-        pdf_path,
-        page_num,
+        ctx,
         cfg,
         blocks,
         boxes,
@@ -1406,10 +1375,8 @@ def _apply_ml_feedback(
         img_extractor = None
         if cfg.ml_vision_enabled and page_image is not None:
             try:
-                from .corrections.image_features import (
-                    ImageFeatureExtractor,
-                    is_vision_available,
-                )
+                from .corrections.image_features import (ImageFeatureExtractor,
+                                                         is_vision_available)
 
                 if is_vision_available():
                     img_extractor = ImageFeatureExtractor(
@@ -1423,9 +1390,7 @@ def _apply_ml_feedback(
         if cfg.ml_embeddings_enabled:
             try:
                 from .corrections.text_embeddings import (
-                    TextEmbedder,
-                    is_embeddings_available,
-                )
+                    TextEmbedder, is_embeddings_available)
 
                 if is_embeddings_available():
                     text_embedder = TextEmbedder(model_name=cfg.ml_embeddings_model)
@@ -1497,7 +1462,8 @@ def _apply_ml_feedback(
                 # Store in cache for next time (Phase 4.3)
                 if use_cache:
                     try:
-                        from .corrections.classifier import encode_features as _ef
+                        from .corrections.classifier import \
+                            encode_features as _ef
 
                         vec = _ef(
                             det["features"],

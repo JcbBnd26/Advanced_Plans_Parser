@@ -2,10 +2,14 @@
 
 Preserves all original GUI functionality (PDF selection, page range, OCR
 toggles, tag management) and adds:
-- Collapsible advanced-config sections for TOCR / VOCRPP / VOCR / Reconcile / Grouping
+- Collapsible advanced-config section for Grouping & Geometry
 - Config file Load / Save buttons (YAML / TOML)
 - Embedded log console with stage-progress bar (replaces PowerShell windows)
 - Cancel button for in-progress runs
+
+Note: TOCR / VOCRPP / VOCR / Reconcile advanced knobs are intentionally
+omitted from the GUI – they will be managed by the LLM layer in a future
+release.
 """
 
 from __future__ import annotations
@@ -23,102 +27,16 @@ _project = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_project / "scripts" / "runners"))
 sys.path.insert(0, str(_project / "scripts" / "utils"))
 
-from widgets import CollapsibleFrame, LogPanel, StageProgressBar
+from widgets import LogPanel, StageProgressBar
 from worker import PipelineWorker
 
 from plancheck.config import GroupingConfig
 
 # ---------------------------------------------------------------------------
-# Field name lists for collapsible knob sections
+# Note: All advanced field lists (TOCR / VOCRPP / VOCR / Reconcile / Geometry)
+# have been removed from the GUI – those knobs will be managed by the LLM
+# layer in a future release.
 # ---------------------------------------------------------------------------
-
-_TOCR_FIELDS = [
-    "tocr_x_tolerance",
-    "tocr_y_tolerance",
-    "tocr_dedup_iou",
-    "tocr_margin_pts",
-    "tocr_mojibake_threshold",
-    "tocr_min_font_size",
-    "tocr_max_font_size",
-    "tocr_normalize_unicode",
-    "tocr_case_fold",
-    "tocr_keep_rotated",
-    "tocr_filter_control_chars",
-    "tocr_strip_whitespace_tokens",
-    "tocr_clip_to_page",
-    "tocr_collapse_whitespace",
-    "tocr_use_text_flow",
-    "tocr_keep_blank_chars",
-    "tocr_min_word_length",
-    "tocr_min_token_density",
-    "tocr_extra_attrs",
-]
-
-_VOCRPP_FIELDS = [
-    "vocrpp_grayscale",
-    "vocrpp_autocontrast",
-    "vocrpp_clahe",
-    "vocrpp_clahe_clip_limit",
-    "vocrpp_clahe_grid_size",
-    "vocrpp_median_denoise",
-    "vocrpp_median_kernel",
-    "vocrpp_adaptive_binarize",
-    "vocrpp_binarize_block_size",
-    "vocrpp_binarize_constant",
-    "vocrpp_sharpen",
-    "vocrpp_sharpen_radius",
-    "vocrpp_sharpen_percent",
-]
-
-_VOCR_FIELDS = [
-    "vocr_model_tier",
-    "vocr_min_confidence",
-    "vocr_max_tile_px",
-    "vocr_tile_overlap",
-    "vocr_tile_dedup_iou",
-    "vocr_min_text_length",
-    "vocr_strip_whitespace",
-    "vocr_max_det_skew",
-    "vocr_heartbeat_interval",
-    "vocr_use_orientation_classify",
-    "vocr_use_doc_unwarping",
-    "vocr_use_textline_orientation",
-    "vocr_resolution",
-]
-
-_RECONCILE_FIELDS = [
-    "ocr_reconcile_allowed_symbols",
-    "ocr_reconcile_resolution",
-    "ocr_reconcile_confidence",
-    "ocr_reconcile_iou_threshold",
-    "ocr_reconcile_center_tol_x",
-    "ocr_reconcile_center_tol_y",
-    "ocr_reconcile_proximity_pts",
-    "ocr_reconcile_anchor_margin",
-    "ocr_reconcile_symbol_pad",
-    "ocr_reconcile_debug",
-]
-
-_GEOMETRY_FIELDS = [
-    "iou_prune",
-    "horizontal_tol_mult",
-    "vertical_tol_mult",
-    "row_gap_mult",
-    "block_gap_mult",
-    "max_block_height_mult",
-    "row_split_gap_mult",
-    "column_gap_mult",
-    "gutter_width_mult",
-    "max_column_width_mult",
-    "max_row_width_mult",
-    "table_regular_tol",
-    "span_gap_mult",
-    "content_band_top",
-    "content_band_bottom",
-    "enable_skew",
-    "max_skew_degrees",
-    "use_hist_gutter",
-]
 
 
 class PipelineTab:
@@ -138,9 +56,6 @@ class PipelineTab:
 
         # PDF state
         self.pdf_files: list[Path] = []
-
-        # Config knob vars
-        self._knob_vars: dict[str, tk.StringVar] = {}
 
         # Worker
         self._worker: PipelineWorker | None = None
@@ -353,48 +268,6 @@ class PipelineTab:
 
         row += 1
 
-        # ── Advanced Config Sections (Collapsible) ───────────────────
-        adv_frame = ttk.Frame(self._inner)
-        adv_frame.grid(row=row, column=0, sticky="ew", **pad)
-        adv_frame.columnconfigure(0, weight=1)
-
-        defaults = GroupingConfig()
-
-        # TOCR Advanced
-        self._tocr_section = CollapsibleFrame(adv_frame, "TOCR Advanced Settings")
-        self._tocr_section.grid(row=0, column=0, sticky="ew", pady=2)
-        self._build_knob_section(self._tocr_section.content, _TOCR_FIELDS, defaults)
-
-        # VOCRPP Advanced
-        self._vocrpp_section = CollapsibleFrame(
-            adv_frame, "VOCRPP Preprocessing Settings"
-        )
-        self._vocrpp_section.grid(row=1, column=0, sticky="ew", pady=2)
-        self._build_knob_section(self._vocrpp_section.content, _VOCRPP_FIELDS, defaults)
-
-        # VOCR Advanced
-        self._vocr_section = CollapsibleFrame(adv_frame, "VOCR PaddleOCR Settings")
-        self._vocr_section.grid(row=2, column=0, sticky="ew", pady=2)
-        self._build_knob_section(self._vocr_section.content, _VOCR_FIELDS, defaults)
-
-        # Reconcile Advanced
-        self._reconcile_section = CollapsibleFrame(adv_frame, "Reconcile Settings")
-        self._reconcile_section.grid(row=3, column=0, sticky="ew", pady=2)
-        self._build_knob_section(
-            self._reconcile_section.content, _RECONCILE_FIELDS, defaults
-        )
-
-        # Geometry / Grouping
-        self._geometry_section = CollapsibleFrame(
-            adv_frame, "Grouping & Geometry Settings"
-        )
-        self._geometry_section.grid(row=4, column=0, sticky="ew", pady=2)
-        self._build_knob_section(
-            self._geometry_section.content, _GEOMETRY_FIELDS, defaults
-        )
-
-        row += 1
-
         # ── Run Button ───────────────────────────────────────────────
         btn_frame = ttk.Frame(self._inner)
         btn_frame.grid(row=row, column=0, sticky="ew", **pad)
@@ -437,27 +310,8 @@ class PipelineTab:
         )
 
     # ------------------------------------------------------------------
-    # Knob helpers
+    # Config helpers
     # ------------------------------------------------------------------
-
-    def _build_knob_section(
-        self, parent: ttk.Frame, field_names: list[str], defaults: GroupingConfig
-    ) -> None:
-        """Populate a collapsible section with labelled config entries."""
-        parent.columnconfigure(1, weight=1)
-        for row_i, name in enumerate(field_names):
-            default_val = getattr(defaults, name, "")
-            ttk.Label(parent, text=name, width=32, anchor="w").grid(
-                row=row_i, column=0, sticky="w", padx=(2, 6), pady=1
-            )
-            sv = tk.StringVar(value=str(default_val))
-            self._knob_vars[name] = sv
-            ttk.Entry(parent, textvariable=sv, width=14).grid(
-                row=row_i, column=1, sticky="w", pady=1
-            )
-            ttk.Label(parent, text=f"(default: {default_val})", foreground="gray").grid(
-                row=row_i, column=2, sticky="w", padx=(6, 0), pady=1
-            )
 
     def _collect_config(self) -> GroupingConfig:
         """Build a GroupingConfig from all current UI knobs + toggles."""
@@ -473,25 +327,6 @@ class PipelineTab:
         except ValueError:
             pass
 
-        # Advanced knobs
-        for name, sv in self._knob_vars.items():
-            raw = sv.get().strip()
-            if not raw:
-                continue
-            default_val = getattr(cfg, name, None)
-            if default_val is None:
-                continue
-            try:
-                if isinstance(default_val, bool):
-                    setattr(cfg, name, raw.lower() in ("1", "true", "yes"))
-                elif isinstance(default_val, int):
-                    setattr(cfg, name, int(raw))
-                elif isinstance(default_val, float):
-                    setattr(cfg, name, float(raw))
-                else:
-                    setattr(cfg, name, raw)
-            except (ValueError, TypeError):
-                pass
         return cfg
 
     # ------------------------------------------------------------------
@@ -553,11 +388,6 @@ class PipelineTab:
         self.ocr_reconcile_var.set(cfg.enable_ocr_reconcile)
         self.ocr_preprocess_var.set(cfg.enable_ocr_preprocess)
         self.ocr_dpi_var.set(str(cfg.ocr_reconcile_resolution))
-
-        for name, sv in self._knob_vars.items():
-            val = getattr(cfg, name, None)
-            if val is not None:
-                sv.set(str(val))
 
     # ------------------------------------------------------------------
     # PDF / Page selection (preserved from original)

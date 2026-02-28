@@ -70,6 +70,13 @@ def main() -> None:
         if args.out is None:
             out_path = latest_overlays_dir() / f"page_{page_idx}_notes_purple.png"
         pdf_path = args.pdf
+        # Render background (single open for --json path)
+        if pdf_path is None:
+            parser.error("A PDF path is required to render the background image")
+        with pdfplumber.open(pdf_path) as pdf:
+            bg_img = (
+                pdf.pages[page_idx].to_image(resolution=args.resolution).original.copy()
+            )
     else:
         if args.pdf is None:
             parser.error("A PDF path is required unless --json is provided")
@@ -82,6 +89,8 @@ def main() -> None:
             tokens = result.tokens
             page_w = result.page_width
             page_h = result.page_height
+            # Render background in the same open
+            bg_img = page.to_image(resolution=args.resolution).original.copy()
 
         tokens = nms_prune(tokens, cfg.iou_prune)
         blocks = build_clusters_v2(tokens, page_h, cfg)
@@ -158,15 +167,6 @@ def main() -> None:
                 f"bbox=({sr.x0:.1f},{sr.y0:.1f},{sr.x1:.1f},{sr.y1:.1f})  "
                 f"header='{sr.context}'"
             )
-
-    # ── Render background image ─────────────────────────────────────
-    if pdf_path is None:
-        parser.error("A PDF path is required to render the background image")
-
-    with pdfplumber.open(pdf_path) as pdf:
-        bg_img = (
-            pdf.pages[page_idx].to_image(resolution=args.resolution).original.copy()
-        )
 
     # ── Build rows list (needed by draw_overlay) ────────────────────
     rows = [row for blk in blocks for row in (blk.rows or [])]

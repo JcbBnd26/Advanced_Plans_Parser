@@ -554,24 +554,67 @@ def render_overlay(
         cfg = GroupingConfig()
 
     # ── Pipeline data ────────────────────────────────────────────────
+    graphics = None  # pre-extracted graphics for analysis layers
     if json_path is not None:
         raw = json.loads(Path(json_path).read_text(encoding="utf-8"))
         tokens, blocks, notes_columns, page_w, page_h = deserialize_page(raw)
+        # Still need a single open for background raster (+ optional graphics)
+        needs_analysis = any(
+            layers.get(k, False)
+            for k in (
+                "structural",
+                "zones",
+                "legends",
+                "abbreviations",
+                "revisions",
+                "std_details",
+            )
+        )
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[page_idx]
+            bg = page.to_image(resolution=resolution).original.copy()
+            if needs_analysis:
+                from plancheck.analysis.graphics import extract_graphics_from_data
+
+                graphics = extract_graphics_from_data(
+                    page_idx,
+                    list(page.lines),
+                    list(page.rects),
+                    list(page.curves),
+                )
     else:
+        # Single open: TOCR + background + graphics all at once
+        needs_analysis = any(
+            layers.get(k, False)
+            for k in (
+                "structural",
+                "zones",
+                "legends",
+                "abbreviations",
+                "revisions",
+                "std_details",
+            )
+        )
         with pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[page_idx]
             result = extract_tocr_from_page(page, page_idx, cfg, mode="minimal")
             tokens = result.tokens
             page_w = result.page_width
             page_h = result.page_height
+            bg = page.to_image(resolution=resolution).original.copy()
+            if needs_analysis:
+                from plancheck.analysis.graphics import extract_graphics_from_data
+
+                graphics = extract_graphics_from_data(
+                    page_idx,
+                    list(page.lines),
+                    list(page.rects),
+                    list(page.curves),
+                )
         tokens = nms_prune(tokens, cfg.iou_prune)
         blocks = build_clusters_v2(tokens, page_h, cfg)
         notes_columns = group_notes_columns(blocks, cfg=cfg)
         link_continued_columns(notes_columns, blocks=blocks, cfg=cfg)
-
-    # ── Background raster ────────────────────────────────────────────
-    with pdfplumber.open(pdf_path) as pdf:
-        bg = pdf.pages[page_idx].to_image(resolution=resolution).original.copy()
 
     scale = resolution / 72.0
     img = bg.convert("RGBA")
@@ -599,7 +642,7 @@ def render_overlay(
     if layers.get("red", False):
         _draw_red_layer(draw, blocks, scale, font)
 
-    # New analysis layers (require graphics extraction)
+    # New analysis layers (use pre-extracted graphics from single open)
     needs_analysis = any(
         layers.get(k, False)
         for k in (
@@ -612,9 +655,7 @@ def render_overlay(
         )
     )
     if needs_analysis:
-        try:
-            graphics = extract_graphics(str(pdf_path), page_idx)
-        except Exception:
+        if graphics is None:
             graphics = []
 
         if layers.get("structural", False):
@@ -689,39 +730,6 @@ def render_overlay(
                 pass
 
     return img
-
-
-# ---------------------------------------------------------------------------
-# GroupingConfig knob metadata (for GUI spinboxes)
-# ---------------------------------------------------------------------------
-
-# Fields exposed in the viewer knobs panel.  Only TOCR + geometry knobs —
-# VOCR / reconcile / preprocessing knobs are irrelevant for TOCR-stage
-# visual debugging.
-_KNOB_FIELDS: list[str] = [
-    # Geometry core
-    "iou_prune",
-    "horizontal_tol_mult",
-    "vertical_tol_mult",
-    "row_gap_mult",
-    "block_gap_mult",
-    "max_block_height_mult",
-    "row_split_gap_mult",
-    "column_gap_mult",
-    "gutter_width_mult",
-    "max_column_width_mult",
-    "max_row_width_mult",
-    "table_regular_tol",
-    "span_gap_mult",
-    "content_band_top",
-    "content_band_bottom",
-    # TOCR extraction
-    "tocr_x_tolerance",
-    "tocr_y_tolerance",
-    "tocr_dedup_iou",
-    "tocr_margin_pts",
-    "tocr_mojibake_threshold",
-]
 
 
 # ---------------------------------------------------------------------------
@@ -896,74 +904,8 @@ class OverlayViewerTab:
             row=0, column=4, padx=(2, 0)
         )
 
-        # --- Knobs (collapsible scroll area) ---
-        knob_toggle_frame = ttk.Frame(mid)
-        knob_toggle_frame.grid(row=1, column=0, columnspan=6, sticky="ew", pady=(6, 0))
-
-        self._knobs_visible = tk.BooleanVar(value=False)
-        self._knob_toggle_btn = ttk.Checkbutton(
-            knob_toggle_frame,
-            text="Show GroupingConfig knobs",
-            variable=self._knobs_visible,
-            command=self._toggle_knobs,
-        )
-        self._knob_toggle_btn.grid(row=0, column=0, sticky="w")
-
-        ttk.Button(
-            knob_toggle_frame, text="Reset defaults", command=self._reset_knobs
-        ).grid(row=0, column=1, padx=(8, 0))
-
-        # Scrollable knob frame (initially hidden)
-        self._knob_container = ttk.Frame(mid)
-        # Not gridded until toggled visible.
-
-        self._knob_canvas = tk.Canvas(
-            self._knob_container, height=140, highlightthickness=0
-        )
-        knob_sb = ttk.Scrollbar(
-            self._knob_container, orient="vertical", command=self._knob_canvas.yview
-        )
-        self._knob_inner = ttk.Frame(self._knob_canvas)
-        self._knob_inner.bind(
-            "<Configure>",
-            lambda e: self._knob_canvas.configure(
-                scrollregion=self._knob_canvas.bbox("all")
-            ),
-        )
-        self._knob_canvas.create_window((0, 0), window=self._knob_inner, anchor="nw")
-        self._knob_canvas.configure(yscrollcommand=knob_sb.set)
-        self._knob_canvas.pack(side="left", fill="both", expand=True)
-        knob_sb.pack(side="right", fill="y")
-
-        # Populate knob widgets
-        defaults = GroupingConfig()
+        # Note: GroupingConfig knobs removed – will be managed by LLM layer.
         self._knob_vars: dict[str, tk.StringVar] = {}
-        for row_i, name in enumerate(_KNOB_FIELDS):
-            default_val = getattr(defaults, name)
-            ttk.Label(self._knob_inner, text=name, width=28, anchor="w").grid(
-                row=row_i, column=0, sticky="w", padx=(2, 6)
-            )
-            sv = tk.StringVar(value=str(default_val))
-            self._knob_vars[name] = sv
-            ttk.Entry(self._knob_inner, textvariable=sv, width=10).grid(
-                row=row_i, column=1, sticky="w"
-            )
-            ttk.Label(
-                self._knob_inner, text=f"(default: {default_val})", foreground="gray"
-            ).grid(row=row_i, column=2, sticky="w", padx=(6, 0))
-
-    def _toggle_knobs(self) -> None:
-        if self._knobs_visible.get():
-            self._knob_container.grid(
-                row=2, column=0, columnspan=6, sticky="nsew", pady=(4, 0)
-            )
-        else:
-            self._knob_container.grid_remove()
-
-    def _reset_knobs(self) -> None:
-        defaults = GroupingConfig()
-        for name, sv in self._knob_vars.items():
-            sv.set(str(getattr(defaults, name)))
 
     # ── Image canvas ─────────────────────────────────────────────────
 

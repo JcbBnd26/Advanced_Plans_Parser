@@ -140,6 +140,31 @@ def _build_extract_words_kwargs(
     return kw
 
 
+def build_extract_words_kwargs(
+    cfg: GroupingConfig | None = None,
+    mode: Literal["full", "minimal"] = "full",
+) -> dict[str, Any]:
+    """Public wrapper for building ``extract_words`` keyword arguments.
+
+    Used by :func:`~plancheck.ingest.build_page_context` to ensure the
+    same word-extraction settings are passed to ``pdfplumber`` during
+    the single-open step.
+
+    Parameters
+    ----------
+    cfg : GroupingConfig, optional
+    mode : ``"full"`` | ``"minimal"``
+
+    Returns
+    -------
+    dict
+        Keyword arguments suitable for ``page.extract_words(**kw)``.
+    """
+    if cfg is None:
+        cfg = GroupingConfig()
+    return _build_extract_words_kwargs(cfg, mode)
+
+
 def _word_to_glyph_minimal(
     w: dict,
     page_num: int,
@@ -340,6 +365,144 @@ def _dedup_identical_text_iou(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+def extract_tocr_from_words(
+    words: list[dict],
+    page_num: int,
+    page_width: float,
+    page_height: float,
+    cfg: GroupingConfig | None = None,
+    *,
+    mode: Literal["full", "minimal"] = "full",
+) -> TocrPageResult:
+    """Extract TOCR tokens from pre-extracted pdfplumber word dicts.
+
+    This is the **single-open** variant: callers supply ``words`` already
+    obtained from ``page.extract_words()``, avoiding a second
+    ``pdfplumber.open()`` call.
+
+    Parameters
+    ----------
+    words : list[dict]
+        Word dicts as returned by ``pdfplumber.Page.extract_words()``.
+    page_num : int
+        Zero-based page index.
+    page_width, page_height : float
+        Page dimensions in PDF points.
+    cfg : GroupingConfig, optional
+    mode : ``"full"`` | ``"minimal"``
+
+    Returns
+    -------
+    TocrPageResult
+    """
+    if cfg is None:
+        cfg = GroupingConfig()
+
+    page_w = page_width
+    page_h = page_height
+
+    diag = _empty_diagnostics(cfg)
+    diag["page_area_sqin"] = round((page_w / 72.0) * (page_h / 72.0), 2)
+    diag["tokens_raw"] = len(words)
+
+    if mode == "minimal":
+        boxes: list[GlyphBox] = []
+        for w in words:
+            g = _word_to_glyph_minimal(w, page_num, page_w, page_h, cfg)
+            if g is not None:
+                boxes.append(g)
+        diag["tokens_total"] = len(boxes)
+        return TocrPageResult(
+            tokens=boxes,
+            page_width=page_w,
+            page_height=page_h,
+            diagnostics=diag,
+        )
+
+    # ── Full mode ────────────────────────────────────────────────────
+    font_name_counter: Counter = Counter()
+    font_size_counter: Counter = Counter()
+    boxes = []
+    for w in words:
+        g = _word_to_glyph_full(
+            w,
+            page_num,
+            page_w,
+            page_h,
+            cfg,
+            diag,
+            font_name_counter,
+            font_size_counter,
+        )
+        if g is not None:
+            boxes.append(g)
+
+    # Text-aware dedup (full mode only)
+    boxes = _dedup_identical_text_iou(boxes, cfg.tocr_dedup_iou, diag)
+
+    diag["tokens_total"] = len(boxes)
+    diag["font_names"] = dict(font_name_counter.most_common(20))
+    diag["font_sizes"] = dict(font_size_counter.most_common(20))
+
+    if diag["page_area_sqin"] > 0:
+        diag["token_density_per_sqin"] = round(
+            len(boxes) / diag["page_area_sqin"],
+            1,
+        )
+    if diag["tokens_raw"] > 0:
+        diag["mojibake_fraction"] = round(
+            diag["char_encoding_issues"] / diag["tokens_raw"],
+            4,
+        )
+    if (
+        cfg.tocr_min_token_density > 0
+        and diag["token_density_per_sqin"] < cfg.tocr_min_token_density
+    ):
+        diag["below_min_density"] = True
+
+    if len(boxes) == 0:
+        log.warning(
+            "TOCR page %d: zero tokens extracted (blank or image-only page)",
+            page_num,
+        )
+    if diag["char_encoding_issues"] > 0:
+        log.warning(
+            "TOCR page %d: %d tokens with encoding issues (mojibake)",
+            page_num,
+            diag["char_encoding_issues"],
+        )
+    if (
+        cfg.tocr_mojibake_threshold > 0
+        and diag["mojibake_fraction"] > cfg.tocr_mojibake_threshold
+    ):
+        log.warning(
+            "TOCR page %d: mojibake fraction %.1f%% exceeds threshold %.1f%%",
+            page_num,
+            diag["mojibake_fraction"] * 100,
+            cfg.tocr_mojibake_threshold * 100,
+        )
+    if diag["below_min_density"]:
+        log.warning(
+            "TOCR page %d: token density %.1f/sq-in below minimum %.1f",
+            page_num,
+            diag["token_density_per_sqin"],
+            cfg.tocr_min_token_density,
+        )
+    if diag["has_rotated_text"]:
+        log.info(
+            "TOCR page %d: %d non-upright (rotated) words detected",
+            page_num,
+            diag["non_upright_count"],
+        )
+
+    return TocrPageResult(
+        tokens=boxes,
+        page_width=page_w,
+        page_height=page_h,
+        diagnostics=diag,
+    )
 
 
 def extract_tocr_from_page(

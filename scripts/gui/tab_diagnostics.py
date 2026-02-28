@@ -1,6 +1,10 @@
-"""Tab 4 – Diagnostics: font metrics, benchmark runner, tuning harness, VOCRPP preview.
+"""Tab 4 – Diagnostics: font metrics, benchmark runner, and ML tools.
 
 Collapsible sections for each diagnostic tool with embedded output.
+
+Note: VOCRPP preview, config tuning harness, and grouping playground have
+been removed from the GUI – those functions will be managed by the LLM
+layer in a future release.
 """
 
 from __future__ import annotations
@@ -159,121 +163,10 @@ class DiagnosticsTab:
             foreground="gray",
         ).grid(row=4, column=0, columnspan=3, sticky="w")
 
-        # ── 3. VOCRPP Preview ────────────────────────────────────────
-        vocrpp_section = CollapsibleFrame(self._inner, "VOCRPP Preprocessing Preview")
-        vocrpp_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
+        # (Sections 3–5 removed: VOCRPP Preview / Config Tuning Harness /
+        #  Grouping Playground → managed by LLM layer in a future release.)
 
-        vc = vocrpp_section.content
-        vc.columnconfigure(0, weight=1)
-
-        ttk.Label(
-            vc,
-            text="Run OCR image preprocessing and view before/after.",
-            foreground="gray",
-        ).grid(row=0, column=0, sticky="w", pady=2)
-
-        vocrpp_opts = ttk.Frame(vc)
-        vocrpp_opts.grid(row=1, column=0, sticky="ew", pady=2)
-
-        self._pp_grayscale = tk.BooleanVar(value=True)
-        self._pp_clahe = tk.BooleanVar(value=True)
-        self._pp_denoise = tk.BooleanVar(value=False)
-        self._pp_binarize = tk.BooleanVar(value=False)
-        self._pp_sharpen = tk.BooleanVar(value=False)
-
-        ttk.Checkbutton(
-            vocrpp_opts, text="Grayscale", variable=self._pp_grayscale
-        ).pack(side="left", padx=(0, 6))
-        ttk.Checkbutton(vocrpp_opts, text="CLAHE", variable=self._pp_clahe).pack(
-            side="left", padx=(0, 6)
-        )
-        ttk.Checkbutton(vocrpp_opts, text="Denoise", variable=self._pp_denoise).pack(
-            side="left", padx=(0, 6)
-        )
-        ttk.Checkbutton(vocrpp_opts, text="Binarize", variable=self._pp_binarize).pack(
-            side="left", padx=(0, 6)
-        )
-        ttk.Checkbutton(vocrpp_opts, text="Sharpen", variable=self._pp_sharpen).pack(
-            side="left"
-        )
-
-        ttk.Label(vc, text="DPI:").grid(row=2, column=0, sticky="w")
-        self._pp_dpi = tk.StringVar(value="300")
-        pp_dpi_frame = ttk.Frame(vc)
-        pp_dpi_frame.grid(row=2, column=0, sticky="w")
-        ttk.Label(pp_dpi_frame, text="DPI:").pack(side="left")
-        ttk.Spinbox(
-            pp_dpi_frame,
-            textvariable=self._pp_dpi,
-            values=(150, 200, 300, 400),
-            width=6,
-            state="readonly",
-        ).pack(side="left", padx=4)
-
-        ttk.Button(
-            vc, text="Run Preprocessing", command=self._run_preprocess_preview
-        ).grid(row=3, column=0, sticky="w", pady=(4, 2))
-
-        # ── 4. Tuning Harness ────────────────────────────────────────
-        tuning_section = CollapsibleFrame(self._inner, "Config Tuning Harness")
-        tuning_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
-
-        tc = tuning_section.content
-        tc.columnconfigure(0, weight=1)
-
-        ttk.Label(
-            tc,
-            text="Sweep config parameters and compare quality scores.",
-            foreground="gray",
-        ).grid(row=0, column=0, sticky="w", pady=2)
-        ttk.Label(
-            tc, text="Uses the default recipe unless a recipe file is loaded."
-        ).grid(row=1, column=0, sticky="w", pady=1)
-
-        tune_btns = ttk.Frame(tc)
-        tune_btns.grid(row=2, column=0, sticky="w", pady=4)
-        ttk.Button(tune_btns, text="Run Sweep", command=self._run_tuning).pack(
-            side="left", padx=2
-        )
-        ttk.Button(tune_btns, text="Load Recipe...", command=self._load_recipe).pack(
-            side="left", padx=2
-        )
-        ttk.Button(tune_btns, text="List Recipes", command=self._list_recipes).pack(
-            side="left", padx=2
-        )
-
-        # ── 5. Grouping Playground ───────────────────────────────────
-        grouping_section = CollapsibleFrame(self._inner, "Grouping Playground")
-        grouping_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
-
-        gc = grouping_section.content
-        gc.columnconfigure(0, weight=1)
-
-        ttk.Label(
-            gc,
-            text="Load a boxes.json and re-run grouping with custom knobs.",
-            foreground="gray",
-        ).grid(row=0, column=0, sticky="w", pady=2)
-        gp_btns = ttk.Frame(gc)
-        gp_btns.grid(row=1, column=0, sticky="w", pady=4)
-        ttk.Button(
-            gp_btns, text="Load boxes.json...", command=self._load_boxes_json
-        ).pack(side="left", padx=2)
-        ttk.Button(gp_btns, text="Run Grouping", command=self._run_grouping).pack(
-            side="left", padx=2
-        )
-
-        self._boxes_label_var = tk.StringVar(value="No file loaded")
-        ttk.Label(gc, textvariable=self._boxes_label_var, foreground="gray").grid(
-            row=2, column=0, sticky="w"
-        )
-
-        self._boxes_path: Path | None = None
-
-        # ── 6. ML Calibration ───────────────────────────────────────
+        # ── 3. ML Calibration ───────────────────────────────────────
         cal_section = CollapsibleFrame(self._inner, "ML Calibration")
         cal_section.grid(row=row, column=0, sticky="ew", **pad)
         row += 1
@@ -298,7 +191,7 @@ class DiagnosticsTab:
         self._cal_canvas_frame = ttk.Frame(cc)
         self._cal_canvas_frame.grid(row=2, column=0, sticky="ew", pady=2)
 
-        # ── 7. Model Comparison ──────────────────────────────────────
+        # ── 4. Model Comparison ──────────────────────────────────────
         cmp_section = CollapsibleFrame(self._inner, "Model Comparison")
         cmp_section.grid(row=row, column=0, sticky="ew", **pad)
         row += 1
@@ -345,7 +238,7 @@ class DiagnosticsTab:
             command=self._compare_runs,
         ).pack(side="left", padx=2)
 
-        # ── 8. Layout Model (LayoutLMv3) ─────────────────────────────
+        # ── 5. Layout Model (LayoutLMv3) ─────────────────────────────
         layout_section = CollapsibleFrame(self._inner, "Layout Model (LayoutLMv3)")
         layout_section.grid(row=row, column=0, sticky="ew", **pad)
         row += 1
@@ -381,7 +274,7 @@ class DiagnosticsTab:
             command=self._check_layout_avail,
         ).pack(side="left", padx=2)
 
-        # ── 9. Text Embeddings ───────────────────────────────────────
+        # ── 6. Text Embeddings ───────────────────────────────────────
         emb_section = CollapsibleFrame(
             self._inner, "Text Embeddings (Sentence-Transformer)"
         )
@@ -419,7 +312,7 @@ class DiagnosticsTab:
             command=self._test_embedding,
         ).pack(side="left", padx=2)
 
-        # ── 10. LLM Semantic Checks ──────────────────────────────────
+        # ── 7. LLM Semantic Checks ──────────────────────────────────
         llm_section = CollapsibleFrame(self._inner, "LLM Semantic Checks")
         llm_section.grid(row=row, column=0, sticky="ew", **pad)
         row += 1
@@ -465,7 +358,7 @@ class DiagnosticsTab:
             command=self._run_llm_checks,
         ).pack(side="left", padx=2)
 
-        # ── 11. Cross-Page GNN ───────────────────────────────────────
+        # ── 8. Cross-Page GNN ───────────────────────────────────────
         gnn_section = CollapsibleFrame(self._inner, "Cross-Page GNN")
         gnn_section.grid(row=row, column=0, sticky="ew", **pad)
         row += 1
@@ -625,127 +518,6 @@ class DiagnosticsTab:
                 self.log_panel.write("Benchmark complete.", "SUCCESS")
 
         self._worker.run(target, on_done=on_done)
-
-    # ------------------------------------------------------------------
-    # VOCRPP Preview
-    # ------------------------------------------------------------------
-
-    def _run_preprocess_preview(self) -> None:
-        pdf = self.state.pdf_path
-        if not pdf:
-            messagebox.showwarning("No PDF", "Select a PDF in the Pipeline tab first.")
-            return
-
-        dpi = int(self._pp_dpi.get())
-        self.log_panel.clear()
-
-        self._worker = PipelineWorker(self.root, self.log_panel)
-
-        def target():
-            import subprocess
-
-            args = [
-                f'"{str(pdf)}"',
-                f"--render-dpi {dpi}",
-                "--start 0",
-                f'--run-root "{str(_project / "runs")}"',
-            ]
-            # Build flags
-            cmd = f'python scripts/diagnostics/run_ocr_preprocess.py {" ".join(args)}'
-            print(f"Running: {cmd}")
-            result = subprocess.run(
-                [
-                    "python",
-                    str(_project / "scripts" / "diagnostics" / "run_ocr_preprocess.py"),
-                ]
-                + [
-                    str(pdf),
-                    "--render-dpi",
-                    str(dpi),
-                    "--start",
-                    "0",
-                    "--run-root",
-                    str(_project / "runs"),
-                ],
-                capture_output=True,
-                text=True,
-                cwd=str(_project),
-            )
-            if result.stdout:
-                print(result.stdout)
-            if result.returncode != 0 and result.stderr:
-                print(f"STDERR: {result.stderr}")
-            return result.returncode
-
-        def on_done(result, error, elapsed):
-            if not error:
-                self.log_panel.write("Preprocessing complete.", "SUCCESS")
-
-        self._worker.run(target, on_done=on_done)
-
-    # ------------------------------------------------------------------
-    # Tuning Harness
-    # ------------------------------------------------------------------
-
-    def _run_tuning(self) -> None:
-        pdf = self.state.pdf_path
-        if not pdf:
-            messagebox.showwarning("No PDF", "Select a PDF in the Pipeline tab first.")
-            return
-
-        self.log_panel.clear()
-        self._worker = PipelineWorker(self.root, self.log_panel)
-
-        def target():
-            from run_tuning_harness import _default_recipe, print_comparison, run_trial
-
-            from plancheck.config import GroupingConfig
-
-            recipe = _default_recipe()
-            trials = []
-            for knob_set in recipe:
-                trial = run_trial(
-                    pdf=pdf,
-                    start=0,
-                    end=1,
-                    resolution=200,
-                    run_root=_project / "runs",
-                    knobs=knob_set,
-                )
-                trials.append(trial)
-            print_comparison(trials)
-            return trials
-
-        def on_done(result, error, elapsed):
-            if not error:
-                self.log_panel.write("Tuning sweep complete.", "SUCCESS")
-
-        self._worker.run(target, on_done=on_done)
-
-    def _load_recipe(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Load Tuning Recipe",
-            filetypes=[("JSON", "*.json"), ("All", "*.*")],
-        )
-        if path:
-            self.log_panel.write(f"Recipe loaded: {Path(path).name}", "INFO")
-
-    def _list_recipes(self) -> None:
-        self.log_panel.clear()
-        try:
-            from run_tuning_harness import list_recipes
-
-            recipes = list_recipes()
-            if not recipes:
-                self.log_panel.write("No saved recipes found.", "INFO")
-            else:
-                for r in recipes:
-                    self.log_panel.write(
-                        f"  {r.get('name', '?')}: {r.get('knob_count', '?')} knobs, {r.get('created', '?')}",
-                        "INFO",
-                    )
-        except Exception as e:
-            self.log_panel.write(f"Error: {e}", "ERROR")
 
     # ------------------------------------------------------------------
     # ML Calibration
@@ -949,63 +721,6 @@ class DiagnosticsTab:
                     f"{cls:<20} {f1_a:>8.4f} {f1_b:>8.4f} {sign}{delta:>7.4f}",
                     "INFO",
                 )
-
-    # ------------------------------------------------------------------
-    # Grouping Playground
-    # ------------------------------------------------------------------
-
-    def _load_boxes_json(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Load boxes.json",
-            filetypes=[("JSON", "*.json"), ("All", "*.*")],
-            initialdir=str(_project / "runs"),
-        )
-        if path:
-            self._boxes_path = Path(path)
-            self._boxes_label_var.set(self._boxes_path.name)
-
-    def _run_grouping(self) -> None:
-        if not self._boxes_path or not self._boxes_path.exists():
-            messagebox.showwarning("No File", "Load a boxes.json file first.")
-            return
-
-        self.log_panel.clear()
-        self._worker = PipelineWorker(self.root, self.log_panel)
-
-        def target():
-            import json as json_mod
-
-            from plancheck import GlyphBox, GroupingConfig, build_clusters_v2, nms_prune
-            from plancheck.grouping import group_notes_columns, link_continued_columns
-
-            data = json_mod.loads(self._boxes_path.read_text(encoding="utf-8"))
-            tokens = [GlyphBox.from_dict(d) for d in data]
-            print(f"Loaded {len(tokens)} tokens")
-
-            cfg = GroupingConfig()
-            tokens = nms_prune(tokens, cfg.iou_prune)
-            # Use a reasonable page height
-            page_h = max(b.y1 for b in tokens) if tokens else 792
-            blocks = build_clusters_v2(tokens, page_h, cfg)
-            cols = group_notes_columns(blocks, cfg=cfg)
-            link_continued_columns(cols, blocks=blocks, cfg=cfg)
-
-            print(f"Blocks: {len(blocks)}")
-            print(f"Notes columns: {len(cols)}")
-            for i, blk in enumerate(blocks):
-                bbox = blk.bbox()
-                items = len(blk.lines) if blk.lines else len(blk.rows)
-                lbl = blk.label or ""
-                print(
-                    f"  Block {i}: items={items} table={blk.is_table} notes={blk.is_notes} label={lbl} bbox=({bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f})"
-                )
-            return blocks
-
-        def on_done(result, error, elapsed):
-            if not error:
-                self.log_panel.write("Grouping complete.", "SUCCESS")
-
-        self._worker.run(target, on_done=on_done)
 
     # ------------------------------------------------------------------
     # Layout Model (LayoutLMv3)

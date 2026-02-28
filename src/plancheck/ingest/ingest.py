@@ -8,8 +8,10 @@ Public API
 ----------
 - :func:`ingest_pdf` — open + validate a PDF, return a :class:`PdfMeta`
 - :func:`render_page_image` — render one page to a PIL Image at a given DPI
+- :func:`build_page_context` — open PDF **once**, extract everything for a page
 - :class:`PdfMeta` — lightweight PDF-level metadata container
 - :class:`PageInfo` — per-page dimensions
+- :class:`PageContext` — pre-extracted per-page data (single-open strategy)
 """
 
 from __future__ import annotations
@@ -17,10 +19,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import pdfplumber
 from PIL import Image
+
+if TYPE_CHECKING:
+    from ..config import GroupingConfig
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +56,42 @@ class PageInfo:
             "height": round(self.height, 3),
             "area_sqin": round(self.area_sqin, 2),
         }
+
+
+@dataclass
+class PageContext:
+    """Pre-extracted PDF page data from a single ``pdfplumber.open()`` call.
+
+    Created by :func:`build_page_context`, this carries **every** piece
+    of data that downstream pipeline stages need so that the PDF never
+    has to be opened again for the same page.
+
+    Fields
+    ------
+    page_num : int
+        Zero-based page index.
+    page_width, page_height : float
+        Page dimensions in PDF points.
+    words : list[dict]
+        Raw word dicts from ``page.extract_words(**tocr_kwargs)``.
+    lines, rects, curves : list[dict]
+        Raw graphical-element dicts from the page.
+    background_image : PIL.Image.Image
+        Page rendered at overlay resolution (typically 200 DPI).
+    ocr_image : PIL.Image.Image or None
+        Page rendered at OCR resolution (typically 300 DPI).
+        ``None`` when VOCR/reconcile are disabled.
+    """
+
+    page_num: int
+    page_width: float
+    page_height: float
+    words: list = field(default_factory=list)
+    lines: list = field(default_factory=list)
+    rects: list = field(default_factory=list)
+    curves: list = field(default_factory=list)
+    background_image: Optional[Image.Image] = None
+    ocr_image: Optional[Image.Image] = None
 
 
 @dataclass
@@ -228,6 +269,96 @@ def render_page_image(
     if img.mode != "RGB":
         img = img.convert("RGB")
     return img
+
+
+def _render_page_rgb(page, resolution: int) -> Image.Image:
+    """Render an already-opened pdfplumber page to an RGB PIL Image."""
+    img = page.to_image(resolution=resolution).original.copy()
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    return img
+
+
+def build_page_context(
+    pdf_path: Path | str,
+    page_num: int,
+    *,
+    overlay_resolution: int = 200,
+    ocr_resolution: int = 0,
+    extract_words_kwargs: dict | None = None,
+) -> PageContext:
+    """Open the PDF **once** and extract everything needed for one page.
+
+    This is the single-open entry point.  All pipeline stages consume
+    the returned :class:`PageContext` instead of independently calling
+    ``pdfplumber.open()``.
+
+    Parameters
+    ----------
+    pdf_path : Path or str
+        Path to the PDF.
+    page_num : int
+        Zero-based page index.
+    overlay_resolution : int
+        DPI for the background/overlay image (typically 200).
+    ocr_resolution : int
+        DPI for the OCR image (typically 300).  Pass ``0`` to skip
+        rendering the OCR image (e.g. when VOCR is disabled).
+    extract_words_kwargs : dict, optional
+        Keyword arguments forwarded to ``page.extract_words()``.
+        Defaults to ``{"keep_blank_chars": False}``.
+
+    Returns
+    -------
+    PageContext
+    """
+    if extract_words_kwargs is None:
+        extract_words_kwargs = {"keep_blank_chars": False}
+
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[page_num]
+
+        page_w = float(page.width)
+        page_h = float(page.height)
+
+        # Text tokens
+        words = page.extract_words(**extract_words_kwargs)
+
+        # Graphical elements (plain dicts — survive handle close)
+        lines = list(page.lines)
+        rects = list(page.rects)
+        curves = list(page.curves)
+
+        # Background image for overlays
+        bg_img = _render_page_rgb(page, overlay_resolution)
+
+        # OCR image (higher DPI) — only when requested
+        ocr_img: Image.Image | None = None
+        if ocr_resolution > 0 and ocr_resolution != overlay_resolution:
+            ocr_img = _render_page_rgb(page, ocr_resolution)
+        elif ocr_resolution > 0:
+            # Same DPI — reuse the background render
+            ocr_img = bg_img.copy()
+
+    log.info(
+        "PageContext built for page %d: %d words, %d lines, %d rects, %d curves",
+        page_num,
+        len(words),
+        len(lines),
+        len(rects),
+        len(curves),
+    )
+    return PageContext(
+        page_num=page_num,
+        page_width=page_w,
+        page_height=page_h,
+        words=words,
+        lines=lines,
+        rects=rects,
+        curves=curves,
+        background_image=bg_img,
+        ocr_image=ocr_img,
+    )
 
 
 def extract_page_words(

@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ML Training Guide — Advanced Plan Parser</title>
+<style>
+  :root {
+    --primary: #1a73e8;
+    --primary-light: #e8f0fe;
+    --primary-dark: #174ea6;
+    --accent: #34a853;
+    --accent-light: #e6f4ea;
+    --warn: #f9ab00;
+    --warn-light: #fef7e0;
+    --danger: #ea4335;
+    --danger-light: #fce8e6;
+    --bg: #f8f9fa;
+    --surface: #ffffff;
+    --text: #202124;
+    --text-secondary: #5f6368;
+    --border: #dadce0;
+    --code-bg: #1e1e2e;
+    --code-text: #cdd6f4;
+    --shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Header ── */
+  .hero {
+    background: linear-gradient(135deg, #1a73e8 0%, #174ea6 60%, #0d47a1 100%);
+    color: white;
+    padding: 56px 24px 48px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0; right: 0;
+    height: 48px;
+    background: var(--bg);
+    clip-path: ellipse(55% 100% at 50% 100%);
+  }
+  .hero h1 {
+    font-size: 2.4rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 12px;
+  }
+  .hero p {
+    font-size: 1.1rem;
+    opacity: 0.9;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .hero .badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.35);
+    border-radius: 20px;
+    padding: 4px 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
+    text-transform: uppercase;
+  }
+
+  /* ── Layout ── */
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* ── Table of Contents ── */
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    margin: 36px 0 40px;
+    box-shadow: var(--shadow);
+  }
+  .toc h2 {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+    font-weight: 600;
+  }
+  .toc ol {
+    list-style: none;
+    counter-reset: toc;
+    columns: 2;
+    column-gap: 32px;
+  }
+  .toc li {
+    counter-increment: toc;
+    padding: 6px 0;
+    break-inside: avoid;
+  }
+  .toc li::before {
+    content: "Phase " counter(toc);
+    display: inline-block;
+    background: var(--primary-light);
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 0.75rem;
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .toc li a { font-weight: 500; }
+
+  /* ── Phase Sections ── */
+  .phase {
+    margin-bottom: 48px;
+  }
+  .phase-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--primary-light);
+  }
+  .phase-number {
+    flex-shrink: 0;
+    width: 52px;
+    height: 52px;
+    background: var(--primary);
+    color: white;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+    font-weight: 700;
+    box-shadow: 0 2px 8px rgba(26,115,232,0.35);
+  }
+  .phase-header h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .phase-header h2 small {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+
+  /* ── Step Cards ── */
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px 28px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+    position: relative;
+    transition: box-shadow 0.2s;
+  }
+  .step:hover { box-shadow: var(--shadow-lg); }
+  .step-number {
+    position: absolute;
+    top: -12px;
+    left: 24px;
+    background: var(--primary);
+    color: white;
+    font-weight: 700;
+    font-size: 0.8rem;
+    border-radius: 12px;
+    padding: 2px 14px;
+    letter-spacing: 0.3px;
+  }
+  .step h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--text);
+    padding-top: 4px;
+  }
+  .step p, .step li { color: var(--text); }
+  .step ul, .step ol {
+    margin: 10px 0 10px 20px;
+  }
+  .step li { margin-bottom: 6px; }
+
+  /* ── Info Boxes ── */
+  .info-box {
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 16px 0;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .info-box .icon {
+    flex-shrink: 0;
+    font-size: 1.2rem;
+    line-height: 1.5;
+  }
+  .info-box.tip { background: var(--accent-light); border-left: 4px solid var(--accent); }
+  .info-box.warning { background: var(--warn-light); border-left: 4px solid var(--warn); }
+  .info-box.important { background: var(--danger-light); border-left: 4px solid var(--danger); }
+  .info-box.note { background: var(--primary-light); border-left: 4px solid var(--primary); }
+
+  /* ── Code Blocks ── */
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 14px 0;
+    overflow-x: auto;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.88rem;
+    line-height: 1.65;
+    box-shadow: inset 0 1px 4px rgba(0,0,0,0.2);
+  }
+  pre .prompt { color: #a6adc8; user-select: none; }
+  pre .cmd { color: #89b4fa; }
+  pre .flag { color: #f9e2af; }
+  pre .comment { color: #6c7086; font-style: italic; }
+  code {
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    background: #eef1f5;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 0.88em;
+    color: #c7254e;
+  }
+
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 0.92rem;
+  }
+  th {
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--primary);
+    white-space: nowrap;
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:hover td { background: #f1f3f4; }
+  .color-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-right: 6px;
+    border: 1px solid rgba(0,0,0,0.15);
+  }
+
+  /* ── Flow Diagram ── */
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    justify-content: center;
+    align-items: center;
+    margin: 24px 0;
+    padding: 20px 0;
+  }
+  .flow-item {
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    font-weight: 600;
+    font-size: 0.82rem;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(26,115,232,0.2);
+    text-align: center;
+    white-space: nowrap;
+  }
+  .flow-arrow {
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+  .flow-parallel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+  }
+  .flow-parallel .flow-item { font-size: 0.76rem; padding: 5px 10px; }
+  .flow-parallel-label {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Cycle Diagram ── */
+  .cycle {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    margin: 28px auto;
+    flex-wrap: wrap;
+    max-width: 700px;
+  }
+  .cycle-step {
+    text-align: center;
+    flex: 1;
+    min-width: 130px;
+    max-width: 170px;
+  }
+  .cycle-step .circle {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 8px;
+    font-size: 1.6rem;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.12);
+  }
+  .cycle-step p {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+  .cycle-step small {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+  .cycle-arrow {
+    font-size: 1.6rem;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+
+  /* ── Keyboard Shortcuts ── */
+  kbd {
+    display: inline-block;
+    background: #f4f4f4;
+    border: 1px solid #ccc;
+    border-bottom: 2px solid #bbb;
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-family: inherit;
+    font-size: 0.82em;
+    font-weight: 600;
+    color: #333;
+    white-space: nowrap;
+  }
+
+  /* ── Checklist ── */
+  .checklist { list-style: none; margin: 10px 0; padding: 0; }
+  .checklist li {
+    padding: 8px 0 8px 32px;
+    position: relative;
+    border-bottom: 1px dashed var(--border);
+  }
+  .checklist li:last-child { border-bottom: none; }
+  .checklist li::before {
+    content: '☐';
+    position: absolute;
+    left: 4px;
+    top: 8px;
+    font-size: 1.1rem;
+    color: var(--primary);
+  }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    padding: 32px;
+    margin-top: 48px;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 1.7rem; }
+    .toc ol { columns: 1; }
+    .step { padding: 20px; }
+    .flow { flex-direction: column; }
+    .flow-arrow { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ HERO ═══════════════════ -->
+<div class="hero">
+  <div class="badge">Advanced Plan Parser</div>
+  <h1>ML Training Guide</h1>
+  <p>From PDF document to trained machine-learning model &mdash; a complete step-by-step walkthrough for the annotation, correction, and training workflow.</p>
+</div>
+
+<div class="container">
+
+<!-- ═══════════════════ TOC ═══════════════════ -->
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#phase1">Prerequisites &amp; Setup</a></li>
+    <li><a href="#phase2">Run the Pipeline on a Document</a></li>
+    <li><a href="#phase3">Review Run Results</a></li>
+    <li><a href="#phase4">Annotate &amp; Correct Detections</a></li>
+    <li><a href="#phase5">Train the ML Model</a></li>
+    <li><a href="#phase6">The Feedback Loop &amp; MLOps</a></li>
+    <li><a href="#phase7">Advanced Training Options</a></li>
+    <li><a href="#reference">Quick Reference</a></li>
+  </ol>
+</nav>
+
+<!-- ═══════════════════ PHASE 1 ═══════════════════ -->
+<section class="phase" id="phase1">
+  <div class="phase-header">
+    <div class="phase-number">1</div>
+    <h2>Prerequisites &amp; Setup <small>Make sure your environment is ready</small></h2>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 1</span>
+    <h3>Activate the Virtual Environment</h3>
+    <p>Open a terminal in the project root and activate the Python virtual environment:</p>
+    <pre><span class="prompt">PS&gt;</span> <span class="cmd">cd</span> C:\Projects\Advanced_Plan_Parser
+<span class="prompt">PS&gt;</span> <span class="cmd">.\.venv\Scripts\Activate.ps1</span></pre>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 2</span>
+    <h3>Verify Dependencies</h3>
+    <p>Ensure the package and its dependencies are installed in editable mode:</p>
+    <pre><span class="prompt">PS&gt;</span> <span class="cmd">pip install</span> <span class="flag">-e .</span>
+<span class="comment"># For optional ML backends:</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">pip install</span> <span class="flag">-e ".[layout]"</span>   <span class="comment"># LayoutLMv3 (transformers + torch)</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">pip install</span> <span class="flag">-e ".[gnn]"</span>      <span class="comment"># Graph Neural Network (torch-geometric)</span></pre>
+    <div class="info-box note">
+      <span class="icon">ℹ️</span>
+      <div>The base install includes <code>scikit-learn</code> and <code>joblib</code>, which is all you need for the primary GBM classifier. The <code>layout</code> and <code>gnn</code> extras are optional advanced features.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 3</span>
+    <h3>Prepare Your PDF</h3>
+    <p>Place your construction plan PDF in the <code>input/</code> folder (or anywhere accessible). Supported formats: multi-page PDF with raster or vector content.</p>
+    <div class="info-box tip">
+      <span class="icon">💡</span>
+      <div>Higher quality scans produce better OCR results. Aim for <strong>300 DPI</strong> or above. The pipeline's default render DPI is 300.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ PHASE 2 ═══════════════════ -->
+<section class="phase" id="phase2">
+  <div class="phase-header">
+    <div class="phase-number">2</div>
+    <h2>Run the Pipeline <small>Process your document through all OCR &amp; analysis stages</small></h2>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 4</span>
+    <h3>Launch the GUI</h3>
+    <p>Double-click <strong>launch_gui.bat</strong> in the project root, or run:</p>
+    <pre><span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/gui/gui.py</pre>
+    <p>The application opens with 7 tabs. You start on the <strong>Pipeline Tab</strong> (Tab 1).</p>
+    <div class="info-box note">
+      <span class="icon">⌨️</span>
+      <div>Keyboard shortcuts: <kbd>Ctrl</kbd>+<kbd>O</kbd> to open a PDF &bull; <kbd>Ctrl</kbd>+<kbd>1</kbd> through <kbd>Ctrl</kbd>+<kbd>7</kbd> to switch tabs.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 5</span>
+    <h3>Select Your PDF</h3>
+    <p>Click the <strong>Browse</strong> button and navigate to your PDF. The file path appears in the input field and a <code>pdf_changed</code> event propagates to all tabs.</p>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 6</span>
+    <h3>Choose Pages to Process</h3>
+    <p>Select one of three page modes:</p>
+    <table>
+      <tr><th>Mode</th><th>Description</th></tr>
+      <tr><td><strong>All Pages</strong></td><td>Processes every page in the PDF</td></tr>
+      <tr><td><strong>Single Page</strong></td><td>Pick one page number via the spinner</td></tr>
+      <tr><td><strong>Page Range</strong></td><td>Specify start and end page numbers</td></tr>
+    </table>
+    <div class="info-box tip">
+      <span class="icon">💡</span>
+      <div>Start with a <strong>single page</strong> to get familiar with the workflow, then scale to full documents once you're comfortable.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 7</span>
+    <h3>Configure OCR Stages</h3>
+    <p>Toggle which OCR engines to run:</p>
+    <table>
+      <tr><th>Checkbox</th><th>Engine</th><th>Recommended</th></tr>
+      <tr><td><strong>TOCR</strong></td><td>Tesseract OCR &mdash; fast, good for clean text</td><td>✅ Always</td></tr>
+      <tr><td><strong>VOCRPP</strong></td><td>Vision OCR Preprocessing &mdash; enhances images for VOCR</td><td>✅ Recommended</td></tr>
+      <tr><td><strong>VOCR</strong></td><td>Vision-based OCR &mdash; handles complex layouts</td><td>✅ Recommended</td></tr>
+      <tr><td><strong>Reconcile</strong></td><td>Merges TOCR &amp; VOCR results intelligently</td><td>✅ If both OCR engines are on</td></tr>
+    </table>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 8</span>
+    <h3>Adjust Advanced Settings (Optional)</h3>
+    <p>Expand the collapsible <strong>Advanced Config</strong> sections if needed:</p>
+    <ol>
+      <li><strong>Preprocessing</strong> &mdash; contrast boost, deskew, denoise, border crop</li>
+      <li><strong>Grouping</strong> &mdash; proximity thresholds, semantic growth, font metric weights</li>
+      <li><strong>Overlay</strong> &mdash; debug overlay generation, color settings</li>
+      <li><strong>ML</strong> &mdash; model path, confidence thresholds, ensemble toggle, vision features, text embeddings</li>
+      <li><strong>Export</strong> &mdash; output format, directory</li>
+    </ol>
+    <div class="info-box note">
+      <span class="icon">ℹ️</span>
+      <div>Use <strong>Load</strong> / <strong>Save</strong> / <strong>Reset</strong> to manage config files (YAML, TOML, or JSON). This lets you share reproducible settings across runs.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 9</span>
+    <h3>Run the Pipeline</h3>
+    <p>Click <strong>Run Pipeline</strong>. A background worker executes the 9-stage pipeline:</p>
+    <div class="flow">
+      <div class="flow-item">Ingest</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-parallel">
+        <div class="flow-item">TOCR</div>
+        <span class="flow-parallel-label">parallel</span>
+        <div class="flow-item">VOCRPP</div>
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-item">VOCR</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-item">Reconcile</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-item">Grouping</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-item">Analysis</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-item">Checks</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-item">Export</div>
+    </div>
+    <p>Progress is shown in the GUI. A run directory is created at:</p>
+    <pre>runs/run_YYYYMMDD_HHMMSS_&lt;name&gt;/
+├── manifest.json    <span class="comment"># Full config snapshot &amp; stage results</span>
+├── artifacts/       <span class="comment"># Intermediate OCR data</span>
+├── exports/         <span class="comment"># Final reports (HTML, JSON)</span>
+├── logs/            <span class="comment"># Per-stage timing &amp; diagnostics</span>
+└── overlays/        <span class="comment"># Visual debug overlays</span></pre>
+    <div class="info-box important">
+      <span class="icon">⚠️</span>
+      <div>Each detected region is automatically saved to <code>data/corrections.db</code> via <code>CorrectionStore.save_detection()</code>. This is the foundation for all training data.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ PHASE 3 ═══════════════════ -->
+<section class="phase" id="phase3">
+  <div class="phase-header">
+    <div class="phase-number">3</div>
+    <h2>Review Run Results <small>Inspect what the pipeline found before annotating</small></h2>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 10</span>
+    <h3>Open the Runs Tab (Tab 2)</h3>
+    <p>Press <kbd>Ctrl</kbd>+<kbd>2</kbd> or click the <strong>Runs</strong> tab. You'll see a tree view of all runs sorted by date.</p>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 11</span>
+    <h3>Inspect the Manifest</h3>
+    <p>Select your run to view:</p>
+    <ul>
+      <li><strong>Config snapshot</strong> &mdash; exact settings used</li>
+      <li><strong>Per-stage results</strong> &mdash; timing, detection counts, errors</li>
+      <li><strong>Reports</strong> &mdash; open HTML/JSON exports directly</li>
+    </ul>
+    <p>You can also click <strong>Open Folder</strong> to explore the run directory in Windows Explorer.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════ PHASE 4 ═══════════════════ -->
+<section class="phase" id="phase4">
+  <div class="phase-header">
+    <div class="phase-number">4</div>
+    <h2>Annotate &amp; Correct Detections <small>This is where your ML training data is created</small></h2>
+  </div>
+
+  <div class="info-box important">
+    <span class="icon">🎯</span>
+    <div><strong>This is the most important phase.</strong> Every correction you make here becomes a labeled training example. The quality and quantity of your annotations directly determine model accuracy.</div>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 12</span>
+    <h3>Open the Annotation Tab (Tab 6)</h3>
+    <p>Press <kbd>Ctrl</kbd>+<kbd>6</kbd> or click the <strong>Annotation</strong> tab. You'll see the PDF page rendered with color-coded bounding boxes overlaid on each detected region.</p>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 13</span>
+    <h3>Understand the Color Coding</h3>
+    <p>Each element type has a distinct color so you can quickly assess detections at a glance:</p>
+    <table>
+      <tr><th>Element Type</th><th>Color</th><th>Typical Content</th></tr>
+      <tr><td><span class="color-swatch" style="background:#2196F3"></span> <code>notes_column</code></td><td>Blue</td><td>Full notes column region</td></tr>
+      <tr><td><span class="color-swatch" style="background:#4CAF50"></span> <code>notes_block</code></td><td>Green</td><td>Individual note paragraphs</td></tr>
+      <tr><td><span class="color-swatch" style="background:#F44336"></span> <code>header</code></td><td>Red</td><td>Section headers, titles</td></tr>
+      <tr><td><span class="color-swatch" style="background:#FF9800"></span> <code>abbreviations</code></td><td>Orange</td><td>Abbreviation tables/lists</td></tr>
+      <tr><td><span class="color-swatch" style="background:#9C27B0"></span> <code>legend</code></td><td>Purple</td><td>Symbol legends</td></tr>
+      <tr><td><span class="color-swatch" style="background:#00BCD4"></span> <code>revision</code></td><td>Cyan</td><td>Revision history blocks</td></tr>
+      <tr><td><span class="color-swatch" style="background:#795548"></span> <code>standard_detail</code></td><td>Brown</td><td>Standard construction details</td></tr>
+      <tr><td><span class="color-swatch" style="background:#607D8B"></span> <code>title_block</code></td><td>Blue-Grey</td><td>Title block / cartouche area</td></tr>
+      <tr><td><span class="color-swatch" style="background:#E91E63"></span> <code>misc_title</code></td><td>Pink</td><td>Miscellaneous titles/labels</td></tr>
+    </table>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 14</span>
+    <h3>Inspect a Detection</h3>
+    <p>Click any bounding box on the canvas. The <strong>Inspector Panel</strong> on the right shows:</p>
+    <ul>
+      <li><strong>Detection ID</strong> &mdash; unique identifier</li>
+      <li><strong>Element Type</strong> &mdash; dropdown to change the label</li>
+      <li><strong>Confidence</strong> &mdash; model's confidence score (if a model exists)</li>
+      <li><strong>Text Content</strong> &mdash; OCR-extracted text within the box</li>
+      <li><strong>Model Suggestion</strong> &mdash; "Model suggests: X (Y%)" with an <strong>Apply</strong> button</li>
+      <li><strong>Group Membership</strong> &mdash; parent/child relationships</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 15</span>
+    <h3>Make Corrections</h3>
+    <p>Use the following actions to create training data. <strong>Each correction is saved immediately</strong> to the database:</p>
+    <table>
+      <tr><th style="width:120px">Action</th><th>When to Use</th><th>What Gets Saved</th></tr>
+      <tr>
+        <td><strong>✅ Accept</strong></td>
+        <td>The detection is correct &mdash; right type, right box</td>
+        <td><code>correction_type = "accept"</code></td>
+      </tr>
+      <tr>
+        <td><strong>🏷️ Relabel</strong></td>
+        <td>Wrong element type &mdash; select the correct one from dropdown</td>
+        <td><code>correction_type = "relabel"</code> + new label</td>
+      </tr>
+      <tr>
+        <td><strong>🗑️ Delete</strong></td>
+        <td>False positive &mdash; this region shouldn't be detected at all</td>
+        <td><code>correction_type = "delete"</code></td>
+      </tr>
+      <tr>
+        <td><strong>📐 Reshape</strong></td>
+        <td>Bounding box is inaccurate &mdash; drag corner/edge handles to fix</td>
+        <td><code>correction_type = "reshape"</code> + new bbox</td>
+      </tr>
+      <tr>
+        <td><strong>↕️ Move</strong></td>
+        <td>Box is in the wrong position &mdash; drag to reposition</td>
+        <td><code>correction_type = "reshape"</code> + new bbox</td>
+      </tr>
+      <tr>
+        <td><strong>➕ Add</strong></td>
+        <td>Missed region &mdash; draw a new bounding box and assign a type</td>
+        <td>New detection + <code>correction_type = "add"</code></td>
+      </tr>
+      <tr>
+        <td><strong>🔗 Merge</strong></td>
+        <td>Multiple boxes should be one &mdash; select and combine into polygon</td>
+        <td>Merged detection with polygon geometry</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 16</span>
+    <h3>Use Batch Operations for Speed</h3>
+    <p>For efficiency on large pages with many detections:</p>
+    <ul>
+      <li><kbd>Shift</kbd>+Click &mdash; add boxes to multi-selection</li>
+      <li><strong>Lasso Tool</strong> &mdash; drag to select a region of boxes</li>
+      <li>Then use batch <strong>Accept</strong>, <strong>Relabel</strong>, or <strong>Delete</strong> on all selected boxes at once</li>
+    </ul>
+    <div class="info-box tip">
+      <span class="icon">💡</span>
+      <div>Start by scanning the full page and <strong>deleting</strong> obvious false positives, then <strong>relabel</strong> misclassified regions, and finally <strong>accept</strong> everything that looks correct. This is the fastest workflow.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 17</span>
+    <h3>Use Advanced Annotation Features</h3>
+    <table>
+      <tr><th>Feature</th><th>Usage</th></tr>
+      <tr><td><strong>Copy/Paste</strong></td><td>Duplicate box configurations across pages</td></tr>
+      <tr><td><strong>Groups (WBS)</strong></td><td>Create parent-child hierarchies between detections (e.g., notes_column → notes_blocks)</td></tr>
+      <tr><td><strong>Undo/Redo</strong></td><td>Full undo stack — <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td></tr>
+      <tr><td><strong>Filters</strong></td><td>Toggle label types on/off, set minimum confidence slider, show uncorrected only</td></tr>
+      <tr><td><strong>Text Rescan</strong></td><td>Re-extract PDF text under a box after reshaping it</td></tr>
+      <tr><td><strong>Word Overlay</strong></td><td>Show individual OCR word-level bounding boxes for debugging</td></tr>
+      <tr><td><strong>Sessions</strong></td><td>View correction counts per session; snapshot and restore database states</td></tr>
+    </table>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 18</span>
+    <h3>Repeat Across Pages &amp; Documents</h3>
+    <p>Navigate to the next page and repeat the correction process. Process as many pages and documents as possible. The more corrections you make, the better your model will perform.</p>
+    <div class="info-box warning">
+      <span class="icon">📊</span>
+      <div><strong>Minimum requirement:</strong> You need at least <strong>10 corrections</strong> (<code>ml_min_training_examples</code>) to train the first model. For good results, aim for <strong>50+ corrections</strong> across multiple pages with good coverage of all 9 element types.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ PHASE 5 ═══════════════════ -->
+<section class="phase" id="phase5">
+  <div class="phase-header">
+    <div class="phase-number">5</div>
+    <h2>Train the ML Model <small>Turn your annotations into a working classifier</small></h2>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 19</span>
+    <h3>Option A: Train from the GUI</h3>
+    <p>While still in the <strong>Annotation Tab</strong>, click the <strong>"Train Model"</strong> button. This triggers the full training pipeline in one click:</p>
+    <ol>
+      <li>Rebuilds the <code>training_examples</code> table from your corrections</li>
+      <li>Applies stratified splitting: <strong>70% train / 20% val / 10% test</strong></li>
+      <li>Exports to <code>data/training_data.jsonl</code></li>
+      <li>Trains the <code>GradientBoostingClassifier</code> (200 trees, balanced class weights)</li>
+      <li>Optionally calibrates probabilities (isotonic calibration)</li>
+      <li>Displays accuracy, F1, and per-class metrics in a popup</li>
+      <li>Saves the model to <code>data/models/element_classifier.joblib</code></li>
+      <li>Records the training run in the database for experiment tracking</li>
+    </ol>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 20</span>
+    <h3>Option B: Train from the Command Line</h3>
+    <p>For more control, use the CLI training script:</p>
+    <pre><span class="comment"># Basic training</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py
+
+<span class="comment"># With ensemble (GBM + HistGBM + optional LightGBM/XGBoost)</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--ensemble</span>
+
+<span class="comment"># Export to COCO JSON format (for external tools like Detectron2)</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--format coco</span>
+
+<span class="comment"># Export to Pascal VOC XML format</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--format voc</span>
+
+<span class="comment"># Force training even if F1 regresses from previous run</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--force</span>
+
+<span class="comment"># Skip probability calibration</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--no-calibration</span>
+
+<span class="comment"># Custom database path</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--db</span> path/to/corrections.db</pre>
+    <div class="info-box note">
+      <span class="icon">ℹ️</span>
+      <div>The CLI script includes an <strong>auto-rollback</strong> safety net: if the new model's F1 score is worse than the previous training run, it automatically restores the pre-training database snapshot (unless <code>--force</code> is used).</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 21</span>
+    <h3>Understand the Training Data</h3>
+    <p>Here's what happens under the hood when training is triggered:</p>
+
+    <h4 style="margin-top:16px; margin-bottom:8px;">Training Data Format (JSONL)</h4>
+    <p>Each line in <code>data/training_data.jsonl</code> is a single example:</p>
+    <pre>{
+  "example_id": "ex_abc123",
+  "label": "notes_column",
+  "features": {
+    "font_size_mean": 8.5,
+    "bbox_x0_frac": 0.02,
+    "bbox_area_frac": 0.31,
+    "n_lines": 42,
+    "kw_notes": 1.0,
+    "zone": "left",
+    ...
+  },
+  "split": "train"
+}</pre>
+
+    <h4 style="margin-top:16px; margin-bottom:8px;">Feature Vector (45+ dimensions)</h4>
+    <table>
+      <tr><th>Category</th><th>Features</th><th>Count</th></tr>
+      <tr><td>Font Metrics</td><td><code>font_size_mean</code>, <code>font_size_std</code>, <code>is_all_caps</code></td><td>3</td></tr>
+      <tr><td>Text Properties</td><td><code>n_lines</code>, <code>n_words</code>, <code>n_chars</code>, <code>text_density</code>, <code>avg_line_length</code>, etc.</td><td>8+</td></tr>
+      <tr><td>Bounding Box</td><td><code>bbox_x0_frac</code>, <code>bbox_y0_frac</code>, <code>bbox_w_frac</code>, <code>bbox_h_frac</code>, <code>bbox_area_frac</code>, etc.</td><td>7</td></tr>
+      <tr><td>Content Flags</td><td><code>has_table_chars</code>, <code>has_bullet</code>, <code>has_colon</code>, <code>has_parentheses</code></td><td>4</td></tr>
+      <tr><td>Keyword Indicators</td><td><code>kw_notes</code>, <code>kw_header</code>, <code>kw_abbreviation</code>, <code>kw_legend</code>, <code>kw_revision</code>, <code>kw_detail</code>, <code>kw_title</code></td><td>7</td></tr>
+      <tr><td>Spatial</td><td><code>neighbor_count</code>, <code>zone</code> (10 zones → one-hot = 10 dims)</td><td>12</td></tr>
+      <tr><td>Discriminative</td><td><code>text_density</code>, <code>x_dist_to_right_margin</code>, <code>line_width_variance</code></td><td>3</td></tr>
+      <tr><td>OCR Confidence</td><td><code>ocr_confidence_mean</code>, <code>ocr_confidence_min</code></td><td>2</td></tr>
+      <tr style="font-weight:600; background:#f8f9fa"><td colspan="2">Base Total (numeric + zone one-hot)</td><td>45</td></tr>
+      <tr><td colspan="2"><em>Optional:</em> CNN image features (ResNet-18 / EfficientNet-B0)</td><td>+512</td></tr>
+      <tr><td colspan="2"><em>Optional:</em> Text embeddings (all-MiniLM-L6-v2)</td><td>+384</td></tr>
+    </table>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 22</span>
+    <h3>Verify Training Results</h3>
+    <p>After training completes, check the output metrics:</p>
+    <ul>
+      <li><strong>Overall Accuracy</strong> &mdash; Percentage of correct predictions on the validation set</li>
+      <li><strong>Per-class F1 Score</strong> &mdash; Harmonic mean of precision &amp; recall for each element type</li>
+      <li><strong>Confusion Matrix</strong> &mdash; (CLI only) Shows which types get confused with each other</li>
+    </ul>
+    <div class="info-box tip">
+      <span class="icon">💡</span>
+      <div>Low F1 on a specific class usually means you need more examples of that type. Go back to the Annotation Tab and add/correct more instances of the underperforming element type.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ PHASE 6 ═══════════════════ -->
+<section class="phase" id="phase6">
+  <div class="phase-header">
+    <div class="phase-number">6</div>
+    <h2>The Feedback Loop &amp; MLOps <small>Continuous improvement through iteration</small></h2>
+  </div>
+
+  <div class="cycle">
+    <div class="cycle-step">
+      <div class="circle" style="background: var(--primary-light); color: var(--primary);">📄</div>
+      <p>Process PDF</p>
+      <small>Run pipeline</small>
+    </div>
+    <div class="cycle-arrow">→</div>
+    <div class="cycle-step">
+      <div class="circle" style="background: var(--accent-light); color: var(--accent);">✏️</div>
+      <p>Annotate</p>
+      <small>Correct detections</small>
+    </div>
+    <div class="cycle-arrow">→</div>
+    <div class="cycle-step">
+      <div class="circle" style="background: #fff3e0; color: #e65100;">🧠</div>
+      <p>Train</p>
+      <small>Build model</small>
+    </div>
+    <div class="cycle-arrow">→</div>
+    <div class="cycle-step">
+      <div class="circle" style="background: #f3e5f5; color: #7b1fa2;">🔄</div>
+      <p>Feedback</p>
+      <small>Model improves pipeline</small>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 23</span>
+    <h3>Process New Documents with the Trained Model</h3>
+    <p>Run the pipeline again on new (or the same) documents. The trained model now participates in the <strong>ML Feedback Loop</strong>, which runs 4 automatic passes after the core pipeline:</p>
+    <ol>
+      <li><strong>Prior Corrections</strong> &mdash; IoU-based spatial matching carries forward previous corrections to matching regions</li>
+      <li><strong>ML Relabelling</strong> &mdash; If the classifier disagrees with the pipeline label at ≥ 80% confidence (<code>ml_relabel_confidence</code>), the label is overridden</li>
+      <li><strong>Confidence Scoring</strong> &mdash; Model confidence is attached to each detection</li>
+      <li><strong>Drift Detection</strong> &mdash; Statistical check against training feature distributions</li>
+    </ol>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 24</span>
+    <h3>Monitor Model Health (MLOps Tab)</h3>
+    <p>Switch to the <strong>MLOps Tab (Tab 4)</strong> via <kbd>Ctrl</kbd>+<kbd>4</kbd> for ongoing model management:</p>
+    <table>
+      <tr><th>Section</th><th>Purpose</th></tr>
+      <tr><td><strong>Drift Monitor</strong></td><td>Checks if incoming data has shifted from what the model was trained on. Flags features exceeding the drift threshold (default: 0.3)</td></tr>
+      <tr><td><strong>Retrain Control</strong></td><td>Shows accumulated correction count since last training. Alerts when threshold (default: 50 corrections) is reached. One-click <strong>"Retrain Now"</strong> button</td></tr>
+      <tr><td><strong>Feature Cache</strong></td><td>View cache hit rates and invalidate stale feature vectors</td></tr>
+      <tr><td><strong>Experiment History</strong></td><td>Full table of all training runs with accuracy, F1, hyperparams. Export to CSV for external analysis</td></tr>
+    </table>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 25</span>
+    <h3>Retrain Periodically</h3>
+    <p>Retrain the model whenever:</p>
+    <ul>
+      <li>The MLOps tab shows the correction count has exceeded the threshold</li>
+      <li>Drift detection alerts indicate feature distribution shifts</li>
+      <li>You've processed a new batch of documents with different characteristics</li>
+      <li>Per-class F1 shows clear weaknesses you've addressed with targeted annotations</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════════ PHASE 7 ═══════════════════ -->
+<section class="phase" id="phase7">
+  <div class="phase-header">
+    <div class="phase-number">7</div>
+    <h2>Advanced Training Options <small>Going beyond the base GBM classifier</small></h2>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 26</span>
+    <h3>Enable Ensemble Mode</h3>
+    <p>For improved accuracy with enough data, train a soft-voting ensemble:</p>
+    <pre><span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--ensemble</span></pre>
+    <p>This combines multiple classifiers:</p>
+    <table>
+      <tr><th>Model</th><th>Required Package</th></tr>
+      <tr><td>GradientBoostingClassifier</td><td><code>scikit-learn</code> (included)</td></tr>
+      <tr><td>HistGradientBoostingClassifier</td><td><code>scikit-learn</code> (included)</td></tr>
+      <tr><td>LGBMClassifier</td><td><code>pip install lightgbm</code></td></tr>
+      <tr><td>XGBClassifier</td><td><code>pip install xgboost</code></td></tr>
+    </table>
+    <p>Toggle in the GUI via the <strong>ML</strong> advanced config section: <code>ml_ensemble_enabled = True</code>.</p>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 27</span>
+    <h3>Enable Vision Features (Optional)</h3>
+    <p>Add CNN image features to the feature vector for richer representations:</p>
+    <ul>
+      <li>Set <code>ml_vision_enabled = True</code> in the ML config section</li>
+      <li>Choose backbone: <code>ml_vision_backbone = "resnet18"</code> or <code>"efficientnet_b0"</code></li>
+      <li>Adds <strong>512 dimensions</strong> from image crops of each detection region</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 28</span>
+    <h3>Enable Text Embeddings (Optional)</h3>
+    <p>Add semantic text embeddings from a sentence transformer:</p>
+    <ul>
+      <li>Set <code>ml_embeddings_enabled = True</code></li>
+      <li>Default model: <code>all-MiniLM-L6-v2</code></li>
+      <li>Adds <strong>384 dimensions</strong> encoding the semantic meaning of extracted text</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 29</span>
+    <h3>Fine-tune LayoutLMv3 (Advanced)</h3>
+    <p>For state-of-the-art layout detection using a transformer model:</p>
+    <pre><span class="comment"># Install layout extras</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">pip install</span> <span class="flag">-e ".[layout]"</span>
+
+<span class="comment"># Prepare training data structure:</span>
+<span class="comment"># data/layout_training/page_NNN/image.png + tokens.json</span>
+
+<span class="comment"># Fine-tune</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/finetune_layout.py <span class="flag">--data-dir</span> data/layout_training <span class="flag">--output-dir</span> data/layout_model <span class="flag">--epochs</span> 10</pre>
+    <p>Token format (<code>tokens.json</code>):</p>
+    <pre>[
+  {"text": "GENERAL NOTES", "x0": 50, "y0": 100, "x1": 250, "y1": 130, "label": "header"},
+  {"text": "1. ALL WORK...", "x0": 50, "y0": 140, "x1": 450, "y1": 160, "label": "notes_block"},
+  ...
+]</pre>
+    <p>Then set <code>ml_layout_enabled = True</code> and <code>ml_layout_model_path = "data/layout_model"</code>.</p>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 30</span>
+    <h3>Train the Document GNN (Experimental)</h3>
+    <p>For cross-page reasoning (e.g., consistent abbreviation tables across sheets):</p>
+    <pre><span class="comment"># Install GNN extras</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">pip install</span> <span class="flag">-e ".[gnn]"</span>
+
+<span class="comment"># Train on a completed run</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_gnn.py <span class="flag">--run-dir</span> runs/run_20260221_103813_IFC_Operations_Facil <span class="flag">--epochs</span> 200</pre>
+    <div class="info-box warning">
+      <span class="icon">🧪</span>
+      <div>The GNN module is experimental. The page-result loader is currently a stub — it uses a synthetic demo graph. Full integration with real detections is still in development.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Step 31</span>
+    <h3>Export for External Tools</h3>
+    <p>Export your annotated data in standard formats for use with other ML frameworks:</p>
+    <pre><span class="comment"># COCO JSON (Detectron2, MMDetection, etc.)</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--format coco</span>
+
+<span class="comment"># Pascal VOC XML (YOLO converters, TensorFlow, etc.)</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--format voc</span></pre>
+    <p>COCO export produces a single JSON with <code>images</code>, <code>annotations</code> (bbox + category_id), and <code>categories</code>. VOC produces one XML file per (document, page) pair.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════ REFERENCE ═══════════════════ -->
+<section class="phase" id="reference">
+  <div class="phase-header">
+    <div class="phase-number">⚡</div>
+    <h2>Quick Reference <small>Key files, configs, and commands at a glance</small></h2>
+  </div>
+
+  <div class="step">
+    <h3>Key File Locations</h3>
+    <table>
+      <tr><th>What</th><th>Path</th></tr>
+      <tr><td>Corrections Database</td><td><code>data/corrections.db</code></td></tr>
+      <tr><td>Training Data (JSONL)</td><td><code>data/training_data.jsonl</code></td></tr>
+      <tr><td>Trained Model</td><td><code>data/models/element_classifier.joblib</code></td></tr>
+      <tr><td>Drift Statistics</td><td><code>data/drift_stats.json</code></td></tr>
+      <tr><td>Label Definitions</td><td><code>data/label_registry.json</code></td></tr>
+      <tr><td>Run Artifacts</td><td><code>runs/run_YYYYMMDD_HHMMSS_*/</code></td></tr>
+      <tr><td>Pipeline Configuration</td><td><code>src/plancheck/config.py</code></td></tr>
+      <tr><td>Correction Store</td><td><code>src/plancheck/corrections/store.py</code></td></tr>
+      <tr><td>Element Classifier</td><td><code>src/plancheck/corrections/classifier.py</code></td></tr>
+      <tr><td>Feature Extraction</td><td><code>src/plancheck/corrections/features.py</code></td></tr>
+    </table>
+  </div>
+
+  <div class="step">
+    <h3>Essential ML Config Fields</h3>
+    <table>
+      <tr><th>Field</th><th>Default</th><th>Description</th></tr>
+      <tr><td><code>ml_enabled</code></td><td><code>True</code></td><td>Enable ML feedback loop in pipeline</td></tr>
+      <tr><td><code>ml_model_path</code></td><td><code>data/models/element_classifier.joblib</code></td><td>Path to trained model</td></tr>
+      <tr><td><code>ml_relabel_confidence</code></td><td><code>0.8</code></td><td>Minimum confidence to override a pipeline label</td></tr>
+      <tr><td><code>ml_min_training_examples</code></td><td><code>10</code></td><td>Minimum examples to train</td></tr>
+      <tr><td><code>ml_ensemble_enabled</code></td><td><code>False</code></td><td>Use soft-voting ensemble</td></tr>
+      <tr><td><code>ml_vision_enabled</code></td><td><code>False</code></td><td>Include CNN image features</td></tr>
+      <tr><td><code>ml_embeddings_enabled</code></td><td><code>False</code></td><td>Include text embeddings</td></tr>
+      <tr><td><code>ml_drift_enabled</code></td><td><code>True</code></td><td>Run drift detection after inference</td></tr>
+      <tr><td><code>ml_retrain_threshold</code></td><td><code>50</code></td><td>Corrections count to trigger retrain prompt</td></tr>
+    </table>
+  </div>
+
+  <div class="step">
+    <h3>Pre-Training Checklist</h3>
+    <ul class="checklist">
+      <li>Virtual environment activated</li>
+      <li>At least one PDF processed through the pipeline</li>
+      <li>At least 10 corrections made in the Annotation Tab (50+ recommended)</li>
+      <li>Good coverage across multiple element types</li>
+      <li>Obvious false positives deleted</li>
+      <li>Misclassified detections relabelled</li>
+      <li>Correct detections accepted</li>
+      <li>Missing regions added with new bounding boxes</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <h3>Common Commands</h3>
+    <pre><span class="comment"># Launch the GUI</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/gui/gui.py
+
+<span class="comment"># Train base classifier</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py
+
+<span class="comment"># Train with ensemble + COCO export</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_model.py <span class="flag">--ensemble --format coco</span>
+
+<span class="comment"># Fine-tune LayoutLMv3</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/finetune_layout.py <span class="flag">--data-dir</span> data/layout_training <span class="flag">--output-dir</span> data/layout_model
+
+<span class="comment"># Train GNN</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/train_gnn.py <span class="flag">--run-dir</span> runs/&lt;run_name&gt; <span class="flag">--epochs</span> 200
+
+<span class="comment"># Run pipeline from CLI (no GUI)</span>
+<span class="prompt">PS&gt;</span> <span class="cmd">python</span> scripts/runners/run_pdf_page.py <span class="flag">--pdf</span> input/myplan.pdf <span class="flag">--page</span> 2</pre>
+  </div>
+</section>
+
+</div> <!-- /container -->
+
+<footer class="footer">
+  <p><strong>Advanced Plan Parser</strong> &mdash; ML Training Guide</p>
+  <p>Generated February 2026 &bull; See <code>docs/ML_Assessment_and_Upgrade_Roadmap.md</code> for the full ML roadmap</p>
+</footer>
+
+</body>
+</html>

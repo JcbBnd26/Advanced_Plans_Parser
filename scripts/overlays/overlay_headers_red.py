@@ -56,6 +56,13 @@ def main() -> None:
         if out_path is None:
             out_path = latest_overlays_dir() / f"page_{page_idx}_headers_red.png"
         pdf_path = args.pdf
+        # Render background (single open for --json path)
+        if pdf_path is None:
+            parser.error("A PDF path is required to render the background image")
+        with pdfplumber.open(pdf_path) as pdf:
+            bg_img = (
+                pdf.pages[page_idx].to_image(resolution=args.resolution).original.copy()
+            )
     else:
         if args.pdf is None:
             parser.error("A PDF path is required unless --json is provided")
@@ -70,6 +77,8 @@ def main() -> None:
             tokens = result.tokens
             page_w = result.page_width
             page_h = result.page_height
+            # Render background in the same open
+            bg_img = page.to_image(resolution=args.resolution).original.copy()
 
         tokens = nms_prune(tokens, cfg.iou_prune)
         blocks = build_clusters_v2(tokens, page_h, cfg)
@@ -89,15 +98,6 @@ def main() -> None:
         )
         json_out.write_text(json.dumps(data, indent=2), encoding="utf-8")
         print(f"Extraction JSON: {json_out}")
-
-    #  Render background image
-    if pdf_path is None:
-        parser.error("A PDF path is required to render the background image")
-
-    with pdfplumber.open(pdf_path) as pdf:
-        bg_img = (
-            pdf.pages[page_idx].to_image(resolution=args.resolution).original.copy()
-        )
 
     # ── Identify header blocks ──────────────────────────────────────
     header_blocks = [
