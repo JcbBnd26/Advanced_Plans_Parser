@@ -191,13 +191,55 @@ class GroupingConfig:
     # calls so terminals / CI don't consider the process idle.
     vocr_heartbeat_interval: float = 15.0
 
+    # ── VOCR candidate detection (targeted patch selection) ────────────
+    # When True, analyse TOCR tokens + PDF metadata to identify small
+    # regions likely to contain a missing symbol, so that VOCR scans
+    # only those patches instead of the full page.
+    enable_vocr_candidates: bool = True
+    # Intra-line gap multiplier: flag gaps > (median_spacing × mult).
+    vocr_cand_gap_multiplier: float = 2.0
+    # Padding (pts) added to each candidate bbox before VOCR crop.
+    vocr_cand_patch_margin: float = 4.0
+    # Minimum candidate confidence [0-1] to keep.
+    vocr_cand_min_confidence: float = 0.3
+    # Maximum candidates per page (safety cap).
+    vocr_cand_max_candidates: int = 200
+    # Cell size (pts) for 2-D density-hole detection.
+    vocr_cand_density_grid_size: float = 20.0
+    # Token-width anomaly threshold (actual/expected ratio).
+    vocr_cand_char_width_ratio: float = 0.7
+    # Max diameter (pts) for vector-circle-near-number detection.
+    vocr_cand_vector_circle_max_diameter: float = 8.0
+    # Path to the JSON file for persistent per-method hit/miss stats.
+    vocr_cand_stats_path: str = "data/candidate_method_stats.json"
+    # Enable ML candidate classifier (Level 2). When True and a trained
+    # model exists, low-probability candidates are pruned before VOCR.
+    vocr_cand_ml_enabled: bool = False
+    # Path to the candidate hit/miss classifier model (.pkl).
+    vocr_cand_classifier_path: str = "data/candidate_classifier.pkl"
+    # Minimum P(hit) from the classifier to keep a candidate.
+    vocr_cand_ml_threshold: float = 0.3
+    # Minimum outcome rows required before training the classifier.
+    vocr_cand_retrain_min_rows: int = 100
+    # Path to per-producer method stats (Level 3 adaptation).
+    vocr_cand_producer_stats_path: str = "data/producer_method_stats.json"
+    # Enable GNN candidate prior (Level 4). When True and both a GNN
+    # model and a trained prior head exist, candidate confidences are
+    # adjusted using cross-page graph context in run_document().
+    vocr_cand_gnn_prior_enabled: bool = False
+    # Path to the trained GNN candidate prior head (.pt).
+    vocr_cand_gnn_prior_path: str = "data/gnn_candidate_prior.pt"
+    # Blend weight for mixing GNN prior into candidate confidence.
+    # 0.0 = ignore GNN prior, 1.0 = fully replace original confidence.
+    vocr_cand_gnn_prior_blend: float = 0.25
+
     # ── OCR reconciliation (merge VOCR tokens into TOCR) ───────────────
     # Enable dual-source OCR reconciliation (spatial matching of VOCR
     # tokens against PDF text layer, injecting only missing symbols).
     # Requires enable_vocr to also be True.
     enable_ocr_reconcile: bool = False
     # Characters OCR is allowed to inject (symbol whitelist).
-    ocr_reconcile_allowed_symbols: str = "%/°±"
+    ocr_reconcile_allowed_symbols: str = "%/°±Ø×'\"#@"
     # Render resolution (DPI) for the full-page OCR image.
     ocr_reconcile_resolution: int = 300
     # Minimum PaddleOCR confidence (0-1) to consider an OCR token.
@@ -467,6 +509,8 @@ class GroupingConfig:
             "ocr_reconcile_digit_ratio",
             "ocr_reconcile_accept_iou",
             "ocr_reconcile_accept_coverage",
+            "vocr_cand_min_confidence",
+            "vocr_cand_char_width_ratio",
             "grouping_line_overlap_ratio",
             "grouping_space_gap_percentile",
             "grouping_note_majority",
@@ -484,6 +528,10 @@ class GroupingConfig:
 
         # -- Strictly positive floats --
         _pos_floats = [
+            "vocr_cand_gap_multiplier",
+            "vocr_cand_patch_margin",
+            "vocr_cand_density_grid_size",
+            "vocr_cand_vector_circle_max_diameter",
             "horizontal_tol_mult",
             "vertical_tol_mult",
             "row_gap_mult",
@@ -520,6 +568,7 @@ class GroupingConfig:
 
         # -- Positive ints --
         _pos_ints = [
+            "vocr_cand_max_candidates",
             "grouping_histogram_bins",
             "grouping_note_max_rows",
             "ocr_reconcile_max_debug",

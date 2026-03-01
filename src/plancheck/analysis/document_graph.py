@@ -94,6 +94,11 @@ class GraphNode:
     text_embedding: Optional[np.ndarray] = None  # 384-d or None
     source_region: Any = None  # reference back to model object
 
+    # Level 4: candidate annotations (populated after VOCR candidate detection)
+    candidate_count: int = 0
+    mean_candidate_confidence: float = 0.0
+    candidate_hit_rate: float = 0.0
+
     def to_feature_vector(self, include_embedding: bool = False) -> np.ndarray:
         """Return the feature vector for this node.
 
@@ -118,6 +123,20 @@ class GraphNode:
             parts.append(np.zeros(384, dtype=np.float32))
 
         return np.concatenate(parts)
+
+    def to_candidate_features(self) -> np.ndarray:
+        """Return candidate-related features for GNN prior head.
+
+        Shape: (3,) — [candidate_count, mean_confidence, hit_rate].
+        """
+        return np.array(
+            [
+                float(self.candidate_count),
+                self.mean_candidate_confidence,
+                self.candidate_hit_rate,
+            ],
+            dtype=np.float32,
+        )
 
 
 # ── Entity extraction helpers ───────────────────────────────────────────

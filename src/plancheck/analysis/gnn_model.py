@@ -131,6 +131,20 @@ if _GNN_AVAILABLE:
                 logits = self.forward(data)
                 return torch.exp(logits).cpu().numpy()
 
+        def get_embeddings(self, data: Data) -> np.ndarray:
+            """Return penultimate-layer embeddings ``[N, hidden*heads]``.
+
+            These are the outputs of conv1 + ELU *before* the
+            classification head, useful as feature representations
+            for downstream tasks (e.g. GNN candidate prior).
+            """
+            self.eval()
+            with torch.no_grad():
+                x, edge_index = data.x, data.edge_index
+                x = self.conv1(x, edge_index)
+                x = F.elu(x)
+                return x.cpu().numpy()
+
     # ── Training loop ──────────────────────────────────────────────
 
     def train_gnn(

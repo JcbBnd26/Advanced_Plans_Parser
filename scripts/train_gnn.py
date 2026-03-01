@@ -58,6 +58,23 @@ def _parse_args() -> argparse.Namespace:
         "--train-split", type=float, default=0.8, help="Fraction used for training"
     )
     p.add_argument("--embeddings", action="store_true", help="Include text embeddings")
+    p.add_argument(
+        "--candidate-prior",
+        action="store_true",
+        help="Also train the Level 4 GNN candidate prior head",
+    )
+    p.add_argument(
+        "--prior-output",
+        type=Path,
+        default=Path("data/gnn_candidate_prior.pt"),
+        help="Output path for the candidate prior head (default: data/gnn_candidate_prior.pt)",
+    )
+    p.add_argument(
+        "--prior-epochs",
+        type=int,
+        default=100,
+        help="Epochs for training the candidate prior head",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args()
 
@@ -180,6 +197,43 @@ def main() -> None:
     # ── Save ──────────────────────────────────────────────────────
     save_gnn(model, args.output)
     log.info("Done. Model saved to %s", args.output)
+
+    # ── Optional: train candidate prior head (Level 4) ────────────
+    if args.candidate_prior:
+        log.info("Training GNN candidate prior head...")
+        from plancheck.vocr.gnn_candidate_prior import (
+            save_gnn_candidate_prior,
+            train_gnn_candidate_prior,
+        )
+
+        # Extract embeddings from the just-trained GNN
+        embeddings = model.get_embeddings(data)  # [N, hidden*heads]
+        embed_dim = embeddings.shape[1]
+
+        # Synthetic candidate features and labels for demo
+        # In production, these come from accumulated candidate outcomes
+        # mapped to graph nodes via assign_candidates_to_nodes().
+        cand_feats = np.random.rand(num_nodes, 3).astype(np.float32)
+        # Synthetic labels: nodes with type NOTES/DETAILS more likely to have candidates
+        prior_labels = np.array(
+            [1.0 if i % num_classes in (2, 7) else 0.0 for i in range(num_nodes)],
+            dtype=np.float32,
+        )
+
+        head, metrics = train_gnn_candidate_prior(
+            embeddings,
+            cand_feats,
+            prior_labels,
+            embed_dim=embed_dim,
+            epochs=args.prior_epochs,
+            verbose=args.verbose,
+        )
+        save_gnn_candidate_prior(head, args.prior_output)
+        log.info(
+            "Candidate prior head saved to %s (val_acc=%.3f)",
+            args.prior_output,
+            metrics["final_val_acc"],
+        )
 
 
 if __name__ == "__main__":

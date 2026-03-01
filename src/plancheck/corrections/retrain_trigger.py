@@ -262,3 +262,53 @@ def startup_check(
         )
     finally:
         store.close()
+
+
+# ── Level 2: candidate classifier retrain ──────────────────────────────
+
+
+def auto_retrain_candidate_classifier(
+    *,
+    db_path: Path | str = "data/corrections.db",
+    model_path: Path | str = "data/candidate_classifier.pkl",
+    min_rows: int = 100,
+) -> dict[str, Any]:
+    """Retrain the candidate hit/miss classifier if enough outcome data exists.
+
+    Parameters
+    ----------
+    db_path : Path or str
+        Corrections database path.
+    model_path : Path or str
+        Where to save the trained model.
+    min_rows : int
+        Minimum outcome rows before training.
+
+    Returns
+    -------
+    dict
+        Training metrics or ``{"skipped": True}`` if insufficient data.
+    """
+    from .candidate_classifier import train_candidate_classifier
+    from .store import CorrectionStore
+
+    db_path = Path(db_path)
+    model_path = Path(model_path)
+
+    if not db_path.exists():
+        return {"skipped": True, "reason": "no_db"}
+
+    store = CorrectionStore(db_path)
+    try:
+        rows = store.get_candidate_outcomes(min_rows=min_rows)
+        if not rows:
+            counts = store.count_candidate_outcomes()
+            return {
+                "skipped": True,
+                "reason": "insufficient_data",
+                "total_rows": counts.get("total", 0),
+                "min_rows": min_rows,
+            }
+        return train_candidate_classifier(rows, model_path=model_path)
+    finally:
+        store.close()

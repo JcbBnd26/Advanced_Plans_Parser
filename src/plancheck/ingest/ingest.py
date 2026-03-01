@@ -74,6 +74,9 @@ class PageContext:
         Page dimensions in PDF points.
     words : list[dict]
         Raw word dicts from ``page.extract_words(**tocr_kwargs)``.
+    chars : list[dict]
+        Raw character dicts from ``page.chars`` — includes chars with
+        unmapped Unicode that still carry valid bounding boxes.
     lines, rects, curves : list[dict]
         Raw graphical-element dicts from the page.
     background_image : PIL.Image.Image
@@ -81,17 +84,22 @@ class PageContext:
     ocr_image : PIL.Image.Image or None
         Page rendered at OCR resolution (typically 300 DPI).
         ``None`` when VOCR/reconcile are disabled.
+    producer_id : str
+        PDF ``/Producer`` metadata string (e.g. ``"AutoCAD"``).
+        Used by Level 3 per-producer adaptation.
     """
 
     page_num: int
     page_width: float
     page_height: float
     words: list = field(default_factory=list)
+    chars: list = field(default_factory=list)
     lines: list = field(default_factory=list)
     rects: list = field(default_factory=list)
     curves: list = field(default_factory=list)
     background_image: Optional[Image.Image] = None
     ocr_image: Optional[Image.Image] = None
+    producer_id: str = ""
 
 
 @dataclass
@@ -321,8 +329,20 @@ def build_page_context(
         page_w = float(page.width)
         page_h = float(page.height)
 
+        # PDF producer metadata (for Level 3 per-producer adaptation)
+        producer_id = ""
+        try:
+            info = pdf.metadata or {}
+            producer_id = str(info.get("Producer", "") or "")
+        except Exception:
+            pass
+
         # Text tokens
         words = page.extract_words(**extract_words_kwargs)
+
+        # Character-level records (for vocr candidate detection —
+        # chars with empty/unmapped unicode still have valid bboxes).
+        chars = list(page.chars)
 
         # Graphical elements (plain dicts — survive handle close)
         lines = list(page.lines)
@@ -353,11 +373,13 @@ def build_page_context(
         page_width=page_w,
         page_height=page_h,
         words=words,
+        chars=chars,
         lines=lines,
         rects=rects,
         curves=curves,
         background_image=bg_img,
         ocr_image=ocr_img,
+        producer_id=producer_id,
     )
 
 

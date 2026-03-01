@@ -285,6 +285,11 @@ def _has_allowed_symbol(text: str, allowed: str) -> bool:
 # Pre-compiled regexes for numeric-context gating (Phase 0)
 _RE_SLASH_NUMERIC = re.compile(r"\d\s*/\s*\d")  # digit / digit
 _RE_AFTER_DIGIT = re.compile(r"\d\s*[%°±]")  # digit then %/°/±
+_RE_DIAMETER = re.compile(r"[Ø⌀]\s*\d|\d\s*[Ø⌀]")  # Ø near digit
+_RE_MULTIPLY = re.compile(r"\d\s*[×x]\s*\d", re.IGNORECASE)  # digit × digit
+_RE_UNIT_MARK = re.compile(r"\d\s*['\"]")  # digit then '/\"
+_RE_HASH_DIGIT = re.compile(r"#\s*\d")  # # before digit (rebar)
+_RE_AT_DIGIT = re.compile(r"@\s*\d|\d\s*@")  # @ near digit
 
 
 def _has_numeric_symbol_context(text: str, allowed: str) -> bool:
@@ -294,6 +299,11 @@ def _has_numeric_symbol_context(text: str, allowed: str) -> bool:
     -----
     * ``/`` is valid only in digit/digit context (``1/2``, ``09/15``).
     * ``%``, ``°``, ``±`` are valid only when preceded by a digit.
+    * ``Ø`` (diameter) requires a digit nearby.
+    * ``×`` (multiply) requires digit/digit context.
+    * ``'`` / ``"`` (foot/inch) require preceding digit.
+    * ``#`` requires a following digit (rebar).
+    * ``@`` requires a digit nearby (spacing notation).
 
     This prevents headings like ``SURFACING/MILLINGS`` or ``A/C`` from
     being treated as symbol candidates.
@@ -305,6 +315,23 @@ def _has_numeric_symbol_context(text: str, allowed: str) -> bool:
         if ch in allowed and ch in text:
             if _RE_AFTER_DIGIT.search(text):
                 return True
+    for ch in ("Ø", "⌀"):
+        if ch in allowed and ch in text:
+            if _RE_DIAMETER.search(text):
+                return True
+    if "×" in allowed and "×" in text:
+        if _RE_MULTIPLY.search(text):
+            return True
+    for ch in ("'", '"'):
+        if ch in allowed and ch in text:
+            if _RE_UNIT_MARK.search(text):
+                return True
+    if "#" in allowed and "#" in text:
+        if _RE_HASH_DIGIT.search(text):
+            return True
+    if "@" in allowed and "@" in text:
+        if _RE_AT_DIGIT.search(text):
+            return True
     return False
 
 
@@ -839,7 +866,7 @@ def _inject_symbols(
     n_filtered_non_numeric = 0
     _MAX_DEBUG = cfg.ocr_reconcile_max_debug
 
-    _RE_COMPOSITE = re.compile(r"\d+\s*[%/°±]\s*\d+")
+    _RE_COMPOSITE = re.compile(r"\d+\s*[%/°±Ø×'\"#@⌀]\s*\d+")
 
     for m in matches:
         # Confidence gate: skip OCR tokens below reconcile confidence threshold

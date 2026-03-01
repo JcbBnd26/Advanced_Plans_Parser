@@ -1094,3 +1094,103 @@ class SuspectRegion:
             source_label=d.get("source_label", ""),
             block_index=d.get("block_index", -1),
         )
+
+
+# ── VOCR candidate detection ──────────────────────────────────────────
+
+# Canonical trigger-method names used by vocr/candidates.py.
+VOCR_TRIGGER_METHODS: Tuple[str, ...] = (
+    "char_encoding_failure",
+    "unmapped_glyph",
+    "placeholder_token",
+    "intraline_gap",
+    "dense_cluster_hole",
+    "baseline_style_gap",
+    "template_adjacency",
+    "regex_digit_pattern",
+    "impossible_sequence",
+    "vocab_trigger",
+    "keyword_cooccurrence",
+    "cross_ref_phrase",
+    "near_duplicate_line",
+    "font_subset_correlation",
+    "token_width_anomaly",
+    "vector_circle_near_number",
+    "semantic_no_units",
+    "dimension_geometry_proximity",
+)
+
+
+@dataclass
+class VocrCandidate:
+    """A small page region flagged for targeted VOCR scanning.
+
+    Each candidate encodes *where* to look, *why* (trigger methods),
+    and *what* we expect to find.  After targeted VOCR runs on the
+    patch the ``outcome``, ``found_text`` and ``found_symbol`` fields
+    are populated so that per-method hit-rate statistics can be computed.
+    """
+
+    page: int
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+    # Why this region was flagged — one or more trigger method names.
+    trigger_methods: List[str] = field(default_factory=list)
+    # Best guess of the missing symbol (e.g. "°", "±", "Ø").
+    predicted_symbol: str = ""
+    # Composite confidence in [0, 1] across all triggers.
+    confidence: float = 0.5
+    # Free-form context dict (neighbor text, gap size, font, etc.).
+    context: dict = field(default_factory=dict)
+
+    # Populated after targeted VOCR runs on this patch.
+    outcome: str = "pending"  # "pending" | "hit" | "miss"
+    found_text: str = ""
+    found_symbol: str = ""
+
+    # ── helpers ────────────────────────────────────────────────────
+
+    def bbox(self) -> Tuple[float, float, float, float]:
+        return (self.x0, self.y0, self.x1, self.y1)
+
+    def patch_area(self) -> float:
+        return max(0.0, self.x1 - self.x0) * max(0.0, self.y1 - self.y0)
+
+    def to_dict(self) -> dict:
+        return {
+            "page": self.page,
+            "bbox": [
+                round(self.x0, 2),
+                round(self.y0, 2),
+                round(self.x1, 2),
+                round(self.y1, 2),
+            ],
+            "trigger_methods": list(self.trigger_methods),
+            "predicted_symbol": self.predicted_symbol,
+            "confidence": round(self.confidence, 4),
+            "context": dict(self.context),
+            "outcome": self.outcome,
+            "found_text": self.found_text,
+            "found_symbol": self.found_symbol,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "VocrCandidate":
+        bbox = d.get("bbox", [0, 0, 0, 0])
+        return cls(
+            page=d.get("page", 0),
+            x0=bbox[0],
+            y0=bbox[1],
+            x1=bbox[2],
+            y1=bbox[3],
+            trigger_methods=d.get("trigger_methods", []),
+            predicted_symbol=d.get("predicted_symbol", ""),
+            confidence=d.get("confidence", 0.5),
+            context=d.get("context", {}),
+            outcome=d.get("outcome", "pending"),
+            found_text=d.get("found_text", ""),
+            found_symbol=d.get("found_symbol", ""),
+        )

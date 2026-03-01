@@ -148,6 +148,7 @@ STAGE_ORDER: List[str] = [
     "ingest",
     "tocr",
     "vocrpp",
+    "vocr_candidates",
     "vocr",
     "reconcile",
     "grouping",
@@ -203,6 +204,13 @@ def gate(
             return False, SkipReason.missing_dependency.value
         return True, None
 
+    if stage == "vocr_candidates":
+        if not cfg.enable_vocr_candidates:
+            return False, SkipReason.disabled_by_config.value
+        if not cfg.enable_vocr:
+            return False, SkipReason.disabled_by_config.value
+        return True, None
+
     if stage == "vocr":
         if not cfg.enable_vocr:
             return False, SkipReason.disabled_by_config.value
@@ -256,6 +264,8 @@ def run_stage(
     # missing.  It only truly *runs* when gate approves.
     if stage == "vocrpp":
         sr.enabled = cfg.enable_ocr_preprocess and cfg.enable_vocr
+    elif stage == "vocr_candidates":
+        sr.enabled = cfg.enable_vocr_candidates and cfg.enable_vocr
     elif stage == "vocr":
         sr.enabled = cfg.enable_vocr
     elif stage == "reconcile":
@@ -368,6 +378,7 @@ class PageResult:
     page_quality: float = 0.0
 
     # Optional OCR artefacts
+    vocr_candidates: list = field(default_factory=list)
     ocr_tokens: Optional[List[GlyphBox]] = None
     ocr_confs: Optional[List[float]] = None
     reconcile_result: Optional[ReconcileResult] = None
@@ -395,6 +406,7 @@ class PageResult:
                 "structural_boxes": len(self.structural_boxes),
                 "semantic_findings": len(self.semantic_findings),
                 "drift_warnings": len(self.drift_warnings),
+                "vocr_candidates": len(self.vocr_candidates),
             },
             "semantic_findings": [
                 f.to_dict() if hasattr(f, "to_dict") else str(f)
@@ -455,6 +467,7 @@ class PageResult:
                 for f in self.semantic_findings
             ],
             # OCR artefacts
+            "vocr_candidates": [c.to_dict() for c in self.vocr_candidates],
             "ocr_tokens": (
                 [t.to_dict() for t in self.ocr_tokens] if self.ocr_tokens else None
             ),
@@ -474,7 +487,8 @@ class PageResult:
         from .checks.semantic_checks import CheckResult
         from .models import (AbbreviationRegion, BlockCluster, GlyphBox,
                              GraphicElement, LegendRegion, MiscTitleRegion,
-                             NotesColumn, RevisionRegion, StandardDetailRegion)
+                             NotesColumn, RevisionRegion, StandardDetailRegion,
+                             VocrCandidate)
         from .reconcile.reconcile import ReconcileResult
 
         # 1. Tokens
@@ -532,6 +546,9 @@ class PageResult:
                 semantic_findings.append(CheckResult.from_dict(f))
 
         # 8. OCR artefacts
+        vocr_candidates = [
+            VocrCandidate.from_dict(c) for c in d.get("vocr_candidates", [])
+        ]
         ocr_tokens = (
             [GlyphBox.from_dict(t) for t in d["ocr_tokens"]]
             if d.get("ocr_tokens")
@@ -567,6 +584,7 @@ class PageResult:
             layout_predictions=d.get("layout_predictions", []),
             drift_warnings=d.get("drift_warnings", []),
             semantic_findings=semantic_findings,
+            vocr_candidates=vocr_candidates,
             ocr_tokens=ocr_tokens,
             ocr_confs=ocr_confs,
             reconcile_result=reconcile_result,
@@ -682,6 +700,75 @@ def _run_prune_deskew(
     return boxes, skew
 
 
+def _run_vocr_candidates_stage(
+    pr: PageResult,
+    ctx: "PageContext",
+    cfg: GroupingConfig,
+    boxes: list,
+    page_w: float,
+    page_h: float,
+) -> list:
+    """Stage 3.5: VOCR candidate detection.  Returns candidate list."""
+    from .vocr.candidates import detect_vocr_candidates
+    from .vocr.method_stats import load_method_stats
+    from .vocr.producer_stats import load_producer_stats
+
+    candidates: list = []
+    with run_stage("vocr_candidates", cfg) as sr_cand:
+        if sr_cand.ran:
+            # Load persistent method stats for adaptive confidence (Level 1)
+            method_stats = load_method_stats(cfg.vocr_cand_stats_path)
+
+            # Load per-producer stats (Level 3)
+            producer_stats = load_producer_stats(cfg.vocr_cand_producer_stats_path)
+            producer_id = getattr(ctx, "producer_id", "")
+
+            candidates = detect_vocr_candidates(
+                tokens=boxes,
+                page_chars=getattr(ctx, "chars", []),
+                page_lines=ctx.lines,
+                page_curves=ctx.curves,
+                page_rects=ctx.rects,
+                page_width=page_w,
+                page_height=page_h,
+                page_num=ctx.page_num,
+                cfg=cfg,
+                method_stats=method_stats,
+                producer_stats=producer_stats,
+                producer_id=producer_id,
+            )
+            # Per-method breakdown for stage counts
+            by_method: dict = {}
+            for c in candidates:
+                for m in c.trigger_methods:
+                    by_method[m] = by_method.get(m, 0) + 1
+
+            # Level 2: ML classifier filtering
+            ml_pruned = 0
+            if cfg.vocr_cand_ml_enabled and candidates:
+                from .corrections.candidate_classifier import \
+                    CandidateClassifier
+
+                clf = CandidateClassifier(Path(cfg.vocr_cand_classifier_path))
+                if clf.load():
+                    before = len(candidates)
+                    candidates = clf.filter_candidates(
+                        candidates, page_w, page_h,
+                        threshold=cfg.vocr_cand_ml_threshold,
+                    )
+                    ml_pruned = before - len(candidates)
+
+            sr_cand.counts = {
+                "candidates_total": len(candidates),
+                "ml_pruned": ml_pruned,
+                "by_method": by_method,
+            }
+            sr_cand.status = "success"
+    pr.stages["vocr_candidates"] = sr_cand
+    pr.vocr_candidates = candidates
+    return candidates
+
+
 def _run_vocr_stage(
     pr: PageResult,
     ctx: "PageContext",
@@ -690,26 +777,53 @@ def _run_vocr_stage(
     page_h: float,
     preprocess_img,
 ) -> tuple:
-    """Stage 4: Visual OCR.  Returns (ocr_tokens, ocr_confs)."""
+    """Stage 4: Visual OCR.  Returns (ocr_tokens, ocr_confs).
+
+    When VOCR candidates are available, runs **targeted** VOCR on those
+    patches only.  Otherwise falls back to full-page OCR.
+    """
     ocr_tokens = None
     ocr_confs = None
     with run_stage("vocr", cfg) as sr_vocr:
         if sr_vocr.ran:
-            from .vocr import extract_vocr_tokens
-
             ocr_img = (
                 preprocess_img
                 if preprocess_img is not None
                 else (ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image)
             )
-            ocr_tokens, ocr_confs = extract_vocr_tokens(
-                page_image=ocr_img,
-                page_num=ctx.page_num,
-                page_width=page_w,
-                page_height=page_h,
-                cfg=cfg,
-            )
-            sr_vocr.counts = {"tokens_total": len(ocr_tokens)}
+
+            if pr.vocr_candidates:
+                # Targeted mode: scan only candidate patches
+                from .vocr.targeted import extract_vocr_targeted
+
+                ocr_tokens, ocr_confs, pr.vocr_candidates = extract_vocr_targeted(
+                    page_image=ocr_img,
+                    candidates=pr.vocr_candidates,
+                    page_num=ctx.page_num,
+                    page_width=page_w,
+                    page_height=page_h,
+                    cfg=cfg,
+                )
+                sr_vocr.counts = {
+                    "tokens_total": len(ocr_tokens),
+                    "mode": "targeted",
+                    "patches_scanned": len(pr.vocr_candidates),
+                }
+            else:
+                # Full-page fallback
+                from .vocr import extract_vocr_tokens
+
+                ocr_tokens, ocr_confs = extract_vocr_tokens(
+                    page_image=ocr_img,
+                    page_num=ctx.page_num,
+                    page_width=page_w,
+                    page_height=page_h,
+                    cfg=cfg,
+                )
+                sr_vocr.counts = {
+                    "tokens_total": len(ocr_tokens),
+                    "mode": "full_page",
+                }
             sr_vocr.status = "success"
     pr.stages["vocr"] = sr_vocr
     pr.ocr_tokens = ocr_tokens
@@ -761,6 +875,42 @@ def _run_reconcile_stage(
                 boxes.extend(reconcile_result.added_tokens)
                 boxes = nms_prune(boxes, cfg.iou_prune)
             sr_recon.counts = {"accepted": len(reconcile_result.added_tokens)}
+            # Compute candidate stats if targeted VOCR was used
+            if pr.vocr_candidates:
+                from .vocr.candidates import compute_candidate_stats
+                from .vocr.method_stats import update_method_stats
+
+                cand_stats = compute_candidate_stats(
+                    pr.vocr_candidates, page_w, page_h,
+                )
+                sr_recon.counts["candidate_stats"] = cand_stats
+                # Persist per-method hit/miss stats (Level 1 adaptive)
+                update_method_stats(cfg.vocr_cand_stats_path, cand_stats)
+
+                # Level 3: persist per-producer stats
+                _producer = getattr(ctx, "producer_id", "")
+                if _producer:
+                    from .vocr.producer_stats import update_producer_stats
+
+                    update_producer_stats(
+                        cfg.vocr_cand_producer_stats_path, _producer, cand_stats,
+                    )
+
+                # Level 2: persist outcomes for classifier training
+                if cfg.vocr_cand_ml_enabled:
+                    try:
+                        from .corrections.store import CorrectionStore
+
+                        store = CorrectionStore()
+                        n_saved = store.save_candidate_outcomes_batch(
+                            pr.vocr_candidates,
+                            page_width=page_w,
+                            page_height=page_h,
+                        )
+                        sr_recon.counts["outcomes_saved"] = n_saved
+                        store.close()
+                    except Exception as exc:
+                        log.warning("Failed to save candidate outcomes: %s", exc)
             sr_recon.status = "success"
     pr.stages["reconcile"] = sr_recon
     pr.reconcile_result = reconcile_result
@@ -1062,7 +1212,10 @@ def run_pipeline(
     boxes, skew = _run_prune_deskew(boxes, cfg, page_w, page_h)
     pr.skew_degrees = skew
 
-    # Stage 4: vocr
+    # Stage 3.5: vocr candidate detection (targeted patch selection)
+    _run_vocr_candidates_stage(pr, ctx, cfg, boxes, page_w, page_h)
+
+    # Stage 4: vocr (targeted or full-page depending on candidates)
     ocr_tokens, ocr_confs = _run_vocr_stage(
         pr,
         ctx,
@@ -1840,6 +1993,7 @@ def run_document(
     dr.document_findings = _run_document_checks(dr.pages)
 
     # ── Optional GNN refinement ──────────────────────────────────
+    graph = None
     if cfg.ml_gnn_enabled:
         try:
             from .analysis.document_graph import build_document_graph
@@ -1862,6 +2016,36 @@ def run_document(
                     dr.gnn_graph_nodes = graph.get("nodes", [])
         except Exception as exc:
             log.warning("GNN refinement failed: %s", exc)
+
+    # ── Level 4: GNN candidate prior confidence adjustment ───────
+    if cfg.vocr_cand_gnn_prior_enabled and graph is not None:
+        try:
+            from .analysis.gnn_model import is_gnn_available, load_gnn
+            from .vocr.gnn_candidate_prior import (apply_gnn_prior,
+                                                   load_gnn_candidate_prior)
+
+            if is_gnn_available():
+                gnn_model = load_gnn(cfg.ml_gnn_model_path)
+                prior_head = load_gnn_candidate_prior(
+                    cfg.vocr_cand_gnn_prior_path
+                )
+                if prior_head is not None:
+                    adjusted = apply_gnn_prior(
+                        dr.pages,
+                        graph,
+                        gnn_model,
+                        prior_head,
+                        page_width=getattr(
+                            dr.pages[0], "page_width", 612.0
+                        ) if dr.pages else 612.0,
+                        page_height=getattr(
+                            dr.pages[0], "page_height", 792.0
+                        ) if dr.pages else 792.0,
+                        blend_weight=cfg.vocr_cand_gnn_prior_blend,
+                    )
+                    log.info("GNN candidate prior adjusted %d candidates", adjusted)
+        except Exception as exc:
+            log.warning("GNN candidate prior failed: %s", exc)
 
     log.info(
         "run_document: %d pages, %d doc findings",
