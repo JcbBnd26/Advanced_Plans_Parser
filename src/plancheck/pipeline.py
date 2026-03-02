@@ -35,9 +35,17 @@ if TYPE_CHECKING:
     from .analysis.zoning import PageZone
     from .checks.semantic_checks import CheckResult
     from .ingest.ingest import PageContext
-    from .models import (AbbreviationRegion, BlockCluster, GlyphBox,
-                         GraphicElement, LegendRegion, MiscTitleRegion,
-                         NotesColumn, RevisionRegion, StandardDetailRegion)
+    from .models import (
+        AbbreviationRegion,
+        BlockCluster,
+        GlyphBox,
+        GraphicElement,
+        LegendRegion,
+        MiscTitleRegion,
+        NotesColumn,
+        RevisionRegion,
+        StandardDetailRegion,
+    )
     from .reconcile.reconcile import ReconcileResult
 
 log = logging.getLogger(__name__)
@@ -485,10 +493,18 @@ class PageResult:
         from .analysis.title_block import TitleBlockInfo
         from .analysis.zoning import PageZone
         from .checks.semantic_checks import CheckResult
-        from .models import (AbbreviationRegion, BlockCluster, GlyphBox,
-                             GraphicElement, LegendRegion, MiscTitleRegion,
-                             NotesColumn, RevisionRegion, StandardDetailRegion,
-                             VocrCandidate)
+        from .models import (
+            AbbreviationRegion,
+            BlockCluster,
+            GlyphBox,
+            GraphicElement,
+            LegendRegion,
+            MiscTitleRegion,
+            NotesColumn,
+            RevisionRegion,
+            StandardDetailRegion,
+            VocrCandidate,
+        )
         from .reconcile.reconcile import ReconcileResult
 
         # 1. Tokens
@@ -626,8 +642,12 @@ def _run_tocr_vocrpp_stages(
         """Execute the text-layer OCR extraction stage."""
         with run_stage("tocr", cfg) as sr_t:
             result = extract_tocr_from_words(
-                ctx.words, ctx.page_num, ctx.page_width, ctx.page_height,
-                cfg, mode="full",
+                ctx.words,
+                ctx.page_num,
+                ctx.page_width,
+                ctx.page_height,
+                cfg,
+                mode="full",
             )
             b, pw, ph, diag = result.to_legacy_tuple()
             boxes[:] = b
@@ -644,7 +664,9 @@ def _run_tocr_vocrpp_stages(
                 from .vocrpp.preprocess import OcrPreprocessConfig
                 from .vocrpp.preprocess import preprocess_image_for_ocr as _pp
 
-                raw_img = ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
+                raw_img = (
+                    ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
+                )
                 pp_cfg = OcrPreprocessConfig(
                     enabled=True,
                     grayscale=cfg.vocrpp_grayscale,
@@ -746,14 +768,15 @@ def _run_vocr_candidates_stage(
             # Level 2: ML classifier filtering
             ml_pruned = 0
             if cfg.vocr_cand_ml_enabled and candidates:
-                from .corrections.candidate_classifier import \
-                    CandidateClassifier
+                from .corrections.candidate_classifier import CandidateClassifier
 
                 clf = CandidateClassifier(Path(cfg.vocr_cand_classifier_path))
                 if clf.load():
                     before = len(candidates)
                     candidates = clf.filter_candidates(
-                        candidates, page_w, page_h,
+                        candidates,
+                        page_w,
+                        page_h,
                         threshold=cfg.vocr_cand_ml_threshold,
                     )
                     ml_pruned = before - len(candidates)
@@ -789,7 +812,9 @@ def _run_vocr_stage(
             ocr_img = (
                 preprocess_img
                 if preprocess_img is not None
-                else (ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image)
+                else (
+                    ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
+                )
             )
 
             if pr.vocr_candidates:
@@ -859,7 +884,9 @@ def _run_reconcile_stage(
             ocr_img_ = (
                 preprocess_img
                 if preprocess_img is not None
-                else (ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image)
+                else (
+                    ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
+                )
             )
             reconcile_result = _reconcile(
                 page_image=ocr_img_,
@@ -881,7 +908,9 @@ def _run_reconcile_stage(
                 from .vocr.method_stats import update_method_stats
 
                 cand_stats = compute_candidate_stats(
-                    pr.vocr_candidates, page_w, page_h,
+                    pr.vocr_candidates,
+                    page_w,
+                    page_h,
                 )
                 sr_recon.counts["candidate_stats"] = cand_stats
                 # Persist per-method hit/miss stats (Level 1 adaptive)
@@ -893,7 +922,9 @@ def _run_reconcile_stage(
                     from .vocr.producer_stats import update_producer_stats
 
                     update_producer_stats(
-                        cfg.vocr_cand_producer_stats_path, _producer, cand_stats,
+                        cfg.vocr_cand_producer_stats_path,
+                        _producer,
+                        cand_stats,
                     )
 
                 # Level 2: persist outcomes for classifier training
@@ -924,8 +955,13 @@ def _run_grouping_stage(
     page_h: float,
 ) -> tuple:
     """Stage 6: clustering and notes-column grouping.  Returns (blocks, notes_columns)."""
-    from .grouping import (build_clusters_v2, group_notes_columns,
-                           link_continued_columns, mark_headers, mark_notes)
+    from .grouping import (
+        build_clusters_v2,
+        group_notes_columns,
+        link_continued_columns,
+        mark_headers,
+        mark_notes,
+    )
 
     with run_stage("grouping", cfg) as sr_grp:
         blocks = build_clusters_v2(boxes, page_h, cfg)
@@ -956,18 +992,25 @@ def _run_analysis_stage(
     page_h: float,
 ) -> None:
     """Stage 7: graphics, structural boxes, regions, title blocks, zones."""
-    from .analysis import (detect_abbreviation_regions, detect_legend_regions,
-                           detect_misc_title_regions, detect_revision_regions,
-                           detect_standard_detail_regions,
-                           extract_graphics_from_data,
-                           filter_graphics_outside_regions)
+    from .analysis import (
+        detect_abbreviation_regions,
+        detect_legend_regions,
+        detect_misc_title_regions,
+        detect_revision_regions,
+        detect_standard_detail_regions,
+        extract_graphics_from_data,
+        filter_graphics_outside_regions,
+    )
     from .analysis.structural_boxes import detect_semantic_regions
     from .analysis.title_block import extract_title_blocks
     from .analysis.zoning import detect_zones
 
     with run_stage("analysis", cfg) as sr_ana:
         graphics = extract_graphics_from_data(
-            ctx.page_num, ctx.lines, ctx.rects, ctx.curves,
+            ctx.page_num,
+            ctx.lines,
+            ctx.rects,
+            ctx.curves,
         )
         structural_boxes, semantic_regions = detect_semantic_regions(
             blocks=blocks,
@@ -1181,7 +1224,7 @@ def run_pipeline(
 
     # Determine OCR resolution (0 = skip OCR image render)
     ocr_res = 0
-    if cfg.enable_vocr or cfg.enable_vocrpp or cfg.enable_reconcile:
+    if cfg.enable_vocr or cfg.enable_ocr_preprocess or cfg.enable_ocr_reconcile:
         ocr_res = (
             cfg.vocr_resolution
             if cfg.vocr_resolution > 0
@@ -1528,8 +1571,10 @@ def _apply_ml_feedback(
         img_extractor = None
         if cfg.ml_vision_enabled and page_image is not None:
             try:
-                from .corrections.image_features import (ImageFeatureExtractor,
-                                                         is_vision_available)
+                from .corrections.image_features import (
+                    ImageFeatureExtractor,
+                    is_vision_available,
+                )
 
                 if is_vision_available():
                     img_extractor = ImageFeatureExtractor(
@@ -1543,7 +1588,9 @@ def _apply_ml_feedback(
         if cfg.ml_embeddings_enabled:
             try:
                 from .corrections.text_embeddings import (
-                    TextEmbedder, is_embeddings_available)
+                    TextEmbedder,
+                    is_embeddings_available,
+                )
 
                 if is_embeddings_available():
                     text_embedder = TextEmbedder(model_name=cfg.ml_embeddings_model)
@@ -1615,8 +1662,7 @@ def _apply_ml_feedback(
                 # Store in cache for next time (Phase 4.3)
                 if use_cache:
                     try:
-                        from .corrections.classifier import \
-                            encode_features as _ef
+                        from .corrections.classifier import encode_features as _ef
 
                         vec = _ef(
                             det["features"],
@@ -1627,11 +1673,13 @@ def _apply_ml_feedback(
                     except Exception:
                         pass
 
-            # Always write confidence
-            store._conn.execute(
-                "UPDATE detections SET confidence = ? " "WHERE detection_id = ?",
-                (pred_conf, did),
-            )
+            # Always write confidence — unless already set by prior
+            # delete correction (pass 1 sets it to 0.0).
+            if did not in corrected_det_ids:
+                store._conn.execute(
+                    "UPDATE detections SET confidence = ? " "WHERE detection_id = ?",
+                    (pred_conf, did),
+                )
 
             # Only relabel if: not already corrected by user AND
             # model disagrees AND model is confident enough
@@ -2021,26 +2069,30 @@ def run_document(
     if cfg.vocr_cand_gnn_prior_enabled and graph is not None:
         try:
             from .analysis.gnn_model import is_gnn_available, load_gnn
-            from .vocr.gnn_candidate_prior import (apply_gnn_prior,
-                                                   load_gnn_candidate_prior)
+            from .vocr.gnn_candidate_prior import (
+                apply_gnn_prior,
+                load_gnn_candidate_prior,
+            )
 
             if is_gnn_available():
                 gnn_model = load_gnn(cfg.ml_gnn_model_path)
-                prior_head = load_gnn_candidate_prior(
-                    cfg.vocr_cand_gnn_prior_path
-                )
+                prior_head = load_gnn_candidate_prior(cfg.vocr_cand_gnn_prior_path)
                 if prior_head is not None:
                     adjusted = apply_gnn_prior(
                         dr.pages,
                         graph,
                         gnn_model,
                         prior_head,
-                        page_width=getattr(
-                            dr.pages[0], "page_width", 612.0
-                        ) if dr.pages else 612.0,
-                        page_height=getattr(
-                            dr.pages[0], "page_height", 792.0
-                        ) if dr.pages else 792.0,
+                        page_width=(
+                            getattr(dr.pages[0], "page_width", 612.0)
+                            if dr.pages
+                            else 612.0
+                        ),
+                        page_height=(
+                            getattr(dr.pages[0], "page_height", 792.0)
+                            if dr.pages
+                            else 792.0
+                        ),
                         blend_weight=cfg.vocr_cand_gnn_prior_blend,
                     )
                     log.info("GNN candidate prior adjusted %d candidates", adjusted)

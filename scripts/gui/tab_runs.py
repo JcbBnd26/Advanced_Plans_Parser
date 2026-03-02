@@ -82,16 +82,18 @@ class RunsTab:
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.rowconfigure(0, weight=1)
 
-        cols = ("timestamp", "pdf", "pages")
+        cols = ("timestamp", "pdf", "pages", "status")
         self._tree = ttk.Treeview(
             tree_frame, columns=cols, show="headings", selectmode="browse"
         )
         self._tree.heading("timestamp", text="Timestamp", anchor="w")
         self._tree.heading("pdf", text="PDF", anchor="w")
         self._tree.heading("pages", text="Pages", anchor="center")
+        self._tree.heading("status", text="Status", anchor="center")
         self._tree.column("timestamp", width=160, minwidth=120)
         self._tree.column("pdf", width=140, minwidth=100)
         self._tree.column("pages", width=50, minwidth=40)
+        self._tree.column("status", width=60, minwidth=50)
 
         tree_sb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=tree_sb.set)
@@ -175,20 +177,23 @@ class RunsTab:
                     pdf_name = manifest.get("pdf_name", "?")
                     pages = manifest.get("pages_processed", [])
                     page_str = f"{len(pages)}" if pages else "?"
+                    status_str = self._compute_run_status(manifest)
                 except Exception:
                     timestamp = run_dir.name[4:19]  # from run_YYYYMMDD_HHMMSS
                     pdf_name = "?"
                     page_str = "?"
+                    status_str = "?"
             else:
                 timestamp = run_dir.name[4:19]
                 pdf_name = "(no manifest)"
                 page_str = "?"
+                status_str = "?"
 
             self._tree.insert(
                 "",
                 "end",
                 iid=str(run_dir),
-                values=(timestamp, pdf_name, page_str),
+                values=(timestamp, pdf_name, page_str, status_str),
             )
 
     def _on_run_selected(self, _event=None) -> None:
@@ -222,34 +227,128 @@ class RunsTab:
 
         self._populate_detail(manifest)
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_run_status(manifest: dict) -> str:
+        """Derive a run-level status string from page entries."""
+        pages = manifest.get("pages", [])
+        if not pages:
+            return "?"
+        errors = sum(1 for p in pages if isinstance(p, dict) and "error" in p and "stages" not in p)
+        if errors == len(pages):
+            return "\u2718 Failed"
+        if errors > 0:
+            return "\u26a0 Partial"
+        return "\u2714 OK"
+
+    @staticmethod
+    def _fmt_duration(ms: int | float) -> str:
+        """Format milliseconds into a readable string."""
+        if ms < 1000:
+            return f"{ms:.0f} ms"
+        secs = ms / 1000
+        if secs < 60:
+            return f"{secs:.1f} s"
+        mins = int(secs // 60)
+        return f"{mins}m {secs - mins * 60:.1f}s"
+
+    def _add_label_pair(self, parent, row: int, label: str, value: str,
+                        fg: str | None = None) -> int:
+        """Add a bold-label + value pair to a grid; return next row."""
+        ttk.Label(
+            parent, text=f"{label}:", font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=row, column=0, sticky="w", padx=(4, 8), pady=1)
+        kw: dict[str, Any] = {"wraplength": 350}
+        if fg:
+            kw["foreground"] = fg
+        ttk.Label(parent, text=str(value), **kw).grid(
+            row=row, column=1, sticky="w", pady=1
+        )
+        return row + 1
+
+    def _add_section_heading(self, parent, row: int, text: str) -> int:
+        """Add a small bold heading inside a page frame; return next row."""
+        ttk.Label(
+            parent, text=text, font=("TkDefaultFont", 9, "bold"),
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 1))
+        return row + 1
+
+    def _severity_color(self, sev: str) -> str:
+        s = sev.lower()
+        if "error" in s:
+            return "#e06c75"
+        if "warn" in s:
+            return "#e5c07b"
+        return "#d4d4d4"
+
+    # ------------------------------------------------------------------
+    # Detail panel population
+    # ------------------------------------------------------------------
+
     def _populate_detail(self, manifest: dict) -> None:
         """Build the detail panel from a manifest dict."""
         row = 0
+        pages = manifest.get("pages", [])
 
         # ── Summary ─────────────────────────────────────────────────
         summary_frame = CollapsibleFrame(
             self._detail_inner, "Summary", initially_open=True
         )
         summary_frame.grid(row=row, column=0, sticky="ew", pady=2, padx=4)
+        summary_frame.content.columnconfigure(1, weight=1)
         row += 1
 
-        info_pairs = [
-            ("Run ID", manifest.get("run_id", "?")),
-            ("Created", manifest.get("created_at", "?")),
-            ("Source PDF", manifest.get("pdf_name", "?")),
-            ("Fingerprint", manifest.get("input_fingerprint", "?")[:16] + "..."),
-            ("Resolution", f"{manifest.get('render_resolution_dpi', '?')} DPI"),
-            ("Pages", str(manifest.get("pages_processed", []))),
-        ]
-        for i, (label, val) in enumerate(info_pairs):
-            ttk.Label(
-                summary_frame.content,
-                text=f"{label}:",
-                font=("TkDefaultFont", 9, "bold"),
-            ).grid(row=i, column=0, sticky="w", padx=(4, 8), pady=1)
-            ttk.Label(summary_frame.content, text=str(val), wraplength=300).grid(
-                row=i, column=1, sticky="w", pady=1
-            )
+        # Compute total pipeline timing
+        total_ms = 0
+        page_count = len(pages)
+        error_count = 0
+        for pd_ in pages:
+            if not isinstance(pd_, dict):
+                continue
+            if "error" in pd_ and "stages" not in pd_:
+                error_count += 1
+                continue
+            for si in pd_.get("stages", {}).values():
+                if isinstance(si, dict):
+                    total_ms += si.get("duration_ms", 0)
+
+        srow = 0
+        srow = self._add_label_pair(summary_frame.content, srow,
+                                     "Run ID", manifest.get("run_id", "?"))
+        srow = self._add_label_pair(summary_frame.content, srow,
+                                     "Created", manifest.get("created_at", "?"))
+        srow = self._add_label_pair(summary_frame.content, srow,
+                                     "Source PDF", manifest.get("pdf_name", "?"))
+        fp = manifest.get("input_fingerprint", "?")
+        srow = self._add_label_pair(summary_frame.content, srow,
+                                     "Fingerprint", fp[:16] + "..." if len(fp) > 16 else fp)
+        srow = self._add_label_pair(summary_frame.content, srow,
+                                     "Resolution",
+                                     f"{manifest.get('render_resolution_dpi', '?')} DPI")
+        pages_list = manifest.get("pages_processed", [])
+        srow = self._add_label_pair(summary_frame.content, srow,
+                                     "Pages", str(pages_list))
+
+        # Pipeline timing
+        if total_ms > 0:
+            timing_text = f"{self._fmt_duration(total_ms)} across {page_count} page(s)"
+            if error_count:
+                timing_text += f" ({error_count} errored)"
+            srow = self._add_label_pair(summary_frame.content, srow,
+                                         "Pipeline Time", timing_text)
+
+        # Status
+        status = self._compute_run_status(manifest)
+        status_fg = (
+            "#e06c75" if "Failed" in status
+            else "#e5c07b" if "Partial" in status
+            else "#98c379"
+        )
+        srow = self._add_label_pair(summary_frame.content, srow,
+                                     "Status", status, fg=status_fg)
 
         # ── Cross-page findings ──────────────────────────────────────
         cross_findings = manifest.get("cross_page_findings", [])
@@ -262,132 +361,298 @@ class RunsTab:
             for i, finding in enumerate(cross_findings):
                 sev = finding.get("severity", "info")
                 msg = finding.get("message", str(finding))
-                fg = (
-                    "#e06c75"
-                    if sev in ("error", "ERROR")
-                    else "#e5c07b" if sev in ("warning", "WARNING") else "#d4d4d4"
-                )
                 ttk.Label(
                     findings_frame.content,
                     text=f"[{sev.upper()}] {msg}",
-                    foreground=fg,
+                    foreground=self._severity_color(sev),
                     wraplength=400,
                 ).grid(row=i, column=0, sticky="w", padx=4, pady=1)
 
         # ── Per-page details ─────────────────────────────────────────
-        pages = manifest.get("pages", [])
         for page_data in pages:
             if not isinstance(page_data, dict):
                 continue
             page_num = page_data.get("page", "?")
-            quality = page_data.get("page_quality", "?")
-            findings_count = page_data.get("semantic_findings_count", 0)
 
+            # --- Error-only page ---
+            if "error" in page_data and "stages" not in page_data:
+                err_title = f"Page {page_num}  \u2718 ERROR"
+                err_frame = CollapsibleFrame(self._detail_inner, err_title)
+                err_frame.grid(row=row, column=0, sticky="ew", pady=2, padx=4)
+                row += 1
+                ttk.Label(
+                    err_frame.content,
+                    text=str(page_data["error"]),
+                    foreground="#e06c75",
+                    wraplength=420,
+                ).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+                continue
+
+            # --- Normal page ---
+            quality = page_data.get("page_quality", None)
+            findings_count = page_data.get("semantic_findings_count", 0)
+            pw = page_data.get("page_width", 0)
+            ph = page_data.get("page_height", 0)
+            skew = page_data.get("skew_degrees", 0.0)
+
+            # Build title with geometry
             page_title = f"Page {page_num}"
-            if quality != "?":
-                page_title += (
-                    f" (quality: {quality:.2f})"
-                    if isinstance(quality, float)
-                    else f" (quality: {quality})"
-                )
+            if quality is not None:
+                page_title += f"  quality: {quality:.2f}" if isinstance(quality, float) else f"  quality: {quality}"
+            if pw and ph:
+                page_title += f"  |  {pw:.0f}\u00d7{ph:.0f} pt"
+            if skew:
+                page_title += f"  skew: {skew:.2f}\u00b0"
             if findings_count:
-                page_title += f" [{findings_count} findings]"
+                page_title += f"  [{findings_count} findings]"
 
             page_frame = CollapsibleFrame(self._detail_inner, page_title)
             page_frame.grid(row=row, column=0, sticky="ew", pady=2, padx=4)
+            page_frame.content.columnconfigure(1, weight=1)
             row += 1
 
             prow = 0
 
-            # Stage timings
-            stages = page_data.get("stages", [])
-            if stages:
-                for stage_info in stages:
+            # ── Stage detail cards (fixed: iterate dict values) ──────
+            stages = page_data.get("stages", {})
+            if isinstance(stages, dict) and stages:
+                prow = self._add_section_heading(page_frame.content, prow, "Pipeline Stages")
+
+                for stage_info in stages.values():
+                    if not isinstance(stage_info, dict):
+                        continue
                     s_name = stage_info.get("stage", "?")
                     s_status = stage_info.get("status", "?")
                     s_dur = stage_info.get("duration_ms", 0)
-                    s_text = f"{s_name}: {s_status}"
+                    s_skip = stage_info.get("skip_reason")
+                    s_error = stage_info.get("error")
+
+                    # Status icon
+                    if s_status == "success":
+                        icon, fg = "\u2714", "#98c379"
+                    elif s_status == "skipped":
+                        icon, fg = "\u2500", "#7f848e"
+                    else:
+                        icon, fg = "\u2718", "#e06c75"
+
+                    header = f"  {icon} {s_name}"
                     if s_dur:
-                        s_text += f" ({s_dur:.0f}ms)"
-                    fg = (
-                        "#98c379"
-                        if s_status == "success"
-                        else "#7f848e" if s_status == "skipped" else "#e06c75"
-                    )
-                    ttk.Label(page_frame.content, text=s_text, foreground=fg).grid(
-                        row=prow, column=0, sticky="w", padx=4, pady=1
+                        header += f"  ({self._fmt_duration(s_dur)})"
+                    if s_skip:
+                        header += f"  [{s_skip}]"
+
+                    ttk.Label(page_frame.content, text=header, foreground=fg).grid(
+                        row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1
                     )
                     prow += 1
 
-            # Counts
-            counts = page_data.get("counts", {})
-            if counts:
+                    # Stage-specific counts (indented)
+                    s_counts = stage_info.get("counts", {})
+                    if s_counts:
+                        interesting = [
+                            f"{k}={v}" for k, v in s_counts.items()
+                            if isinstance(v, (int, float)) and v != 0
+                        ]
+                        if interesting:
+                            ttk.Label(
+                                page_frame.content,
+                                text="      " + "  ".join(interesting),
+                                foreground="#abb2bf",
+                                wraplength=400,
+                            ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4)
+                            prow += 1
+
+                    # Stage outputs summary (font names, sizes)
+                    s_outputs = stage_info.get("outputs", {})
+                    if s_outputs:
+                        for out_key in ("font_names", "font_sizes"):
+                            out_val = s_outputs.get(out_key)
+                            if out_val and isinstance(out_val, dict):
+                                top_items = sorted(out_val.items(), key=lambda x: x[1], reverse=True)[:5]
+                                summary = ", ".join(f"{k} ({v})" for k, v in top_items)
+                                if len(out_val) > 5:
+                                    summary += f" +{len(out_val) - 5} more"
+                                label_text = "Fonts" if out_key == "font_names" else "Sizes"
+                                ttk.Label(
+                                    page_frame.content,
+                                    text=f"      {label_text}: {summary}",
+                                    foreground="#abb2bf",
+                                    wraplength=400,
+                                ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4)
+                                prow += 1
+
+                    # Stage error
+                    if s_error:
+                        err_text = str(s_error) if not isinstance(s_error, dict) else s_error.get("message", str(s_error))
+                        ttk.Label(
+                            page_frame.content,
+                            text=f"      Error: {err_text}",
+                            foreground="#e06c75",
+                            wraplength=400,
+                        ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4)
+                        prow += 1
+
+            # ── Stage health warnings ────────────────────────────────
+            stage_health = page_data.get("stage_health", {})
+            if stage_health:
+                health_items = [k for k, v in stage_health.items() if v]
+                if health_items:
+                    ttk.Label(
+                        page_frame.content,
+                        text="\u26a0 " + ", ".join(health_items),
+                        foreground="#e5c07b",
+                    ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
+                    prow += 1
+
+            # ── Region Confidences ───────────────────────────────────
+            region_confs = page_data.get("region_confidences", {})
+            if region_confs:
                 ttk.Separator(page_frame.content, orient="horizontal").grid(
-                    row=prow, column=0, sticky="ew", pady=4
+                    row=prow, column=0, columnspan=2, sticky="ew", pady=4
                 )
                 prow += 1
-                count_text = "  ".join(
-                    f"{k}={v}" for k, v in counts.items() if isinstance(v, (int, float))
+                prow = self._add_section_heading(page_frame.content, prow, "Region Confidences")
+                for rtype, confs in region_confs.items():
+                    if not confs:
+                        continue
+                    conf_strs = []
+                    for c in confs:
+                        if isinstance(c, (int, float)):
+                            fg = "#e06c75" if c < 0.4 else "#e5c07b" if c < 0.6 else "#98c379"
+                            conf_strs.append(f"{c:.2f}")
+                        else:
+                            conf_strs.append(str(c))
+                    # Use worst confidence color for the label
+                    min_c = min((c for c in confs if isinstance(c, (int, float))), default=1.0)
+                    fg = "#e06c75" if min_c < 0.4 else "#e5c07b" if min_c < 0.6 else "#98c379"
+                    ttk.Label(
+                        page_frame.content,
+                        text=f"  {rtype}: {', '.join(conf_strs)}",
+                        foreground=fg,
+                    ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
+                    prow += 1
+
+            # ── OCR Reconcile Stats ──────────────────────────────────
+            counts = page_data.get("counts", {})
+            rec_total = counts.get("ocr_reconcile_total", 0)
+            rec_cand = counts.get("ocr_reconcile_candidates", 0)
+            if rec_total or rec_cand:
+                ttk.Separator(page_frame.content, orient="horizontal").grid(
+                    row=prow, column=0, columnspan=2, sticky="ew", pady=4
                 )
+                prow += 1
+                prow = self._add_section_heading(page_frame.content, prow, "OCR Reconcile")
+                rec_accepted = counts.get("ocr_reconcile_accepted", 0)
+                cand_accepted = counts.get("ocr_reconcile_candidates_accepted", 0)
+                cand_rejected = counts.get("ocr_reconcile_candidates_rejected", 0)
+                cand_filtered = counts.get("ocr_reconcile_filtered_non_numeric", 0)
+
+                rec_lines = []
+                if rec_total:
+                    rec_lines.append(f"Direct matches: {rec_accepted}/{rec_total}")
+                if rec_cand:
+                    rate = f"{cand_accepted / rec_cand * 100:.0f}%" if rec_cand else "N/A"
+                    rec_lines.append(f"Candidates: {rec_cand} (accepted {cand_accepted}, rejected {cand_rejected}, filtered {cand_filtered}) — {rate} accept rate")
+
+                for line in rec_lines:
+                    ttk.Label(
+                        page_frame.content, text=f"  {line}", foreground="#abb2bf",
+                        wraplength=420,
+                    ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
+                    prow += 1
+
+            # ── Counts ───────────────────────────────────────────────
+            # Exclude OCR reconcile keys (shown above) and show the rest
+            ocr_keys = {
+                "ocr_reconcile_total", "ocr_reconcile_accepted",
+                "ocr_reconcile_candidates", "ocr_reconcile_candidates_accepted",
+                "ocr_reconcile_candidates_rejected", "ocr_reconcile_filtered_non_numeric",
+            }
+            other_counts = {
+                k: v for k, v in counts.items()
+                if k not in ocr_keys and isinstance(v, (int, float))
+            }
+            if other_counts:
+                ttk.Separator(page_frame.content, orient="horizontal").grid(
+                    row=prow, column=0, columnspan=2, sticky="ew", pady=4
+                )
+                prow += 1
+                prow = self._add_section_heading(page_frame.content, prow, "Counts")
+                count_text = "  ".join(f"{k}={v}" for k, v in other_counts.items())
                 ttk.Label(
-                    page_frame.content,
-                    text=count_text,
-                    wraplength=400,
-                    foreground="gray",
-                ).grid(row=prow, column=0, sticky="w", padx=4)
+                    page_frame.content, text=count_text,
+                    wraplength=420, foreground="gray",
+                ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4)
                 prow += 1
 
-            # Findings
+            # ── Findings ─────────────────────────────────────────────
             findings = page_data.get("semantic_findings", [])
             if findings:
                 ttk.Separator(page_frame.content, orient="horizontal").grid(
-                    row=prow, column=0, sticky="ew", pady=4
+                    row=prow, column=0, columnspan=2, sticky="ew", pady=4
                 )
                 prow += 1
+                prow = self._add_section_heading(page_frame.content, prow, "Semantic Findings")
                 for finding in findings:
                     if isinstance(finding, dict):
                         sev = finding.get("severity", "info")
                         msg = finding.get("message", str(finding))
                     else:
                         sev, msg = "info", str(finding)
-                    fg = (
-                        "#e06c75"
-                        if "error" in sev.lower()
-                        else "#e5c07b" if "warn" in sev.lower() else "#d4d4d4"
-                    )
                     ttk.Label(
                         page_frame.content,
                         text=f"  [{sev}] {msg}",
-                        foreground=fg,
-                        wraplength=380,
-                    ).grid(row=prow, column=0, sticky="w", padx=4, pady=1)
+                        foreground=self._severity_color(sev),
+                        wraplength=400,
+                    ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
                     prow += 1
 
-            # Artifacts
+            # ── Artifacts ────────────────────────────────────────────
             artifacts = page_data.get("artifacts", {})
             if artifacts:
                 ttk.Separator(page_frame.content, orient="horizontal").grid(
-                    row=prow, column=0, sticky="ew", pady=4
+                    row=prow, column=0, columnspan=2, sticky="ew", pady=4
                 )
                 prow += 1
-                ttk.Label(
-                    page_frame.content,
-                    text="Artifacts:",
-                    font=("TkDefaultFont", 9, "bold"),
-                ).grid(row=prow, column=0, sticky="w", padx=4)
-                prow += 1
+                prow = self._add_section_heading(page_frame.content, prow, "Artifacts")
                 for art_name, art_path in artifacts.items():
                     link = ttk.Label(
                         page_frame.content,
-                        text=f"  {art_name}: {art_path}",
+                        text=f"  {art_name}: {Path(art_path).name}",
                         foreground="#61afef",
                         cursor="hand2",
                     )
-                    link.grid(row=prow, column=0, sticky="w", padx=4, pady=1)
+                    link.grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
                     full_path = (
                         self._current_run_dir / art_path
                         if self._current_run_dir
                         else Path(art_path)
+                    )
+                    link.bind(
+                        "<Button-1>", lambda e, p=full_path: self._open_artifact(p)
+                    )
+                    prow += 1
+
+            # ── Exports ──────────────────────────────────────────────
+            exports = page_data.get("exports", {})
+            if exports:
+                ttk.Separator(page_frame.content, orient="horizontal").grid(
+                    row=prow, column=0, columnspan=2, sticky="ew", pady=4
+                )
+                prow += 1
+                prow = self._add_section_heading(page_frame.content, prow, "Exports")
+                for exp_name, exp_path in exports.items():
+                    link = ttk.Label(
+                        page_frame.content,
+                        text=f"  {exp_name}: {Path(exp_path).name}",
+                        foreground="#61afef",
+                        cursor="hand2",
+                    )
+                    link.grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
+                    full_path = (
+                        self._current_run_dir / exp_path
+                        if self._current_run_dir
+                        else Path(exp_path)
                     )
                     link.bind(
                         "<Button-1>", lambda e, p=full_path: self._open_artifact(p)

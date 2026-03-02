@@ -127,12 +127,7 @@ def extract_vocr_targeted(
     if not candidates:
         return [], [], candidates
 
-    ocr = _get_ocr(
-        tier=cfg.vocr_model_tier,
-        orientation=cfg.vocr_use_orientation_classify,
-        unwarping=cfg.vocr_use_doc_unwarping,
-        textline_orientation=cfg.vocr_use_textline_orientation,
-    )
+    ocr = _get_ocr(cfg)
 
     all_tokens: List[GlyphBox] = []
     all_confs: List[float] = []

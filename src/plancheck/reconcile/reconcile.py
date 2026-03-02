@@ -846,7 +846,7 @@ def _inject_symbols(
     pdf_tokens: List[GlyphBox],
     cfg: GroupingConfig,
     page_width: float = 0.0,
-) -> Tuple[List[GlyphBox], List[dict]]:
+) -> Tuple[List[GlyphBox], List[dict], int]:
     """Decide which OCR findings to inject as new GlyphBox tokens.
 
     Delegates to :func:`_try_inject_case_c`, :func:`_try_inject_case_a`,

@@ -96,24 +96,6 @@ class PipelineTab:
 
         row = 0
 
-        # ── Config File I/O toolbar ──────────────────────────────────
-        cfg_toolbar = ttk.Frame(self._inner)
-        cfg_toolbar.grid(row=row, column=0, sticky="ew", **pad)
-        ttk.Button(cfg_toolbar, text="Load Config...", command=self._load_config).pack(
-            side="left", padx=2
-        )
-        ttk.Button(cfg_toolbar, text="Save Config...", command=self._save_config).pack(
-            side="left", padx=2
-        )
-        ttk.Button(cfg_toolbar, text="Reset Defaults", command=self._reset_config).pack(
-            side="left", padx=2
-        )
-        self._config_label_var = tk.StringVar(value="")
-        ttk.Label(
-            cfg_toolbar, textvariable=self._config_label_var, foreground="gray"
-        ).pack(side="left", padx=(10, 0))
-        row += 1
-
         # ── PDF File Selection ───────────────────────────────────────
         file_frame = ttk.LabelFrame(self._inner, text="PDF File", padding=10)
         file_frame.grid(row=row, column=0, sticky="ew", **pad)
@@ -328,58 +310,6 @@ class PipelineTab:
             pass
 
         return cfg
-
-    # ------------------------------------------------------------------
-    # Config File I/O
-    # ------------------------------------------------------------------
-
-    def _load_config(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Load Configuration",
-            filetypes=[
-                ("Config files", "*.yaml *.yml *.toml *.json"),
-                ("All Files", "*.*"),
-            ],
-        )
-        if not path:
-            return
-        try:
-            p = Path(path)
-            if p.suffix in (".yaml", ".yml", ".toml"):
-                cfg = GroupingConfig.from_file(p)
-            else:
-                import json as json_mod
-
-                data = json_mod.loads(p.read_text(encoding="utf-8"))
-                cfg = GroupingConfig.from_dict(data)
-            self._apply_config(cfg)
-            self._config_label_var.set(f"Loaded: {p.name}")
-        except Exception as e:
-            messagebox.showerror("Config Error", f"Failed to load config:\n{e}")
-
-    def _save_config(self) -> None:
-        path = filedialog.asksaveasfilename(
-            title="Save Configuration",
-            defaultextension=".json",
-            filetypes=[
-                ("JSON", "*.json"),
-                ("YAML", "*.yaml"),
-                ("All Files", "*.*"),
-            ],
-        )
-        if not path:
-            return
-        try:
-            cfg = self._collect_config()
-            data = cfg.to_dict()
-            Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
-            self._config_label_var.set(f"Saved: {Path(path).name}")
-        except Exception as e:
-            messagebox.showerror("Save Error", f"Failed to save config:\n{e}")
-
-    def _reset_config(self) -> None:
-        self._apply_config(GroupingConfig())
-        self._config_label_var.set("Reset to defaults")
 
     def _apply_config(self, cfg: GroupingConfig) -> None:
         """Push a GroupingConfig into all UI controls."""

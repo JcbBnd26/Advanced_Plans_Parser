@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import threading
 import tkinter as tk
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -22,11 +23,11 @@ from widgets import LogPanel, StatusBar
 from worker import PipelineWorker
 
 from plancheck.analysis.box_merge import merge_boxes, polygon_bbox
-from plancheck.config import GroupingConfig
 from plancheck.corrections.classifier import ElementClassifier
-from plancheck.corrections.features import featurize, featurize_region
+from plancheck.corrections.features import featurize_region
 from plancheck.corrections.store import CorrectionStore
-from plancheck.ingest.ingest import extract_text_in_bbox, extract_text_in_polygon
+from plancheck.ingest.ingest import (extract_text_in_bbox,
+                                     extract_text_in_polygon)
 
 # ── Geometry helpers ───────────────────────────────────────────────────
 
@@ -92,7 +93,7 @@ class AnnotationTab:
     """Interactive annotation tab for detection correction.
 
     Renders the PDF page with coloured detection boxes.  Supports
-    click-to-select, relabel, reshape, add, and delete.  Every action
+    click-to-select, relabel, reshape, add, and reject.  Every action
     is persisted to a :class:`CorrectionStore` immediately on confirm.
     """
 
@@ -119,7 +120,7 @@ class AnnotationTab:
         self.frame.columnconfigure(0, weight=3)
         self.frame.columnconfigure(1, weight=0)
         self.frame.rowconfigure(1, weight=1)
-        notebook.add(self.frame, text="Annotation")
+        notebook.add(self.frame, text="ML Trainer")
 
         # ── State ──────────────────────────────────────────────────
         self._pdf_path: Path | None = None
@@ -137,19 +138,19 @@ class AnnotationTab:
         self._selected_box: CanvasBox | None = None
         self._multi_selected: list[CanvasBox] = []
         self._mode: str = "select"
-        self._load_mode: str = "pipeline"  # or "database"
+
         self._draw_start: tuple[float, float] | None = None
         self._draw_rect_id: int | None = None
         self._lasso_start: tuple[float, float] | None = None
         self._lasso_rect_id: int | None = None
+        self._lasso_shift: bool = False
+        self._lasso_word: bool = False
+        self._word_click_candidate_rid: int | None = None
         self._session_id: str = uuid4().hex[:8]
         self._session_count: int = 0
         self._store = CorrectionStore()
         self._worker: PipelineWorker | None = None
         self._classifier = ElementClassifier()
-
-        # Track which pages have had the pipeline run
-        self._pipeline_pages: set[int] = set()
 
         # Undo / redo stacks
         self._undo_stack: list[dict] = []
@@ -178,6 +179,8 @@ class AnnotationTab:
         # Word overlay state
         self._word_overlay_on: bool = False
         self._word_overlay_ids: list[int] = []
+        self._word_overlay_items: dict[int, dict[str, Any]] = {}
+        self._selected_word_rids: set[int] = set()
 
         # Filter state
         self._filter_label_vars: dict[str, tk.BooleanVar] = {}
@@ -191,6 +194,7 @@ class AnnotationTab:
 
         # Subscribe to GuiState events
         self.state.subscribe("pdf_changed", self._on_pdf_changed)
+        self.state.subscribe("run_completed", self._on_run_completed)
 
     # ── Helpers: read-only text / copy menu ────────────────────────
 
@@ -367,22 +371,6 @@ class AnnotationTab:
 
         ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=6)
 
-        _btn_run = ttk.Button(top, text="Run Pipeline", command=self._on_run_pipeline)
-        _btn_run.pack(side="left", padx=2)
-        self._tooltip(_btn_run, "Run the detection pipeline on the current page")
-        _btn_run_all = ttk.Button(
-            top, text="Run All Pages", command=self._on_run_all_pages
-        )
-        _btn_run_all.pack(side="left", padx=2)
-        self._tooltip(_btn_run_all, "Run the pipeline on every page of the PDF")
-        _btn_load = ttk.Button(
-            top, text="Load Detections", command=self._on_load_detections
-        )
-        _btn_load.pack(side="left", padx=2)
-        self._tooltip(_btn_load, "Load previously saved detections from the database")
-
-        ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=6)
-
         self._word_overlay_var = tk.BooleanVar(value=False)
         self._btn_words = ttk.Checkbutton(
             top,
@@ -421,6 +409,7 @@ class AnnotationTab:
         self._canvas.configure(xscrollcommand=h_scroll.set, yscrollcommand=v_scroll.set)
 
         # Canvas bindings
+        self._canvas.bind("<Control-Button-1>", self._on_word_click)
         self._canvas.bind("<Button-1>", self._on_canvas_click)
         self._canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self._canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
@@ -530,9 +519,14 @@ class AnnotationTab:
         text_frame.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
         text_frame.columnconfigure(0, weight=1)
         self._insp_text = tk.Text(
-            text_frame, width=24, height=4, wrap="word", state="disabled"
+            text_frame, width=24, height=6, wrap="word", state="disabled"
         )
-        self._insp_text.grid(row=0, column=0, sticky="ew")
+        self._insp_text.grid(row=0, column=0, sticky="nsew")
+        _insp_text_sb = ttk.Scrollbar(
+            text_frame, orient="vertical", command=self._insp_text.yview
+        )
+        _insp_text_sb.grid(row=0, column=1, sticky="ns")
+        self._insp_text.configure(yscrollcommand=_insp_text_sb.set)
         self._add_copy_menu(self._insp_text)
         self._tooltip(self._insp_text, "Extracted text content of the selected element")
         _btn_rescan = ttk.Button(
@@ -557,27 +551,17 @@ class AnnotationTab:
         self._tooltip(
             _btn_relabel, "Change this detection's type to the selected label (R)"
         )
-        _btn_delete = ttk.Button(btn_frame, text="Delete ✗", command=self._on_delete)
+        _btn_delete = ttk.Button(btn_frame, text="Reject ✗", command=self._on_delete)
         _btn_delete.pack(side="left", padx=3)
         self._tooltip(_btn_delete, "Mark this detection as a false positive (D)")
 
-        # ── Batch buttons ─────────────────────────────────────────
+        # ── Merge button ──────────────────────────────────────────
         row += 1
         batch_frame = ttk.Frame(inspector)
         batch_frame.grid(row=row, column=0, columnspan=2, pady=2)
-        _btn_batch_acc = ttk.Button(
-            batch_frame, text="Batch Accept", command=self._on_batch_accept
-        )
-        _btn_batch_acc.pack(side="left", padx=3)
-        self._tooltip(_btn_batch_acc, "Accept all selected boxes at once")
-        _btn_batch_rel = ttk.Button(
-            batch_frame, text="Batch Relabel", command=self._on_batch_relabel
-        )
-        _btn_batch_rel.pack(side="left", padx=3)
-        self._tooltip(_btn_batch_rel, "Relabel all selected boxes to the chosen type")
         _btn_merge = ttk.Button(batch_frame, text="Merge ⊞", command=self._on_merge)
         _btn_merge.pack(side="left", padx=3)
-        self._tooltip(_btn_merge, "Merge selected boxes into one polygon (M)")
+        self._tooltip(_btn_merge, "Merge selected boxes/words into one detection (M)")
         row += 1
         self._multi_label = ttk.Label(inspector, text="", foreground="blue")
         self._multi_label.grid(row=row, column=0, columnspan=2, sticky="w", padx=4)
@@ -736,12 +720,28 @@ class AnnotationTab:
             self._session_label, "Number of corrections saved in this session"
         )
 
+        # ── Page Elements ─────────────────────────────────────────
         row += 1
-        _btn_save = ttk.Button(
-            inspector, text="Save Session", command=self._on_save_session
+        ttk.Separator(inspector).grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=4
         )
-        _btn_save.grid(row=row, column=0, columnspan=2, padx=4, pady=4)
-        self._tooltip(_btn_save, "Persist all session corrections to the database")
+        row += 1
+        ttk.Label(
+            inspector, text="Page Elements:", font=("TkDefaultFont", 9, "bold")
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=4)
+        row += 1
+        self._page_elements_label = ttk.Label(
+            inspector, text="(no page loaded)", foreground="gray",
+            font=("TkDefaultFont", 8),
+        )
+        self._page_elements_label.grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=8, pady=2
+        )
+        self._add_copy_menu(self._page_elements_label)
+        self._tooltip(
+            self._page_elements_label,
+            "Element types and counts on the current page",
+        )
 
         # ── Model Performance ─────────────────────────────────────
         row += 1
@@ -854,15 +854,18 @@ class AnnotationTab:
         )
         row += 1
         kb_text = (
-            "Shortcuts: A=Accept  D=Delete\n"
+            "Shortcuts: A=Accept  D=Reject\n"
             "R=Relabel  M=Merge\n"
             "Esc=Deselect  ←→ Cycle\n"
             "F=Fit  +/- Zoom  Scroll=Pan\n"
             "Ctrl+Z/Y Undo/Redo\n"
-            "Shift+Click Multi-select\n"
+            "Shift+Click Multi-select boxes\n"
+            "Ctrl+Click Select words\n"
             "Ctrl+A Select all\n"
-            "Ctrl+C Copy box  Ctrl+V Paste\n"
-            "G=Group  Right-click: menu"
+            "Ctrl+C Copy box/word text\n"
+            "Ctrl+V Paste box\n"
+            "G=Group  L=Link Column\n"
+            "W=Words  Right-click: menu"
         )
         ttk.Label(
             inspector, text=kb_text, foreground="gray", font=("TkDefaultFont", 8)
@@ -904,6 +907,7 @@ class AnnotationTab:
         self.root.bind("<Control-c>", self._key_copy_box)
         self.root.bind("<Control-v>", self._key_paste_box)
         self.root.bind("<Key-g>", self._key_group)
+        self.root.bind("<Key-l>", self._key_link_column)
         self.root.bind("<Key-w>", self._key_toggle_words)
 
         # Initialize model status
@@ -937,7 +941,6 @@ class AnnotationTab:
             self._page_spin.configure(to=max(0, self._page_count - 1))
             self._page_count_label.configure(text=f"/ {self._page_count}")
             # Clear prior state
-            self._pipeline_pages.clear()
             self._canvas_boxes.clear()
             self._selected_box = None
             self._multi_selected.clear()
@@ -949,6 +952,15 @@ class AnnotationTab:
             self._page_count = 0
             self._page_count_label.configure(text="/ ?")
             self._page_spin.configure(to=999)
+
+    def _on_run_completed(self) -> None:
+        """Re-load the current page after a pipeline run finishes.
+
+        The pipeline now persists detections to the correction store,
+        so refreshing the page will pick up the fresh results.
+        """
+        if self._pdf_path:
+            self._navigate_to_page()
 
     # ── Mode ───────────────────────────────────────────────────────
 
@@ -1048,475 +1060,18 @@ class AnnotationTab:
             self._register_element_type(name)
             self._status.configure(text=f"Added element type: {name}")
 
-    # ── Pipeline / load ────────────────────────────────────────────
+    def _deduplicate_boxes(self) -> None:
+        """Remove near-duplicate canvas boxes (same type, IoU > 0.8).
 
-    def _on_run_pipeline(self) -> None:
-        """Run the pipeline and load detections onto the canvas."""
-        if not self._pdf_path:
-            messagebox.showwarning("No PDF", "Select a PDF file first.")
-            return
-
-        self._page = self._page_var.get()
-        self._resolution = self._dpi_var.get()
-        self._scale = self._resolution / 72.0
-        self._status.configure(text="Running pipeline…")
-        self._progress_var.set(0)
-        self._progress.grid()
-        self.root.update_idletasks()
-
-        try:
-            from plancheck.pipeline import run_pipeline
-
-            cfg = self.state.config if self.state.config else GroupingConfig()
-            pr = run_pipeline(
-                self._pdf_path, self._page, cfg, resolution=self._resolution
-            )
-        except Exception as exc:
-            messagebox.showerror("Pipeline Error", str(exc))
-            self._status.configure(text="Pipeline failed")
-            self._progress.grid_remove()
-            return
-
-        # Register document
-        self._doc_id = self._store.register_document(self._pdf_path)
-        self._run_id = f"run_{uuid4().hex[:12]}"
-
-        # Set background image from pipeline result
-        self._bg_image = pr.background_image
-        self._render_background()
-
-        # Save detections
-        self._canvas_boxes.clear()
-
-        # Notes-column detections (one box per column: header + all blocks)
-        for nc in pr.notes_columns:
-            bbox = nc.bbox()
-            if bbox == (0, 0, 0, 0):
-                continue
-            header_block = nc.header
-            features = featurize_region(
-                "notes_column",
-                bbox,
-                header_block,
-                pr.page_width,
-                pr.page_height,
-                entry_count=len(nc.notes_blocks),
-            )
-            try:
-                text_content = nc.header_text()
-            except Exception:
-                text_content = ""
-            det_id = self._store.save_detection(
-                doc_id=self._doc_id,
-                page=self._page,
-                run_id=self._run_id,
-                element_type="notes_column",
-                bbox=bbox,
-                text_content=text_content or "",
-                features=features,
-                confidence=None,
-            )
-            self._canvas_boxes.append(
-                CanvasBox(
-                    detection_id=det_id,
-                    element_type="notes_column",
-                    confidence=None,
-                    text_content=text_content or "",
-                    features=features,
-                    pdf_bbox=bbox,
-                )
-            )
-
-        # Block-level detections
-        for block in pr.blocks:
-            lbl = getattr(block, "label", None)
-            if lbl in ("note_column_header", "note_column_subheader"):
-                etype = "header"
-            elif lbl == "notes_block" or getattr(block, "is_notes", False):
-                etype = "notes_block"
-            elif getattr(block, "is_header", False):
-                etype = "header"
-            else:
-                continue  # skip unclassified blocks
-
-            features = featurize(block, pr.page_width, pr.page_height)
-            text = " ".join(b.text for b in block.get_all_boxes())[:500]
-            bbox = block.bbox()
-            if bbox == (0, 0, 0, 0):
-                continue
-
-            det_id = self._store.save_detection(
-                doc_id=self._doc_id,
-                page=self._page,
-                run_id=self._run_id,
-                element_type=etype,
-                bbox=bbox,
-                text_content=text,
-                features=features,
-                confidence=None,
-            )
-            self._canvas_boxes.append(
-                CanvasBox(
-                    detection_id=det_id,
-                    element_type=etype,
-                    confidence=None,
-                    text_content=text,
-                    features=features,
-                    pdf_bbox=bbox,
-                )
-            )
-
-        # Region-level detections
-        region_lists: list[tuple[list, str]] = [
-            (pr.abbreviation_regions, "abbreviations"),
-            (pr.legend_regions, "legend"),
-            (pr.revision_regions, "revision"),
-            (pr.standard_detail_regions, "standard_detail"),
-            (pr.misc_title_regions, "misc_title"),
-        ]
-        for region_list, etype in region_lists:
-            for region in region_list:
-                bbox = region.bbox()
-                if bbox == (0, 0, 0, 0):
-                    continue
-
-                header_block = getattr(region, "header", None)
-                entry_count = len(getattr(region, "entries", []))
-                features = featurize_region(
-                    etype,
-                    bbox,
-                    header_block,
-                    pr.page_width,
-                    pr.page_height,
-                    entry_count=entry_count,
-                )
-
-                # Safe text extraction
-                try:
-                    text_content = region.header_text()
-                except Exception:
-                    text_content = getattr(region, "text", "")
-
-                confidence = getattr(region, "confidence", None)
-
-                det_id = self._store.save_detection(
-                    doc_id=self._doc_id,
-                    page=self._page,
-                    run_id=self._run_id,
-                    element_type=etype,
-                    bbox=bbox,
-                    text_content=text_content or "",
-                    features=features,
-                    confidence=confidence,
-                )
-                self._canvas_boxes.append(
-                    CanvasBox(
-                        detection_id=det_id,
-                        element_type=etype,
-                        confidence=confidence,
-                        text_content=text_content or "",
-                        features=features,
-                        pdf_bbox=bbox,
-                    )
-                )
-
-        # Title blocks (bbox is a field, not a method)
-        for tb in pr.title_blocks:
-            bbox = tb.bbox  # TitleBlockInfo.bbox is a tuple field
-            if bbox == (0, 0, 0, 0):
-                continue
-            features = featurize_region(
-                "title_block",
-                bbox,
-                None,
-                pr.page_width,
-                pr.page_height,
-            )
-            det_id = self._store.save_detection(
-                doc_id=self._doc_id,
-                page=self._page,
-                run_id=self._run_id,
-                element_type="title_block",
-                bbox=bbox,
-                text_content=tb.raw_text[:500] if tb.raw_text else "",
-                features=features,
-                confidence=tb.confidence,
-            )
-            self._canvas_boxes.append(
-                CanvasBox(
-                    detection_id=det_id,
-                    element_type="title_block",
-                    confidence=tb.confidence,
-                    text_content=tb.raw_text[:500] if tb.raw_text else "",
-                    features=features,
-                    pdf_bbox=bbox,
-                )
-            )
-
-        # Apply prior corrections + ML feedback
-        self._apply_prior_corrections()
-
-        # Mark this page as processed
-        self._pipeline_pages.add(self._page)
-
-        # Load any saved groups for this page
-        self._load_groups_for_page()
-
-        # Draw all boxes
-        self._draw_all_boxes()
-        n = len(self._canvas_boxes)
-        corrected = sum(1 for cb in self._canvas_boxes if cb.corrected)
-        page_label = f"page {self._page}"
-        if self._page_count > 0:
-            page_label += f" of {self._page_count}"
-        status = f"Pipeline: {n} detections on {page_label}"
-        if corrected:
-            status += f" ({corrected} with prior corrections applied)"
-        self._status.configure(text=status)
-        self._progress_var.set(100)
-        self._progress.grid_remove()
-
-    def _on_run_all_pages(self) -> None:
-        """Run the pipeline on every page of the current PDF."""
-        if not self._pdf_path:
-            messagebox.showwarning("No PDF", "Select a PDF file first.")
-            return
-        if self._page_count <= 0:
-            messagebox.showwarning("No Pages", "Could not determine page count.")
-            return
-
-        total_detections = 0
-        self._resolution = self._dpi_var.get()
-        self._scale = self._resolution / 72.0
-        self._progress_var.set(0)
-        self._progress.grid()
-
-        for pg in range(self._page_count):
-            pct = (pg / self._page_count) * 100
-            self._progress_var.set(pct)
-            self._status.configure(
-                text=f"Running pipeline on page {pg + 1} of {self._page_count}…"
-            )
-            self.root.update_idletasks()
-
-            try:
-                from plancheck.pipeline import run_pipeline
-
-                cfg = self.state.config if self.state.config else GroupingConfig()
-                pr = run_pipeline(self._pdf_path, pg, cfg, resolution=self._resolution)
-            except Exception as exc:
-                self._status.configure(text=f"Pipeline failed on page {pg}: {exc}")
-                continue
-
-            self._doc_id = self._store.register_document(self._pdf_path)
-            run_id = f"run_{uuid4().hex[:12]}"
-
-            page_count = 0
-
-            # Notes-column detections (one box per column)
-            for nc in pr.notes_columns:
-                bbox = nc.bbox()
-                if bbox == (0, 0, 0, 0):
-                    continue
-                header_block = nc.header
-                features = featurize_region(
-                    "notes_column",
-                    bbox,
-                    header_block,
-                    pr.page_width,
-                    pr.page_height,
-                    entry_count=len(nc.notes_blocks),
-                )
-                try:
-                    text_content = nc.header_text()
-                except Exception:
-                    text_content = ""
-                self._store.save_detection(
-                    doc_id=self._doc_id,
-                    page=pg,
-                    run_id=run_id,
-                    element_type="notes_column",
-                    bbox=bbox,
-                    text_content=text_content or "",
-                    features=features,
-                    confidence=None,
-                )
-                page_count += 1
-
-            # Block-level detections
-            for block in pr.blocks:
-                lbl = getattr(block, "label", None)
-                if lbl in ("note_column_header", "note_column_subheader"):
-                    etype = "header"
-                elif lbl == "notes_block" or getattr(block, "is_notes", False):
-                    etype = "notes_block"
-                elif getattr(block, "is_header", False):
-                    etype = "header"
-                else:
-                    continue
-
-                features = featurize(block, pr.page_width, pr.page_height)
-                text = " ".join(b.text for b in block.get_all_boxes())[:500]
-                bbox = block.bbox()
-                if bbox == (0, 0, 0, 0):
-                    continue
-
-                self._store.save_detection(
-                    doc_id=self._doc_id,
-                    page=pg,
-                    run_id=run_id,
-                    element_type=etype,
-                    bbox=bbox,
-                    text_content=text,
-                    features=features,
-                    confidence=None,
-                )
-                page_count += 1
-
-            # Region-level detections
-            region_lists: list[tuple[list, str]] = [
-                (pr.abbreviation_regions, "abbreviations"),
-                (pr.legend_regions, "legend"),
-                (pr.revision_regions, "revision"),
-                (pr.standard_detail_regions, "standard_detail"),
-                (pr.misc_title_regions, "misc_title"),
-            ]
-            for region_list, etype in region_lists:
-                for region in region_list:
-                    bbox = region.bbox()
-                    if bbox == (0, 0, 0, 0):
-                        continue
-                    header_block = getattr(region, "header", None)
-                    entry_count = len(getattr(region, "entries", []))
-                    features = featurize_region(
-                        etype,
-                        bbox,
-                        header_block,
-                        pr.page_width,
-                        pr.page_height,
-                        entry_count=entry_count,
-                    )
-                    try:
-                        text_content = region.header_text()
-                    except Exception:
-                        text_content = getattr(region, "text", "")
-                    confidence = getattr(region, "confidence", None)
-                    self._store.save_detection(
-                        doc_id=self._doc_id,
-                        page=pg,
-                        run_id=run_id,
-                        element_type=etype,
-                        bbox=bbox,
-                        text_content=text_content or "",
-                        features=features,
-                        confidence=confidence,
-                    )
-                    page_count += 1
-
-            # Title blocks
-            for tb in pr.title_blocks:
-                bbox = tb.bbox
-                if bbox == (0, 0, 0, 0):
-                    continue
-                features = featurize_region(
-                    "title_block",
-                    bbox,
-                    None,
-                    pr.page_width,
-                    pr.page_height,
-                )
-                self._store.save_detection(
-                    doc_id=self._doc_id,
-                    page=pg,
-                    run_id=run_id,
-                    element_type="title_block",
-                    bbox=bbox,
-                    text_content=tb.raw_text[:500] if tb.raw_text else "",
-                    features=features,
-                    confidence=tb.confidence,
-                )
-                page_count += 1
-
-            self._pipeline_pages.add(pg)
-            total_detections += page_count
-
-        # Navigate to current page to show results
-        self._navigate_to_page()
-        self._progress_var.set(100)
-        self._progress.grid_remove()
-        self._status.configure(
-            text=f"Pipeline complete: {total_detections} detections "
-            f"across {self._page_count} pages"
-        )
-
-    def _on_load_detections(self) -> None:
-        """Reload detections from the database for the current page."""
-        if not self._pdf_path:
-            messagebox.showwarning("No PDF", "Select a PDF file first.")
-            return
-
-        self._page = self._page_var.get()
-        self._resolution = self._dpi_var.get()
-        self._scale = self._resolution / 72.0
-        self._doc_id = self._store.register_document(self._pdf_path)
-
-        # Render background
-        from plancheck.ingest.ingest import render_page_image
-
-        self._bg_image = render_page_image(
-            self._pdf_path, self._page, resolution=self._resolution
-        )
-        self._render_background()
-
-        # Load from DB
-        dets = self._store.get_detections_for_page(self._doc_id, self._page)
-        self._canvas_boxes.clear()
-        for d in dets:
-            self._canvas_boxes.append(
-                CanvasBox(
-                    detection_id=d["detection_id"],
-                    element_type=d["element_type"],
-                    confidence=d["confidence"],
-                    text_content=d["text_content"],
-                    features=d["features"],
-                    pdf_bbox=d["bbox"],
-                    polygon=d.get("polygon"),
-                )
-            )
-
-        # Apply any corrections to mark boxes
-        self._apply_prior_corrections()
-
-        # Load any saved groups for this page
-        self._load_groups_for_page()
-
-        self._draw_all_boxes()
-        n = len(self._canvas_boxes)
-        corrected = sum(1 for cb in self._canvas_boxes if cb.corrected)
-        status = f"Loaded {n} detections from DB for page {self._page}"
-        if corrected:
-            status += f" ({corrected} previously corrected)"
-        self._status.configure(text=status)
-
-    def _apply_prior_corrections(self) -> None:
-        """Apply prior corrections from the DB to the current canvas boxes.
-
-        For each prior correction (from earlier annotation sessions):
-        - **relabel/accept**: update the CanvasBox element_type and mark corrected
-        - **reshape**: update element_type + bbox and mark corrected
-        - **delete**: remove the box from the canvas
-
-        Uses IoU-based spatial matching so corrections carry forward
-        even when detection IDs change between pipeline re-runs.
+        When the pipeline produces overlapping detections of the same
+        element_type (e.g. two "header" boxes covering the same area),
+        keep the one with the higher detection_id (most recently saved)
+        and drop the other.
         """
-        if not self._doc_id:
+        if len(self._canvas_boxes) < 2:
             return
 
-        prior = self._store.get_prior_corrections_by_bbox(self._doc_id, self._page)
-        if not prior:
-            return
-
-        def _iou(a, b):
+        def _iou(a: tuple, b: tuple) -> float:
             x0 = max(a[0], b[0])
             y0 = max(a[1], b[1])
             x1 = min(a[2], b[2])
@@ -1527,39 +1082,30 @@ class AnnotationTab:
             union = area_a + area_b - inter
             return inter / union if union > 0 else 0.0
 
-        to_remove: list[CanvasBox] = []
-
-        for corr in prior:
-            orig = corr.get("original_bbox")
-            if not orig or orig == (None, None, None, None):
+        to_remove: set[int] = set()  # indices to remove
+        n = len(self._canvas_boxes)
+        for i in range(n):
+            if i in to_remove:
                 continue
+            a = self._canvas_boxes[i]
+            for j in range(i + 1, n):
+                if j in to_remove:
+                    continue
+                b = self._canvas_boxes[j]
+                if a.element_type != b.element_type:
+                    continue
+                if _iou(a.pdf_bbox, b.pdf_bbox) > 0.8:
+                    # Keep the one with the higher detection_id
+                    if (a.detection_id or 0) >= (b.detection_id or 0):
+                        to_remove.add(j)
+                    else:
+                        to_remove.add(i)
+                        break  # 'a' is removed, stop comparing
 
-            # Find best matching canvas box
-            best_iou = 0.0
-            best_cb: CanvasBox | None = None
-            for cb in self._canvas_boxes:
-                iou = _iou(orig, cb.pdf_bbox)
-                if iou > best_iou:
-                    best_iou = iou
-                    best_cb = cb
-
-            if best_iou < 0.5 or best_cb is None:
-                continue
-
-            ctype = corr["correction_type"]
-            if ctype == "delete":
-                to_remove.append(best_cb)
-            elif ctype in ("relabel", "accept"):
-                best_cb.element_type = corr["corrected_label"]
-                best_cb.corrected = True
-            elif ctype == "reshape":
-                best_cb.element_type = corr["corrected_label"]
-                best_cb.pdf_bbox = corr["corrected_bbox"]
-                best_cb.corrected = True
-
-        for cb in to_remove:
-            if cb in self._canvas_boxes:
-                self._canvas_boxes.remove(cb)
+        if to_remove:
+            self._canvas_boxes = [
+                cb for idx, cb in enumerate(self._canvas_boxes) if idx not in to_remove
+            ]
 
     # ── Rendering ──────────────────────────────────────────────────
 
@@ -1755,6 +1301,34 @@ class AnnotationTab:
 
     # ── Selection ──────────────────────────────────────────────────
 
+    def _on_word_click(self, event: tk.Event) -> str | None:
+        """Handle Ctrl+Click for word overlay selection / lasso."""
+        cx = self._canvas.canvasx(event.x)
+        cy = self._canvas.canvasy(event.y)
+
+        if not (self._word_overlay_on and self._word_overlay_items):
+            # Word overlay not active — fall through to normal click
+            self._on_canvas_click(event)
+            return None
+
+        # Hit-test using PDF coordinates
+        eff = self._effective_scale()
+        pdf_x = cx / eff
+        pdf_y = cy / eff
+        for rid, winfo in self._word_overlay_items.items():
+            if (
+                winfo["x0"] <= pdf_x <= winfo["x1"]
+                and winfo["top"] <= pdf_y <= winfo["bottom"]
+            ):
+                self._toggle_word_selected(rid)
+                return "break"
+
+        # No word hit — start a word-lasso on empty space
+        self._lasso_start = (cx, cy)
+        self._lasso_word = True
+        self._deselect()
+        return "break"
+
     def _on_canvas_click(self, event: tk.Event) -> None:
         """Handle click on canvas — select a box or start drawing."""
         # Get canvas coordinates (accounting for scroll)
@@ -1822,22 +1396,41 @@ class AnnotationTab:
         else:
             if not shift_held:
                 self._clear_multi_select()
+                self._clear_word_selection()
             # Start lasso drag if on empty space in select mode
             self._lasso_start = (cx, cy)
+            self._lasso_word = False
             self._deselect()
 
     # ── Right-click copy / paste ───────────────────────────────────
 
     def _on_canvas_right_click(self, event: tk.Event) -> None:
-        """Show a context menu for Copy Box / Paste Box."""
+        """Show a context menu — word actions if words selected, else box actions."""
         cx = self._canvas.canvasx(event.x)
         cy = self._canvas.canvasy(event.y)
 
-        # Hit-test to see if a box is under the cursor
         eff = self._effective_scale()
         pdf_x = cx / eff
         pdf_y = cy / eff
 
+        # ── If word overlay is active, check for right-click on a word ──
+        if self._word_overlay_on and self._word_overlay_items:
+            for rid, winfo in self._word_overlay_items.items():
+                if (
+                    winfo["x0"] <= pdf_x <= winfo["x1"]
+                    and winfo["top"] <= pdf_y <= winfo["bottom"]
+                ):
+                    # Auto-select the word under cursor if not already
+                    if rid not in self._selected_word_rids:
+                        self._set_word_selected(rid, True)
+                    break
+
+        # ── Word context menu ──────────────────────────────────────
+        if self._selected_word_rids:
+            self._show_word_context_menu(event, pdf_x, pdf_y)
+            return
+
+        # ── Detection box context menu (original) ─────────────────
         clicked: CanvasBox | None = None
         for cbox in reversed(self._canvas_boxes):
             if (
@@ -1868,6 +1461,23 @@ class AnnotationTab:
                 command=lambda: self._paste_box(pdf_x, pdf_y),
             )
 
+        # ── Link to notes column ──────────────────────────────────
+        n_multi = len(self._multi_selected)
+        if clicked and clicked not in self._multi_selected:
+            n_multi += 1
+        if n_multi >= 2:
+            # Check if selection contains linkable types
+            link_targets = list(self._multi_selected)
+            if clicked and clicked not in link_targets:
+                link_targets.append(clicked)
+            linkable_types = {"header", "notes_block"}
+            if any(cb.element_type in linkable_types for cb in link_targets):
+                menu.add_separator()
+                menu.add_command(
+                    label="Create Notes Column from Selection (L)",
+                    command=self._on_link_column,
+                )
+
         # ── Group actions ──────────────────────────────────────────
         has_group_items = False
         if clicked:
@@ -1878,9 +1488,6 @@ class AnnotationTab:
                     command=lambda: self._create_group(clicked),
                 )
                 has_group_items = True
-                # If the currently selected box is a group root and
-                # this clicked box is different and ungrouped, offer
-                # "Add to Group"
                 if (
                     self._selected_box
                     and self._selected_box.is_group_root
@@ -1905,6 +1512,110 @@ class AnnotationTab:
             menu.tk_popup(event.x_root, event.y_root)
         else:
             menu.destroy()
+
+    def _show_word_context_menu(
+        self, event: tk.Event, pdf_x: float, pdf_y: float
+    ) -> None:
+        """Show context menu with all actions for selected words."""
+        n = len(self._selected_word_rids)
+        # Gather selected word texts
+        texts: list[str] = []
+        for rid in self._selected_word_rids:
+            winfo = self._word_overlay_items.get(rid)
+            if winfo and winfo.get("text"):
+                texts.append(winfo["text"])
+        preview = " ".join(texts)
+        if len(preview) > 50:
+            preview = preview[:47] + "..."
+
+        menu = tk.Menu(self._canvas, tearoff=0)
+
+        # ── Header ─────────────────────────────────────────────────
+        menu.add_command(
+            label=f"{n} word{'s' if n != 1 else ''} selected",
+            state="disabled",
+        )
+        if preview:
+            menu.add_command(
+                label=f'"{preview}"',
+                state="disabled",
+            )
+        menu.add_separator()
+
+        # ── Copy text ──────────────────────────────────────────────
+        def _copy_word_text():
+            if texts:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(" ".join(texts))
+                self._status.configure(text=f"Copied text from {len(texts)} words")
+
+        menu.add_command(label="Copy Text  (Ctrl+C)", command=_copy_word_text)
+
+        # ── Merge / Create Detection ──────────────────────────────
+        if n >= 2:
+            if self._selected_box:
+                menu.add_command(
+                    label=f"Reshape \u2039{self._selected_box.element_type}\u203a to Words  (M)",
+                    command=self._merge_words_into_detection,
+                )
+            else:
+                menu.add_command(
+                    label="Create Detection from Words  (M)",
+                    command=self._merge_words_into_detection,
+                )
+
+            menu.add_separator()
+
+            # ── Create as specific type ─────────────────────────
+            type_menu = tk.Menu(menu, tearoff=0)
+            for etype in self.ELEMENT_TYPES:
+                color = self.LABEL_COLORS.get(etype, "#888")
+                type_menu.add_command(
+                    label=etype,
+                    command=lambda t=etype: self._create_words_as_type(t),
+                )
+            menu.add_cascade(label="Create as Type \u25b6", menu=type_menu)
+
+        # ── Group from words ──────────────────────────────────────
+        if n >= 2:
+            menu.add_separator()
+            menu.add_command(
+                label="Group Words  (G)",
+                command=lambda: self._key_group(
+                    type("E", (), {"widget": self._canvas, "state": 0})()
+                ),
+            )
+
+        # ── Select controls ──────────────────────────────────────
+        menu.add_separator()
+        menu.add_command(
+            label="Select All Words",
+            command=self._select_all_words,
+        )
+        menu.add_command(
+            label="Clear Selection",
+            command=self._clear_word_selection,
+        )
+
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _create_words_as_type(self, element_type: str) -> None:
+        """Create a new detection from selected words with a specific type."""
+        old_type = self._type_var.get()
+        self._type_var.set(element_type)
+        self._merge_words_into_detection()
+        self._type_var.set(old_type)
+
+    def _select_all_words(self) -> None:
+        """Select every word in the overlay."""
+        if not self._word_overlay_items:
+            return
+        for rid in self._word_overlay_items:
+            if rid not in self._selected_word_rids:
+                self._set_word_selected(rid, True)
+        self._status.configure(
+            text=f"Selected all {len(self._selected_word_rids)} words"
+        )
 
     def _copy_box(self, cbox: CanvasBox) -> None:
         """Copy box dimensions and type to the internal clipboard."""
@@ -1982,16 +1693,33 @@ class AnnotationTab:
         self._select_box(cbox)
         self._session_count += 1
         self._update_session_label()
+        self._update_page_summary()
         n_chars = len(text_content)
         self._status.configure(
             text=f"Pasted {chosen_type} detection ({n_chars} chars extracted)"
         )
 
     def _key_copy_box(self, event: tk.Event) -> None:
-        """Ctrl+C — copy the selected box (only when focus is not in a text widget)."""
+        """Ctrl+C — copy selected words' text, or the selected box."""
         if isinstance(event.widget, (tk.Entry, tk.Text, ttk.Entry, ttk.Spinbox)):
             return  # let native copy handle it
-        if self._is_active_tab() and self._selected_box:
+        if not self._is_active_tab():
+            return
+        # If words are selected, copy their text to clipboard
+        if self._selected_word_rids and self._word_overlay_items:
+            texts = []
+            for rid in self._selected_word_rids:
+                winfo = self._word_overlay_items.get(rid)
+                if winfo and winfo.get("text"):
+                    texts.append(winfo["text"])
+            if texts:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(" ".join(texts))
+                self._status.configure(
+                    text=f"Copied text from {len(texts)} words to clipboard"
+                )
+                return
+        if self._selected_box:
             self._copy_box(self._selected_box)
 
     def _key_paste_box(self, event: tk.Event) -> None:
@@ -2618,6 +2346,7 @@ class AnnotationTab:
         self._select_box(cbox)
         self._session_count += 1
         self._update_session_label()
+        self._update_page_summary()
         n_chars = len(text_content)
         self._status.configure(
             text=f"Added {chosen_type} detection ({n_chars} chars extracted)"
@@ -2656,104 +2385,124 @@ class AnnotationTab:
         )
 
     def _on_accept(self) -> None:
-        if not self._selected_box or not self._doc_id:
+        # Batch-aware: apply to all multi-selected + selected box
+        targets = list(self._multi_selected)
+        if self._selected_box and self._selected_box not in targets:
+            targets.append(self._selected_box)
+        if not targets or not self._doc_id:
             self._status.configure(text="No box selected")
             return
 
-        cbox = self._selected_box
-        self._push_undo("accept", cbox)
-        self._store.accept_detection(cbox.detection_id, self._doc_id, self._page)
-        cbox.corrected = True
-        self._session_count += 1
+        for cbox in targets:
+            self._push_undo("accept", cbox)
+            self._store.accept_detection(cbox.detection_id, self._doc_id, self._page)
+            cbox.corrected = True
+            self._session_count += 1
+            self._draw_box(cbox)
+
         self._update_session_label()
-        self._draw_box(cbox)
-        self._status.configure(
-            text=f"Accepted {cbox.element_type} ({cbox.detection_id})"
-        )
+        self._clear_multi_select()
+        self._status.configure(text=f"Accepted {len(targets)} box(es)")
 
     def _on_relabel(self) -> None:
-        if not self._selected_box or not self._doc_id:
+        # Batch-aware: apply to all multi-selected + selected box
+        targets = list(self._multi_selected)
+        if self._selected_box and self._selected_box not in targets:
+            targets.append(self._selected_box)
+        if not targets or not self._doc_id:
             self._status.configure(text="No box selected")
             return
 
-        cbox = self._selected_box
         new_label = self._type_var.get()
         if not new_label:
             return
 
-        if new_label == cbox.element_type:
-            # No change — treat as accept
-            self._on_accept()
-            return
+        count = 0
+        for cbox in targets:
+            if new_label == cbox.element_type:
+                # No change — treat as accept for this box
+                self._push_undo("accept", cbox)
+                self._store.accept_detection(
+                    cbox.detection_id, self._doc_id, self._page
+                )
+                cbox.corrected = True
+                self._session_count += 1
+                self._draw_box(cbox)
+                continue
 
-        self._push_undo("relabel", cbox, extra={"old_label": cbox.element_type})
-        self._store.save_correction(
-            doc_id=self._doc_id,
-            page=self._page,
-            correction_type="relabel",
-            corrected_label=new_label,
-            corrected_bbox=cbox.pdf_bbox,
-            detection_id=cbox.detection_id,
-            original_label=cbox.element_type,
-            original_bbox=cbox.pdf_bbox,
-            session_id=self._session_id,
-        )
-        old_label = cbox.element_type
-        cbox.element_type = new_label
-        cbox.corrected = True
-        self._session_count += 1
+            self._push_undo("relabel", cbox, extra={"old_label": cbox.element_type})
+            self._store.save_correction(
+                doc_id=self._doc_id,
+                page=self._page,
+                correction_type="relabel",
+                corrected_label=new_label,
+                corrected_bbox=cbox.pdf_bbox,
+                detection_id=cbox.detection_id,
+                original_label=cbox.element_type,
+                original_bbox=cbox.pdf_bbox,
+                session_id=self._session_id,
+            )
+            cbox.element_type = new_label
+            cbox.corrected = True
+            self._session_count += 1
+            self._draw_box(cbox)
+            count += 1
+
         self._update_session_label()
-        self._draw_box(cbox)
-        self._status.configure(text=f"Relabelled {old_label} → {new_label}")
+        self._update_page_summary()
+        self._clear_multi_select()
+        self._status.configure(text=f"Relabelled {count} box(es) → {new_label}")
 
     def _on_delete(self) -> None:
-        if not self._selected_box or not self._doc_id:
+        # Batch-aware: apply to all multi-selected + selected box
+        targets = list(self._multi_selected)
+        if self._selected_box and self._selected_box not in targets:
+            targets.append(self._selected_box)
+        if not targets or not self._doc_id:
             self._status.configure(text="No box selected")
             return
 
-        if not messagebox.askyesno(
-            "Delete Detection",
-            "Mark this detection as a false positive?",
-        ):
+        n = len(targets)
+        msg = (
+            "Mark this detection as a false positive?"
+            if n == 1
+            else f"Reject {n} selected detections?"
+        )
+        if not messagebox.askyesno("Reject Detection", msg):
             return
 
-        cbox = self._selected_box
-        self._push_undo("delete", cbox)
-        self._store.save_correction(
-            doc_id=self._doc_id,
-            page=self._page,
-            correction_type="delete",
-            corrected_label=cbox.element_type,
-            corrected_bbox=cbox.pdf_bbox,
-            detection_id=cbox.detection_id,
-            original_label=cbox.element_type,
-            original_bbox=cbox.pdf_bbox,
-            session_id=self._session_id,
-        )
+        for cbox in targets:
+            self._push_undo("delete", cbox)
+            self._store.save_correction(
+                doc_id=self._doc_id,
+                page=self._page,
+                correction_type="delete",
+                corrected_label=cbox.element_type,
+                corrected_bbox=cbox.pdf_bbox,
+                detection_id=cbox.detection_id,
+                original_label=cbox.element_type,
+                original_bbox=cbox.pdf_bbox,
+                session_id=self._session_id,
+            )
 
-        # Remove from canvas
-        if cbox.rect_id:
-            self._canvas.delete(cbox.rect_id)
-        if cbox.label_id:
-            self._canvas.delete(cbox.label_id)
-        for hid in cbox.handle_ids:
-            self._canvas.delete(hid)
-        self._canvas_boxes.remove(cbox)
+            # Remove from canvas
+            if cbox.rect_id:
+                self._canvas.delete(cbox.rect_id)
+            if cbox.label_id:
+                self._canvas.delete(cbox.label_id)
+            for hid in cbox.handle_ids:
+                self._canvas.delete(hid)
+            if cbox in self._canvas_boxes:
+                self._canvas_boxes.remove(cbox)
+            self._session_count += 1
+
         self._selected_box = None
+        self._multi_selected.clear()
         self._deselect()
-
-        self._session_count += 1
+        self._update_multi_label()
         self._update_session_label()
-        self._status.configure(text=f"Deleted {cbox.element_type}")
-
-    def _on_save_session(self) -> None:
-        messagebox.showinfo(
-            "Session Saved",
-            f"Session complete. {self._session_count} corrections saved.",
-        )
-        self._session_id = uuid4().hex[:8]
-        self._session_count = 0
-        self._update_session_label()
+        self._update_page_summary()
+        self._status.configure(text=f"Rejected {n} detection(s)")
 
     def _update_session_label(self) -> None:
         self._session_label.configure(text=f"Session: {self._session_count} saved")
@@ -2870,6 +2619,14 @@ class AnnotationTab:
                 tags="word_overlay",
             )
             self._word_overlay_ids.append(rid)
+            # Store word metadata keyed by canvas item id for hit-testing
+            self._word_overlay_items[rid] = {
+                "x0": w["x0"],
+                "top": w["top"],
+                "x1": w["x1"],
+                "bottom": w["bottom"],
+                "text": w.get("text", ""),
+            }
 
         n = len(words)
         self._status.configure(text=f"Word overlay: {n} words on page {self._page}")
@@ -2878,6 +2635,8 @@ class AnnotationTab:
         """Remove all word overlay rectangles from the canvas."""
         self._canvas.delete("word_overlay")
         self._word_overlay_ids.clear()
+        self._word_overlay_items.clear()
+        self._selected_word_rids.clear()
 
     # ── Keyboard shortcuts ─────────────────────────────────────────
 
@@ -2999,6 +2758,9 @@ class AnnotationTab:
             if orig:
                 target.pdf_bbox = orig
                 target.corrected = rec.get("corrected", False)
+                # Restore polygon if the undo record saved one
+                if "orig_polygon" in rec:
+                    target.polygon = rec["orig_polygon"]
                 self._draw_box(target)
             self._status.configure(text="Undo reshape")
         elif action == "delete":
@@ -3014,7 +2776,7 @@ class AnnotationTab:
             )
             self._canvas_boxes.append(cbox)
             self._draw_box(cbox)
-            self._status.configure(text="Undo delete")
+            self._status.configure(text="Undo reject")
         elif action == "accept" and target:
             target.corrected = rec.get("corrected", False)
             self._draw_box(target)
@@ -3049,6 +2811,7 @@ class AnnotationTab:
             )
         else:
             self._status.configure(text="Undo (no visual change)")
+        self._update_page_summary()
 
     def _redo(self) -> None:
         """Redo the last undone action."""
@@ -3076,6 +2839,9 @@ class AnnotationTab:
         elif action == "reshape" and target:
             target.pdf_bbox = rec["pdf_bbox"]
             target.corrected = True
+            # If undo record has orig_polygon, redo clears it (word-merge reshape)
+            if "orig_polygon" in rec:
+                target.polygon = None
             self._draw_box(target)
             self._status.configure(text="Redo reshape")
         elif action == "delete" and target:
@@ -3088,13 +2854,14 @@ class AnnotationTab:
             self._canvas_boxes.remove(target)
             if self._selected_box is target:
                 self._deselect()
-            self._status.configure(text="Redo delete")
+            self._status.configure(text="Redo reject")
         elif action == "accept" and target:
             target.corrected = True
             self._draw_box(target)
             self._status.configure(text="Redo accept")
         else:
             self._status.configure(text="Redo (no visual change)")
+        self._update_page_summary()
 
     def _key_undo(self, event: tk.Event) -> None:
         if self._is_active_tab():
@@ -3133,8 +2900,40 @@ class AnnotationTab:
         else:
             self._multi_label.configure(text="")
 
+    # ── Word-box selection helpers ──────────────────────────────────
+
+    def _set_word_selected(self, rid: int, selected: bool) -> None:
+        """Highlight or un-highlight a single word overlay rectangle."""
+        if selected:
+            self._selected_word_rids.add(rid)
+            self._canvas.itemconfigure(rid, outline="#00bfff", width=2)
+        else:
+            self._selected_word_rids.discard(rid)
+            self._canvas.itemconfigure(rid, outline="#b0b0b0", width=1)
+
+    def _toggle_word_selected(self, rid: int) -> None:
+        """Toggle a word rectangle's selection state."""
+        if rid in self._selected_word_rids:
+            self._set_word_selected(rid, False)
+        else:
+            self._set_word_selected(rid, True)
+        self._update_word_selection_label()
+
+    def _clear_word_selection(self) -> None:
+        """Deselect all word overlay rectangles."""
+        for rid in list(self._selected_word_rids):
+            self._set_word_selected(rid, False)
+        self._selected_word_rids.clear()
+        self._update_word_selection_label()
+
+    def _update_word_selection_label(self) -> None:
+        """Update the status bar with word selection count."""
+        n = len(self._selected_word_rids)
+        if n > 0:
+            self._status.configure(text=f"{n} word(s) selected")
+
     def _key_select_all(self, event: tk.Event) -> None:
-        """Ctrl+A — select all visible boxes."""
+        """Ctrl+A — select all visible boxes (and all words if overlay is on)."""
         if not self._is_active_tab():
             return
         if isinstance(event.widget, (tk.Entry, tk.Text, ttk.Entry, ttk.Spinbox)):
@@ -3148,70 +2947,18 @@ class AnnotationTab:
         self._update_multi_label()
         self._status.configure(text=f"Selected {len(self._multi_selected)} boxes")
 
-    # ── Batch operations ───────────────────────────────────────────
-
-    def _on_batch_accept(self) -> None:
-        """Accept all multi-selected boxes at once."""
-        targets = list(self._multi_selected)
-        if self._selected_box and self._selected_box not in targets:
-            targets.append(self._selected_box)
-        if not targets or not self._doc_id:
-            self._status.configure(text="No boxes selected for batch accept")
-            return
-
-        for cb in targets:
-            self._store.accept_detection(cb.detection_id, self._doc_id, self._page)
-            cb.corrected = True
-            self._session_count += 1
-            self._draw_box(cb)
-
-        self._update_session_label()
-        self._clear_multi_select()
-        self._status.configure(text=f"Batch accepted {len(targets)} boxes")
-
-    def _on_batch_relabel(self) -> None:
-        """Relabel all multi-selected boxes to the type chosen in the combo."""
-        targets = list(self._multi_selected)
-        if self._selected_box and self._selected_box not in targets:
-            targets.append(self._selected_box)
-        if not targets or not self._doc_id:
-            self._status.configure(text="No boxes selected for batch relabel")
-            return
-
-        new_label = self._type_var.get()
-        if not new_label:
-            messagebox.showwarning("No Type", "Select a target element type first.")
-            return
-
-        for cb in targets:
-            if cb.element_type == new_label:
-                continue
-            self._store.save_correction(
-                doc_id=self._doc_id,
-                page=self._page,
-                correction_type="relabel",
-                corrected_label=new_label,
-                corrected_bbox=cb.pdf_bbox,
-                detection_id=cb.detection_id,
-                original_label=cb.element_type,
-                original_bbox=cb.pdf_bbox,
-                session_id=self._session_id,
-            )
-            cb.element_type = new_label
-            cb.corrected = True
-            self._session_count += 1
-            self._draw_box(cb)
-
-        self._update_session_label()
-        self._clear_multi_select()
-        self._status.configure(
-            text=f"Batch relabelled {len(targets)} boxes → {new_label}"
-        )
-
     # ── Merge ──────────────────────────────────────────────────────
 
     def _on_merge(self) -> None:
-        """Merge multi-selected overlapping boxes into a single polygon shape."""
+        """Merge multi-selected overlapping boxes, or reshape a detection to
+        the enclosing bbox of selected word-overlay rectangles."""
+
+        # ── Word-merge path: reshape selected detection to word bbox ──
+        if len(self._selected_word_rids) >= 2:
+            self._merge_words_into_detection()
+            return
+
+        # ── Original detection-merge path ─────────────────────────────
         targets = list(self._multi_selected)
         if self._selected_box and self._selected_box not in targets:
             targets.append(self._selected_box)
@@ -3356,19 +3103,187 @@ class AnnotationTab:
         self._draw_box(survivor)
 
         self._update_session_label()
+        self._update_page_summary()
         self._status.configure(
             text=f"Merged {len(targets)} boxes → {merged_type} (polygon with {len(merged_poly)} vertices)"
         )
+
+    def _merge_words_into_detection(self) -> None:
+        """Reshape the currently selected detection to the enclosing bbox
+        of the selected word-overlay rectangles, or create a new detection
+        if no detection box is selected.  When multiple words are selected
+        the result is a *union polygon* (via Shapely) so the outline hugs
+        the words tightly — important when nearby elements are close."""
+        if not self._doc_id:
+            self._status.configure(text="No document loaded")
+            return
+
+        # Collect per-word bboxes (PDF coords)
+        word_bboxes: list[tuple[float, float, float, float]] = []
+        texts: list[str] = []
+        for rid in self._selected_word_rids:
+            winfo = self._word_overlay_items.get(rid)
+            if not winfo:
+                continue
+            word_bboxes.append(
+                (winfo["x0"], winfo["top"], winfo["x1"], winfo["bottom"])
+            )
+            if winfo.get("text"):
+                texts.append(winfo["text"])
+
+        if not word_bboxes:
+            self._status.configure(text="No valid words selected")
+            return
+
+        # Compute union polygon from the word bboxes
+        merged_poly: list[tuple[float, float]] | None = None
+        if len(word_bboxes) >= 2:
+            try:
+                merged_poly = merge_boxes(word_bboxes)
+            except Exception:
+                merged_poly = None
+        new_bbox = (
+            polygon_bbox(merged_poly)
+            if merged_poly
+            else (
+                min(b[0] for b in word_bboxes),
+                min(b[1] for b in word_bboxes),
+                max(b[2] for b in word_bboxes),
+                max(b[3] for b in word_bboxes),
+            )
+        )
+
+        # Re-extract text using the polygon or bbox for precision
+        if self._pdf_path and merged_poly:
+            merged_text = extract_text_in_polygon(
+                self._pdf_path, self._page, merged_poly
+            )
+        elif self._pdf_path:
+            merged_text = extract_text_in_bbox(self._pdf_path, self._page, new_bbox)
+        else:
+            merged_text = " ".join(texts)
+
+        n_words = len(word_bboxes)
+
+        if self._selected_box:
+            # ── Reshape existing detection ───────────────────────
+            cbox = self._selected_box
+            orig_bbox = cbox.pdf_bbox
+            orig_polygon = list(cbox.polygon) if cbox.polygon else None
+
+            self._push_undo(
+                "reshape",
+                cbox,
+                extra={"orig_bbox": orig_bbox, "orig_polygon": orig_polygon},
+            )
+
+            self._store.save_correction(
+                doc_id=self._doc_id,
+                page=self._page,
+                correction_type="reshape",
+                corrected_label=cbox.element_type,
+                corrected_bbox=new_bbox,
+                detection_id=cbox.detection_id,
+                original_label=cbox.element_type,
+                original_bbox=orig_bbox,
+                corrected_text=merged_text,
+                session_id=self._session_id,
+            )
+
+            cbox.pdf_bbox = new_bbox
+            cbox.polygon = merged_poly
+            cbox.text_content = merged_text
+            cbox.corrected = True
+            self._session_count += 1
+
+            self._store.update_detection_polygon(
+                cbox.detection_id, merged_poly, new_bbox
+            )
+
+            self._draw_box(cbox)
+            self._clear_word_selection()
+            self._update_session_label()
+            self._update_page_summary()
+            poly_info = f" (polygon {len(merged_poly)} pts)" if merged_poly else ""
+            self._status.configure(
+                text=f"Reshaped {cbox.element_type} to enclose {n_words} words{poly_info}"
+            )
+        else:
+            # ── Create new detection from words ──────────────────
+            # Auto-label via classifier if possible
+            features = featurize_region("misc_title", new_bbox, None, 2448.0, 1584.0)
+            chosen_type = self._type_var.get() or "misc_title"
+            if features and self._classifier.model_exists():
+                try:
+                    pred_label, pred_conf = self._classifier.predict(features)
+                    if pred_conf and pred_conf > 0.5:
+                        chosen_type = pred_label
+                except Exception:
+                    pass
+
+            det_id = self._store.save_detection(
+                doc_id=self._doc_id,
+                page=self._page,
+                run_id=self._run_id or "manual",
+                element_type=chosen_type,
+                bbox=new_bbox,
+                text_content=merged_text,
+                features=features,
+            )
+            self._store.save_correction(
+                doc_id=self._doc_id,
+                page=self._page,
+                correction_type="add",
+                corrected_label=chosen_type,
+                corrected_bbox=new_bbox,
+                detection_id=det_id,
+                session_id=self._session_id,
+            )
+
+            cbox = CanvasBox(
+                detection_id=det_id,
+                element_type=chosen_type,
+                confidence=None,
+                text_content=merged_text,
+                features=features,
+                pdf_bbox=new_bbox,
+                polygon=merged_poly,
+                corrected=True,
+            )
+            # Persist polygon so it roundtrips on reload
+            if merged_poly:
+                self._store.update_detection_polygon(det_id, merged_poly, new_bbox)
+            self._canvas_boxes.append(cbox)
+            self._draw_box(cbox)
+            self._select_box(cbox)
+            self._session_count += 1
+            self._update_session_label()
+            self._update_page_summary()
+            self._clear_word_selection()
+            poly_info = f" (polygon {len(merged_poly)} pts)" if merged_poly else ""
+            self._status.configure(
+                text=f"Created {chosen_type} from {n_words} words{poly_info}"
+            )
 
     def _key_merge(self, event: tk.Event) -> None:
         """Keyboard shortcut M for merge."""
         self._on_merge()
 
     def _key_group(self, event: tk.Event) -> None:
-        """Keyboard shortcut G for group creation."""
+        """Keyboard shortcut G for group creation.  Works with a selected
+        detection box *or* with selected word boxes (creates a detection first)."""
         if isinstance(event.widget, (tk.Entry, tk.Text, ttk.Entry, ttk.Spinbox)):
             return
-        if not self._is_active_tab() or not self._selected_box:
+        if not self._is_active_tab():
+            return
+
+        # If words are selected, create a detection from them first
+        if len(self._selected_word_rids) >= 2 and not self._selected_box:
+            self._merge_words_into_detection()
+            # _merge_words_into_detection selects the new box if created
+
+        if not self._selected_box:
+            self._status.configure(text="Select a box or Alt-click words first")
             return
         if self._selected_box.group_id:
             grp = self._groups.get(self._selected_box.group_id, {})
@@ -3376,6 +3291,136 @@ class AnnotationTab:
             self._status.configure(text=f"Already in group \u2039{label}\u203a")
         else:
             self._create_group(self._selected_box)
+
+    def _key_link_column(self, event: tk.Event) -> None:
+        """Keyboard shortcut L — create a notes_column from selected boxes."""
+        if isinstance(event.widget, (tk.Entry, tk.Text, ttk.Entry, ttk.Spinbox)):
+            return
+        if not self._is_active_tab():
+            return
+        self._on_link_column()
+
+    def _on_link_column(self) -> None:
+        """Create a notes_column detection that encloses the selected
+        header / notes_block boxes, then group them under it."""
+        if not self._doc_id:
+            return
+
+        # ── Collect targets ────────────────────────────────────────
+        targets = list(self._multi_selected)
+        if self._selected_box and self._selected_box not in targets:
+            targets.append(self._selected_box)
+
+        if len(targets) < 2:
+            self._status.configure(
+                text="Shift+click ≥2 headers / notes blocks, then press L"
+            )
+            return
+
+        # ── Validate types ─────────────────────────────────────────
+        linkable_types = {"header", "notes_block"}
+        non_linkable = [cb for cb in targets if cb.element_type not in linkable_types]
+        if non_linkable:
+            bad = ", ".join(sorted({cb.element_type for cb in non_linkable}))
+            messagebox.showwarning(
+                "Invalid Selection",
+                f"Only header and notes_block boxes can be linked "
+                f"into a notes column.\n\nFound: {bad}",
+            )
+            return
+
+        # ── Reject boxes already in a group ────────────────────────
+        already_grouped = [cb for cb in targets if cb.group_id]
+        if already_grouped:
+            self._status.configure(
+                text=f"{len(already_grouped)} box(es) already in a group"
+            )
+            return
+
+        # ── Compute tight enclosing bbox ───────────────────────────
+        x0 = min(cb.pdf_bbox[0] for cb in targets)
+        y0 = min(cb.pdf_bbox[1] for cb in targets)
+        x1 = max(cb.pdf_bbox[2] for cb in targets)
+        y1 = max(cb.pdf_bbox[3] for cb in targets)
+        col_bbox = (x0, y0, x1, y1)
+
+        # ── Extract text from the region ───────────────────────────
+        text_content = ""
+        if self._pdf_path:
+            text_content = extract_text_in_bbox(self._pdf_path, self._page, col_bbox)
+
+        # ── Create the notes_column detection ──────────────────────
+        features = featurize_region("notes_column", col_bbox, None, 2448.0, 1584.0)
+        det_id = self._store.save_detection(
+            doc_id=self._doc_id,
+            page=self._page,
+            run_id=self._run_id or "manual",
+            element_type="notes_column",
+            bbox=col_bbox,
+            text_content=text_content,
+            features=features,
+        )
+        self._store.save_correction(
+            doc_id=self._doc_id,
+            page=self._page,
+            correction_type="add",
+            corrected_label="notes_column",
+            corrected_bbox=col_bbox,
+            detection_id=det_id,
+            session_id=self._session_id,
+        )
+
+        col_box = CanvasBox(
+            detection_id=det_id,
+            element_type="notes_column",
+            confidence=None,
+            text_content=text_content,
+            features=features,
+            pdf_bbox=col_bbox,
+            corrected=True,
+        )
+        self._canvas_boxes.append(col_box)
+        self._draw_box(col_box)
+
+        # Push notes_column rect behind children so they stay clickable
+        if col_box.rect_id:
+            self._canvas.tag_lower(col_box.rect_id, "det_box")
+
+        # ── Group: notes_column = root, children = members ─────────
+        group_id = self._store.create_group(
+            doc_id=self._doc_id,
+            page=self._page,
+            group_label="notes_column",
+            root_detection_id=det_id,
+        )
+        col_box.group_id = group_id
+        col_box.is_group_root = True
+        self._groups[group_id] = {
+            "label": "notes_column",
+            "root_detection_id": det_id,
+            "members": [det_id],
+        }
+
+        # Sort children top-to-bottom
+        targets.sort(key=lambda cb: cb.pdf_bbox[1])
+        grp = self._groups[group_id]
+        for i, cb in enumerate(targets, start=1):
+            self._store.add_to_group(group_id, cb.detection_id, sort_order=i)
+            cb.group_id = group_id
+            cb.is_group_root = False
+            grp["members"].append(cb.detection_id)
+            self._draw_box(cb)
+
+        self._draw_group_links(group_id)
+
+        # ── Bookkeeping ────────────────────────────────────────────
+        self._session_count += 1
+        self._update_session_label()
+        self._update_page_summary()
+        self._clear_multi_select()
+        self._select_box(col_box)
+        n_children = len(targets)
+        self._status.configure(text=f"Created notes_column from {n_children} boxes")
 
     def _key_toggle_words(self, event: tk.Event) -> None:
         """Keyboard shortcut W for toggling word overlay."""
@@ -3421,7 +3466,28 @@ class AnnotationTab:
                     self._draw_box(cb)
 
         self._update_multi_label()
-        self._status.configure(text=f"Lasso selected {len(self._multi_selected)} boxes")
+
+        # ── Alt-lasso also selects word overlay boxes ───────────
+        word_count = 0
+        if self._lasso_word and self._word_overlay_on and self._word_overlay_items:
+            for rid, winfo in self._word_overlay_items.items():
+                wx0, wy0 = winfo["x0"], winfo["top"]
+                wx1, wy1 = winfo["x1"], winfo["bottom"]
+                if wx0 < lx1 and wx1 > lx0 and wy0 < ly1 and wy1 > ly0:
+                    if rid not in self._selected_word_rids:
+                        self._set_word_selected(rid, True)
+                    word_count += 1
+
+        self._lasso_word = False
+
+        parts = []
+        if self._multi_selected:
+            parts.append(f"{len(self._multi_selected)} boxes")
+        if word_count or self._selected_word_rids:
+            parts.append(f"{len(self._selected_word_rids)} words")
+        self._status.configure(
+            text=f"Lasso selected {', '.join(parts) if parts else '0 items'}"
+        )
 
     # ── Filters ────────────────────────────────────────────────────
 
@@ -3551,9 +3617,9 @@ class AnnotationTab:
             self._status.configure(text=f"Error rendering page: {exc}")
             return
 
-        # Load existing detections from DB (if any)
+        # Load detections from latest pipeline run only
         self._doc_id = self._store.register_document(self._pdf_path)
-        dets = self._store.get_detections_for_page(self._doc_id, self._page)
+        dets = self._store.get_latest_detections_for_page(self._doc_id, self._page)
         self._canvas_boxes.clear()
         self._selected_box = None
         self._multi_selected.clear()
@@ -3571,27 +3637,41 @@ class AnnotationTab:
                 )
             )
 
-        # Apply any corrections
-        self._apply_prior_corrections()
-        self._draw_all_boxes()
+        # Deduplicate overlapping same-type boxes
+        self._deduplicate_boxes()
 
-        # Build informative status
+        # Load any saved groups for this page
+        self._load_groups_for_page()
+
+        self._draw_all_boxes()
         n = len(self._canvas_boxes)
-        corrected = sum(1 for cb in self._canvas_boxes if cb.corrected)
         page_label = f"Page {self._page}"
         if self._page_count > 0:
             page_label += f" of {self._page_count}"
-
         if n > 0:
-            status = f"{page_label} — {n} detections"
-            if corrected:
-                status += f" ({corrected} corrected)"
-        elif self._page in self._pipeline_pages:
-            status = f"{page_label} — pipeline ran, no detections found"
+            self._status.configure(text=f"{page_label} — {n} detections")
         else:
-            status = f"{page_label} — click 'Run Pipeline' to detect boxes"
+            self._status.configure(text=f"{page_label} — ready for annotation")
+        self._update_page_summary()
 
-        self._status.configure(text=status)
+    # ── Page element summary ───────────────────────────────────────
+
+    def _update_page_summary(self) -> None:
+        """Refresh the per-page element type summary in the sidebar."""
+        if not self._canvas_boxes:
+            self._page_elements_label.configure(
+                text="(no detections)", foreground="gray"
+            )
+            return
+        counts = Counter(cb.element_type for cb in self._canvas_boxes)
+        total = sum(counts.values())
+        lines = [f"Total: {total}"]
+        for etype, n in counts.most_common():
+            color = self.LABEL_COLORS.get(etype, "#888888")
+            lines.append(f"  {etype}: {n}")
+        self._page_elements_label.configure(
+            text="\n".join(lines), foreground="#222222"
+        )
 
     # ── Model training ─────────────────────────────────────────────
 
@@ -3818,7 +3898,7 @@ class AnnotationTab:
                 if pdf_path.exists():
                     self.state.set_pdf(pdf_path)
                     self._page_var.set(page)
-                    self._on_load_detections()
+                    self._navigate_to_page()
                     self._status.configure(
                         text=f"Active learning: page {page} (highest uncertainty)"
                     )
@@ -3891,7 +3971,7 @@ class AnnotationTab:
                     win.destroy()
                     # Reload current view
                     if self._pdf_path:
-                        self._on_load_detections()
+                        self._navigate_to_page()
                 except Exception as exc:
                     messagebox.showerror("Restore Error", str(exc), parent=win)
 

@@ -1,5 +1,57 @@
 # Workspace Cleanup Log
 
+## Overlay PNG Removal (2026-03-01)
+
+Removed static overlay PNG generation from both pipeline runners. The GUI's
+interactive ML Trainer canvas and Overlay Viewer render detections, lines,
+and columns in real time, making the file-based PNGs redundant (~3 MB and
+2–3 s saved per page).
+
+### Deleted Files
+
+| File | Reason |
+|------|--------|
+| `scripts/overlays/overlay_headers_red.py` | Standalone CLI overlay — superseded by GUI viewer |
+| `scripts/overlays/overlay_notes_green.py` | Standalone CLI overlay — superseded by GUI viewer |
+| `scripts/overlays/overlay_notes_purple.py` | Standalone CLI overlay — superseded by GUI viewer |
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `scripts/runners/run_pdf_batch.py` | Removed `draw_lines_overlay`, `draw_columns_overlay`, `draw_reconcile_debug`, `draw_symbol_overlay` calls; dropped overlay import; removed `overlay_png` from manifest artifacts |
+| `scripts/runners/run_pdf_page.py` | Removed `draw_overlay`, `draw_lines_overlay` imports and overlay generation; removed `overlay_png` from manifest artifacts |
+
+### Kept
+
+| File | Reason |
+|------|--------|
+| `src/plancheck/export/overlay.py` | Drawing library — kept for programmatic export use |
+
+---
+
+## MLOps Tab Removal (2026-03-01)
+
+Removed the dedicated MLOps tab. Drift monitoring and feature caching run
+automatically in the pipeline; retraining is accessible from the ML Trainer
+tab and CLI; experiment history lives in the Database tab.
+
+### Deleted Files
+
+| File | Reason |
+|------|--------|
+| `scripts/gui/tab_mlops.py` | Tab removed — features covered elsewhere |
+| `tests/gui/test_tab_mlops.py` | Test for removed tab |
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `scripts/gui/gui.py` | Removed MLOps import/instantiation, dropped Ctrl+8 binding, updated docstring |
+| `scripts/gui/tab_annotation.py` | Renamed tab label from "Annotation" to "ML Trainer" |
+
+---
+
 ## Phase 4 — Production ML Infrastructure (2026-02-24)
 
 Implemented the final phase of the ML Upgrade Roadmap.
@@ -12,7 +64,7 @@ All **1,499 tests pass** (3 skipped) after this phase — up from ~1,370 before 
 | `src/plancheck/corrections/drift_detection.py` | Percentile-bounds data drift detection (fit / check / persist) |
 | `src/plancheck/corrections/retrain_trigger.py` | Automated retrain logic + startup check |
 | `src/plancheck/corrections/experiment_tracker.py` | Lightweight experiment listing, comparison, CSV export |
-| `scripts/gui/tab_mlops.py` | GUI MLOps tab — Drift Monitor, Retrain Control, Feature Cache, Experiment History |
+| `scripts/gui/tab_mlops.py` | GUI MLOps tab — Drift Monitor, Retrain Control, Feature Cache, Experiment History *(removed 2026-03-01)* |
 
 ### Modified Modules (6)
 
@@ -23,7 +75,7 @@ All **1,499 tests pass** (3 skipped) after this phase — up from ~1,370 before 
 | `src/plancheck/corrections/store.py` | `feature_cache` table, 4 `training_runs` migrations (hyperparams, feature_set, training_curves, feature_version), retrain helpers, cache CRUD |
 | `src/plancheck/corrections/classifier.py` | `FEATURE_VERSION = 5`, `predict_from_vector()`, hyperparams/feature_set in `train()` return |
 | `scripts/train_model.py` | Fixed `restore_snapshot` bug (tag → path), drift detector fitting, extended `save_training_run` |
-| `scripts/gui/gui.py` | Registered MLOps tab |
+| `scripts/gui/gui.py` | Registered MLOps tab *(later removed 2026-03-01)* |
 
 ### New Test Files (6 files, ~129 tests)
 

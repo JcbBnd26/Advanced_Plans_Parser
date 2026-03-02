@@ -13,14 +13,12 @@ from plancheck import (
     GlyphBox,
     GroupingConfig,
     build_clusters_v2,
-    draw_overlay,
     estimate_skew_degrees,
     extract_tocr_page,
     nms_prune,
     render_page_image,
     rotate_boxes,
 )
-from plancheck.export.overlay import draw_lines_overlay
 from plancheck.grouping import (
     group_notes_columns,
     link_continued_columns,
@@ -111,20 +109,7 @@ def main() -> None:
     boxes_path = run_dir / "artifacts" / f"{pdf_stem}_page_{args.page}_boxes.json"
     save_boxes_json(boxes, boxes_path)
 
-    # Save overlay using v2 lines overlay.
-    overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{args.page}_overlay.png"
     scale = args.resolution / 72.0  # PDF user units are 1/72 inch.
-    all_lines = [ln for blk in blocks for ln in (blk.lines or [])]
-    draw_lines_overlay(
-        page_width=page_w,
-        page_height=page_h,
-        lines=all_lines,
-        tokens=boxes,
-        out_path=overlay_path,
-        scale=scale,
-        background=bg_img,
-        cfg=cfg,
-    )
 
     # Manifest
     manifest = {
@@ -148,14 +133,12 @@ def main() -> None:
         },
         "artifacts": {
             "boxes_json": str(boxes_path),
-            "overlay_png": str(overlay_path),
         },
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
     print(f"Run folder: {run_dir}")
     print(f"Boxes JSON: {boxes_path}")
-    print(f"Overlay PNG: {overlay_path}")
     summarize(blocks)
 
 

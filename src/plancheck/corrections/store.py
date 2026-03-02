@@ -458,11 +458,54 @@ class CorrectionStore:
             "ORDER BY created_at",
             (doc_id, page),
         ).fetchall()
+        return self._rows_to_detection_dicts(rows)
+
+    def get_latest_detections_for_page(
+        self, doc_id: str, page: int
+    ) -> list[dict[str, Any]]:
+        """Return detections for this page from the *globally* latest run.
+
+        The latest ``run_id`` is determined across **all** pages for this
+        document (not per-page), so pages that were not part of the most
+        recent pipeline run return an empty list instead of stale data.
+
+        Manual annotations (run_id starting with ``'manual'``) are always
+        included regardless of which run they belong to.
+        """
+        # Find the globally latest pipeline run_id for this document
+        row = self._conn.execute(
+            "SELECT run_id FROM detections "
+            "WHERE doc_id = ? AND run_id NOT LIKE 'manual%' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (doc_id,),
+        ).fetchone()
+        if not row:
+            # No pipeline detections — return only manual ones for this page
+            rows = self._conn.execute(
+                "SELECT * FROM detections "
+                "WHERE doc_id = ? AND page = ? AND run_id LIKE 'manual%' "
+                "ORDER BY created_at",
+                (doc_id, page),
+            ).fetchall()
+            return self._rows_to_detection_dicts(rows)
+
+        latest_run_id = row["run_id"]
+        rows = self._conn.execute(
+            "SELECT * FROM detections "
+            "WHERE doc_id = ? AND page = ? "
+            "  AND (run_id = ? OR run_id LIKE 'manual%') "
+            "ORDER BY created_at",
+            (doc_id, page, latest_run_id),
+        ).fetchall()
+        return self._rows_to_detection_dicts(rows)
+
+    @staticmethod
+    def _rows_to_detection_dicts(rows) -> list[dict[str, Any]]:
+        """Convert SQLite rows to detection dicts."""
         results: list[dict[str, Any]] = []
         for r in rows:
             poly_raw = r["polygon_json"]
             polygon = json.loads(poly_raw) if poly_raw else None
-            # Convert inner lists back to tuples for consistency
             if polygon:
                 polygon = [tuple(p) for p in polygon]
             results.append(
@@ -724,11 +767,16 @@ class CorrectionStore:
         """Rebuild the ``training_examples`` table from corrections.
 
         For each non-delete correction, creates a training example
-        whose label is the *corrected* element type.  The split is
-        **truly stratified**: within each label group, examples are
-        sorted by a deterministic MD5 hash of ``detection_id`` then
-        the first 70 % are assigned to ``train``, the next 20 % to
-        ``val``, and the remaining 10 % to ``test``.
+        whose label is the *corrected* element type.  Delete
+        corrections are included as negative examples with label
+        ``__negative__`` so the classifier learns to recognise
+        false-positive regions.
+
+        The split is **truly stratified**: within each label group,
+        examples are sorted by a deterministic MD5 hash of
+        ``detection_id`` then the first 70 % are assigned to
+        ``train``, the next 20 % to ``val``, and the remaining
+        10 % to ``test``.
 
         This guarantees every class with ≥2 examples has
         representation in at least two splits.
@@ -739,6 +787,7 @@ class CorrectionStore:
 
         self._conn.execute("DELETE FROM training_examples")
 
+        # ── Positive examples (relabel / accept / reshape) ──────────
         rows = self._conn.execute(
             "SELECT c.correction_id, c.detection_id, c.corrected_element_type, "
             "       c.corrected_features_json, d.features_json "
@@ -748,10 +797,22 @@ class CorrectionStore:
             "  AND c.detection_id IS NOT NULL"
         ).fetchall()
 
+        # ── Negative examples (deletions → false positives) ─────────
+        delete_rows = self._conn.execute(
+            "SELECT c.correction_id, c.detection_id, "
+            "       c.corrected_features_json, d.features_json "
+            "FROM corrections c "
+            "JOIN detections d ON c.detection_id = d.detection_id "
+            "WHERE c.correction_type = 'delete' "
+            "  AND c.detection_id IS NOT NULL"
+        ).fetchall()
+
         # ── Stratified split: group by label, force distribution ────
         by_label: dict[str, list] = defaultdict(list)
         for r in rows:
             by_label[r["corrected_element_type"]].append(r)
+        for r in delete_rows:
+            by_label["__negative__"].append(r)
 
         now = _utcnow_iso()
         count = 0
@@ -779,7 +840,7 @@ class CorrectionStore:
                         "correction",
                         r["correction_id"],
                         r["detection_id"],
-                        r["corrected_element_type"],
+                        _label,
                         features_json,
                         split,
                         now,
@@ -1398,3 +1459,150 @@ class CorrectionStore:
             "hits": counts.get("hit", 0),
             "misses": counts.get("miss", 0),
         }
+
+    # ── Database-tab helpers ───────────────────────────────────────────
+
+    def get_all_documents(self) -> list[dict[str, Any]]:
+        """Return every registered document."""
+        rows = self._conn.execute(
+            "SELECT * FROM documents ORDER BY ingested_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_run_ids_for_doc(self, doc_id: str) -> list[str]:
+        """Return distinct pipeline run_ids for *doc_id*, newest first."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT run_id FROM detections "
+            "WHERE doc_id = ? AND run_id NOT LIKE 'manual%' "
+            "ORDER BY created_at DESC",
+            (doc_id,),
+        ).fetchall()
+        return [r["run_id"] for r in rows]
+
+    def get_db_overview(self) -> dict[str, Any]:
+        """Aggregate overview stats for the whole database."""
+        docs = self._conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"]
+        dets = self._conn.execute("SELECT COUNT(*) AS n FROM detections").fetchone()[
+            "n"
+        ]
+        corrs = self._conn.execute("SELECT COUNT(*) AS n FROM corrections").fetchone()[
+            "n"
+        ]
+        groups = self._conn.execute("SELECT COUNT(*) AS n FROM box_groups").fetchone()[
+            "n"
+        ]
+        trains = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM training_runs"
+        ).fetchone()["n"]
+        last_det = self._conn.execute(
+            "SELECT MAX(created_at) AS ts FROM detections"
+        ).fetchone()["ts"]
+        last_corr = self._conn.execute(
+            "SELECT MAX(corrected_at) AS ts FROM corrections"
+        ).fetchone()["ts"]
+        db_size = self._db_path.stat().st_size if self._db_path.exists() else 0
+        return {
+            "db_path": str(self._db_path.resolve()),
+            "db_size_bytes": db_size,
+            "total_documents": docs,
+            "total_detections": dets,
+            "total_corrections": corrs,
+            "total_groups": groups,
+            "total_training_runs": trains,
+            "last_detection_at": last_det,
+            "last_correction_at": last_corr,
+        }
+
+    def get_doc_summary(self, doc_id: str) -> dict[str, Any]:
+        """Summary stats for a single document."""
+        doc = self._conn.execute(
+            "SELECT * FROM documents WHERE doc_id = ?", (doc_id,)
+        ).fetchone()
+        if not doc:
+            return {}
+        det_count = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM detections WHERE doc_id = ?",
+            (doc_id,),
+        ).fetchone()["n"]
+        corr_count = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM corrections WHERE doc_id = ?",
+            (doc_id,),
+        ).fetchone()["n"]
+        group_count = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM box_groups WHERE doc_id = ?",
+            (doc_id,),
+        ).fetchone()["n"]
+        runs = self.get_run_ids_for_doc(doc_id)
+        last_activity = self._conn.execute(
+            "SELECT MAX(ts) AS ts FROM ("
+            "  SELECT MAX(created_at) AS ts FROM detections WHERE doc_id = ? "
+            "  UNION ALL "
+            "  SELECT MAX(corrected_at) FROM corrections WHERE doc_id = ?"
+            ")",
+            (doc_id, doc_id),
+        ).fetchone()["ts"]
+        return {
+            **dict(doc),
+            "detection_count": det_count,
+            "correction_count": corr_count,
+            "group_count": group_count,
+            "run_ids": runs,
+            "last_activity": last_activity,
+        }
+
+    def get_detection_counts_by_page(
+        self, doc_id: str, run_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Per-page element_type breakdown for a document.
+
+        Returns a list of ``{page, element_type, count}`` dicts.
+        """
+        if run_id:
+            rows = self._conn.execute(
+                "SELECT page, element_type, COUNT(*) AS count "
+                "FROM detections WHERE doc_id = ? AND run_id = ? "
+                "GROUP BY page, element_type ORDER BY page, element_type",
+                (doc_id, run_id),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT page, element_type, COUNT(*) AS count "
+                "FROM detections WHERE doc_id = ? "
+                "GROUP BY page, element_type ORDER BY page, element_type",
+                (doc_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_correction_type_breakdown(
+        self, doc_id: str | None = None
+    ) -> dict[str, int]:
+        """Correction counts grouped by correction_type."""
+        if doc_id:
+            rows = self._conn.execute(
+                "SELECT correction_type, COUNT(*) AS n FROM corrections "
+                "WHERE doc_id = ? GROUP BY correction_type",
+                (doc_id,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT correction_type, COUNT(*) AS n FROM corrections "
+                "GROUP BY correction_type"
+            ).fetchall()
+        return {r["correction_type"]: r["n"] for r in rows}
+
+    def get_recent_corrections(
+        self, doc_id: str | None = None, limit: int = 25
+    ) -> list[dict[str, Any]]:
+        """Most recent corrections, optionally scoped to a document."""
+        if doc_id:
+            rows = self._conn.execute(
+                "SELECT * FROM corrections WHERE doc_id = ? "
+                "ORDER BY corrected_at DESC LIMIT ?",
+                (doc_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM corrections " "ORDER BY corrected_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]

@@ -16,7 +16,6 @@ from plancheck import (
 )
 from plancheck.analysis.structural_boxes import BoxType
 from plancheck.export import export_page_results
-from plancheck.export.overlay import draw_columns_overlay, draw_lines_overlay
 from plancheck.export.page_data import serialize_page
 from plancheck.export.report import generate_html_report, generate_json_report
 from plancheck.pipeline import (
@@ -84,6 +83,8 @@ def process_page(
     resolution: int,
     color_overrides: dict | None = None,
     cfg: GroupingConfig | None = None,
+    correction_store: "CorrectionStore | None" = None,
+    run_id: str | None = None,
 ) -> dict:
     """Process a single page and return page results for manifest.
 
@@ -99,7 +100,14 @@ def process_page(
     t0 = _time.perf_counter()
 
     # ── Run the canonical library pipeline ────────────────────────────
-    pr: PageResult = run_pipeline(pdf, page_num, cfg=cfg, resolution=resolution)
+    pr: PageResult = run_pipeline(
+        pdf,
+        page_num,
+        cfg=cfg,
+        resolution=resolution,
+        correction_store=correction_store,
+        run_id=run_id,
+    )
 
     # ── Materialise artefacts to disk ─────────────────────────────────
     _materialise_page(pr, pdf, run_dir, pdf_stem, resolution, cfg)
@@ -320,60 +328,6 @@ def _materialise_page(
             flush=True,
         )
 
-    # ── Overlays ──────────────────────────────────────────────────────
-    scale = resolution / 72.0
-    all_lines = [ln for blk in pr.blocks for ln in (blk.lines or [])]
-    overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
-    draw_lines_overlay(
-        page_width=pr.page_width,
-        page_height=pr.page_height,
-        lines=all_lines,
-        tokens=pr.tokens,
-        out_path=overlay_path,
-        scale=scale,
-        background=pr.background_image,
-        cfg=cfg,
-    )
-
-    col_overlay_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_columns.png"
-    draw_columns_overlay(
-        page_width=pr.page_width,
-        page_height=pr.page_height,
-        blocks=pr.blocks,
-        tokens=pr.tokens,
-        out_path=col_overlay_path,
-        scale=scale,
-        background=pr.background_image,
-        cfg=cfg,
-    )
-
-    # OCR reconcile overlays
-    if pr.reconcile_result is not None:
-        from plancheck import draw_reconcile_debug, draw_symbol_overlay
-
-        if pr.reconcile_result.added_tokens or cfg.ocr_reconcile_debug:
-            recon_path = (
-                run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_ocr_reconcile.png"
-            )
-            draw_reconcile_debug(
-                result=pr.reconcile_result,
-                page_width=pr.page_width,
-                page_height=pr.page_height,
-                out_path=recon_path,
-                scale=scale,
-                background=pr.background_image,
-            )
-        if cfg.ocr_reconcile_debug:
-            sym_path = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_symbols.png"
-            draw_symbol_overlay(
-                result=pr.reconcile_result,
-                page_width=pr.page_width,
-                page_height=pr.page_height,
-                out_path=sym_path,
-                scale=scale,
-                background=pr.background_image,
-            )
-
 
 # ── Block / column serialisation helpers ─────────────────────────────
 
@@ -556,9 +510,6 @@ def _build_page_manifest(
         },
         "artifacts": {
             "boxes_json": str(art / f"{pdf_stem}_page_{page_num}_boxes.json"),
-            "overlay_png": str(
-                run_dir / "overlays" / f"{pdf_stem}_page_{page_num}_overlay.png"
-            ),
             "legends_json": str(art / f"{pdf_stem}_page_{page_num}_legends.json"),
             "abbreviations_json": str(
                 art / f"{pdf_stem}_page_{page_num}_abbreviations.json"
@@ -608,6 +559,13 @@ def run_pdf(
     run_name = f"run_{stamp}_{run_prefix}"
     run_dir = make_run_dir(run_root, run_name)
 
+    # Persist detections to the correction store so the annotation
+    # tab can display them immediately after the run completes.
+    from plancheck.corrections.store import CorrectionStore
+
+    correction_store = CorrectionStore()
+    _run_id = run_dir.name
+
     print(f"Processing {pdf.name} -> {run_dir}", flush=True)
 
     page_results = []
@@ -620,9 +578,14 @@ def run_pdf(
                 resolution,
                 color_overrides,
                 cfg=cfg,
+                correction_store=correction_store,
+                run_id=_run_id,
             )
             page_results.append(result)
         except Exception as exc:  # pragma: no cover
+            import traceback
+
+            traceback.print_exc()
             print(f"  page {page_num}: ERROR {exc}", flush=True)
             page_results.append({"page": page_num, "error": str(exc)})
 
@@ -667,8 +630,19 @@ def run_pdf(
 
     # ── Generate HTML + JSON reports ──────────────────────────────────
     try:
-        generate_html_report(manifest, run_dir / "report.html")
-        generate_json_report(manifest, run_dir / "report.json")
+        pr_list = [
+            pr_obj["_page_result"]
+            for pr_obj in page_results
+            if isinstance(pr_obj, dict) and "_page_result" in pr_obj
+        ]
+        doc_result = DocumentResult(
+            pdf_path=pdf,
+            pages=pr_list,
+            document_findings=cross_page_findings,
+            config=cfg,
+        )
+        generate_html_report(doc_result, output_path=run_dir / "report.html")
+        generate_json_report(doc_result, output_path=run_dir / "report.json")
     except Exception as exc:  # pragma: no cover
         print(f"  report generation warning: {exc}", flush=True)
 

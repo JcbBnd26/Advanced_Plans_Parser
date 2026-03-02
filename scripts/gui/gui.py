@@ -1,15 +1,17 @@
 """
 Advanced Plan Parser – Master GUI Controller.
 
-Slim orchestrator that wires up five tabs via a shared GuiState.
+Slim orchestrator that wires up seven tabs via a shared GuiState.
 
 Tabs
 ----
-1. Pipeline       – PDF selection, OCR toggles, config knobs, run with embedded log
-2. Runs & Reports – Browse runs/, inspect manifests, open reports/artifacts
-3. Diagnostics    – Font metrics, benchmark, VOCRPP, tuning, grouping playground
-4. Sheet Recreation – Generate text-only PDFs from runs
-5. Annotation     – Interactive detection correction UI for ML training
+1. Pipeline         – PDF selection, OCR toggles, config knobs, run with embedded log
+2. Runs & Reports   – Browse runs/, inspect manifests, open reports/artifacts
+3. Database         – Browse CorrectionStore data across all documents and runs
+4. Diagnostics      – Font metrics, benchmark, VOCRPP, tuning, grouping playground
+5. Sheet Recreation – Generate text-only PDFs from runs
+6. ML Trainer       – Interactive detection correction UI for ML training
+7. Query            – Natural-language query interface for plan data
 
 Architecture
 ------------
@@ -113,8 +115,8 @@ class PlanParserGUI:
 
         # ── Import and create each tab ────────────────────────────────
         from tab_annotation import AnnotationTab
+        from tab_database import DatabaseTab
         from tab_diagnostics import DiagnosticsTab
-        from tab_mlops import MLOpsTab
         from tab_pipeline import PipelineTab
         from tab_query import QueryTab
         from tab_recreation import RecreationTab
@@ -123,8 +125,8 @@ class PlanParserGUI:
 
         self._pipeline_tab = PipelineTab(self.notebook, self.state)
         self._runs_tab = RunsTab(self.notebook, self.state)
+        self._database_tab = DatabaseTab(self.notebook, gui_state=self.state)
         self._diagnostics_tab = DiagnosticsTab(self.notebook, self.state)
-        self._mlops_tab = MLOpsTab(self.notebook, self.state)
         self._recreation_tab = RecreationTab(self.notebook, self.state)
         self._annotation_tab = AnnotationTab(self.notebook, gui_state=self.state)
         self._query_tab = QueryTab(self.notebook, self.state)

@@ -452,6 +452,49 @@ class ElementClassifier:
 
         return metrics
 
+    # ── Negative-class handling ─────────────────────────────────
+
+    #: Label used for false-positive (deleted) training examples.
+    NEGATIVE_LABEL: str = "__negative__"
+
+    @staticmethod
+    def _resolve_negative(
+        classes: np.ndarray, proba: np.ndarray
+    ) -> Tuple[str, float, float]:
+        """Pick the best *real* class, returning negative probability too.
+
+        When the model includes a ``__negative__`` class trained from
+        deleted detections, this helper finds:
+
+        1. ``p_negative`` — the probability this is a false positive.
+        2. The best non-negative class label and its probability.
+
+        If ``__negative__`` is not among the model classes, the
+        overall argmax is returned with ``p_negative = 0``.
+
+        Returns
+        -------
+        tuple[str, float, float]
+            ``(best_label, best_confidence, p_negative)``
+        """
+        neg_label = ElementClassifier.NEGATIVE_LABEL
+        classes_list = list(classes)
+        if neg_label in classes_list:
+            neg_idx = classes_list.index(neg_label)
+            p_neg = float(proba[neg_idx])
+            # Mask negative class and pick best real class
+            masked = proba.copy()
+            masked[neg_idx] = -1.0
+            best_idx = int(np.argmax(masked))
+            best_label = str(classes[best_idx])
+            # Scale real-class confidence by (1 - p_negative) so that
+            # deleted-like regions get visibly lower confidence.
+            best_conf = float(proba[best_idx]) * (1.0 - p_neg)
+            return best_label, best_conf, p_neg
+        else:
+            idx = int(np.argmax(proba))
+            return str(classes[idx]), float(proba[idx]), 0.0
+
     # ── Prediction ─────────────────────────────────────────────────
 
     @staticmethod
@@ -548,9 +591,8 @@ class ElementClassifier:
         if self._n_features_in is not None and x.shape[1] > self._n_features_in:
             x = x[:, : self._n_features_in]
         proba = self._model.predict_proba(x)[0]
-        idx = int(np.argmax(proba))
-        label = self._model.classes_[idx]
-        return str(label), float(proba[idx])
+        label, conf, _ = self._resolve_negative(self._model.classes_, proba)
+        return label, conf
 
     def predict_from_vector(self, vector: np.ndarray) -> Tuple[str, float]:
         """Predict from a pre-encoded feature vector (e.g. from cache).
@@ -570,9 +612,8 @@ class ElementClassifier:
         if self._n_features_in is not None and x.shape[1] > self._n_features_in:
             x = x[:, : self._n_features_in]
         proba = self._model.predict_proba(x)[0]
-        idx = int(np.argmax(proba))
-        label = self._model.classes_[idx]
-        return str(label), float(proba[idx])
+        label, conf, _ = self._resolve_negative(self._model.classes_, proba)
+        return label, conf
 
     def predict_batch(
         self,
@@ -619,10 +660,42 @@ class ElementClassifier:
         probas = self._model.predict_proba(X)
         results: list[tuple[str, float]] = []
         for row in probas:
-            idx = int(np.argmax(row))
-            label = self._model.classes_[idx]
-            results.append((str(label), float(row[idx])))
+            label, conf, _ = self._resolve_negative(self._model.classes_, row)
+            results.append((label, conf))
         return results
+
+    def predict_negative_probability(
+        self,
+        feature_dict: dict,
+        image_features: np.ndarray | None = None,
+        text_embedding: np.ndarray | None = None,
+    ) -> float:
+        """Return the probability that a region is a false positive.
+
+        If the model was not trained with ``__negative__`` examples
+        (i.e. no deletions in the training data), returns ``0.0``.
+
+        Parameters
+        ----------
+        feature_dict : dict
+            Hand-crafted features from :func:`featurize`.
+
+        Returns
+        -------
+        float
+            P(negative) in [0, 1].
+        """
+        self._load_model()
+        base_dim = len(_NUMERIC_KEYS) + len(ZONE_VALUES)
+        if self._n_features_in is not None and self._n_features_in <= base_dim:
+            image_features = None
+            text_embedding = None
+        x = encode_features(feature_dict, image_features, text_embedding).reshape(1, -1)
+        if self._n_features_in is not None and x.shape[1] > self._n_features_in:
+            x = x[:, : self._n_features_in]
+        proba = self._model.predict_proba(x)[0]
+        _, _, p_neg = self._resolve_negative(self._model.classes_, proba)
+        return p_neg
 
     def model_exists(self) -> bool:
         """Return *True* if a trained model file exists on disk."""
