@@ -1017,7 +1017,10 @@ class OverlayViewerTab:
                 )
                 elapsed = time.perf_counter() - t0
                 try:
-                    if hasattr(self.frame, "winfo_exists") and not self.frame.winfo_exists():
+                    if (
+                        hasattr(self.frame, "winfo_exists")
+                        and not self.frame.winfo_exists()
+                    ):
                         return
                     self.frame.after(0, lambda: self._show_image(img, elapsed))
                 except Exception:
@@ -1025,7 +1028,10 @@ class OverlayViewerTab:
             except Exception as exc:
                 elapsed = time.perf_counter() - t0
                 try:
-                    if hasattr(self.frame, "winfo_exists") and not self.frame.winfo_exists():
+                    if (
+                        hasattr(self.frame, "winfo_exists")
+                        and not self.frame.winfo_exists()
+                    ):
                         return
                     self.frame.after(0, lambda: self._render_error(str(exc), elapsed))
                 except Exception:

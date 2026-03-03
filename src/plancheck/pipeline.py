@@ -24,7 +24,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, List, Optional
+from typing import (TYPE_CHECKING, Any, Callable, Dict, Generator, List,
+                    Optional)
 
 from .config import GroupingConfig
 
@@ -36,17 +37,9 @@ if TYPE_CHECKING:
     from .analysis.zoning import PageZone
     from .checks.semantic_checks import CheckResult
     from .ingest.ingest import PageContext
-    from .models import (
-        AbbreviationRegion,
-        BlockCluster,
-        GlyphBox,
-        GraphicElement,
-        LegendRegion,
-        MiscTitleRegion,
-        NotesColumn,
-        RevisionRegion,
-        StandardDetailRegion,
-    )
+    from .models import (AbbreviationRegion, BlockCluster, GlyphBox,
+                         GraphicElement, LegendRegion, MiscTitleRegion,
+                         NotesColumn, RevisionRegion, StandardDetailRegion)
     from .reconcile.reconcile import ReconcileResult
 
 log = logging.getLogger(__name__)
@@ -536,18 +529,10 @@ class PageResult:
         from .analysis.title_block import TitleBlockInfo
         from .analysis.zoning import PageZone
         from .checks.semantic_checks import CheckResult
-        from .models import (
-            AbbreviationRegion,
-            BlockCluster,
-            GlyphBox,
-            GraphicElement,
-            LegendRegion,
-            MiscTitleRegion,
-            NotesColumn,
-            RevisionRegion,
-            StandardDetailRegion,
-            VocrCandidate,
-        )
+        from .models import (AbbreviationRegion, BlockCluster, GlyphBox,
+                             GraphicElement, LegendRegion, MiscTitleRegion,
+                             NotesColumn, RevisionRegion, StandardDetailRegion,
+                             VocrCandidate)
         from .reconcile.reconcile import ReconcileResult
 
         # 1. Tokens
@@ -811,7 +796,8 @@ def _run_vocr_candidates_stage(
             # Level 2: ML classifier filtering
             ml_pruned = 0
             if cfg.vocr_cand_ml_enabled and candidates:
-                from .corrections.candidate_classifier import CandidateClassifier
+                from .corrections.candidate_classifier import \
+                    CandidateClassifier
 
                 clf = CandidateClassifier(Path(cfg.vocr_cand_classifier_path))
                 if clf.load():
@@ -998,13 +984,8 @@ def _run_grouping_stage(
     page_h: float,
 ) -> tuple:
     """Stage 6: clustering and notes-column grouping.  Returns (blocks, notes_columns)."""
-    from .grouping import (
-        build_clusters_v2,
-        group_notes_columns,
-        link_continued_columns,
-        mark_headers,
-        mark_notes,
-    )
+    from .grouping import (build_clusters_v2, group_notes_columns,
+                           link_continued_columns, mark_headers, mark_notes)
 
     with run_stage("grouping", cfg) as sr_grp:
         blocks = build_clusters_v2(boxes, page_h, cfg)
@@ -1035,15 +1016,11 @@ def _run_analysis_stage(
     page_h: float,
 ) -> None:
     """Stage 7: graphics, structural boxes, regions, title blocks, zones."""
-    from .analysis import (
-        detect_abbreviation_regions,
-        detect_legend_regions,
-        detect_misc_title_regions,
-        detect_revision_regions,
-        detect_standard_detail_regions,
-        extract_graphics_from_data,
-        filter_graphics_outside_regions,
-    )
+    from .analysis import (detect_abbreviation_regions, detect_legend_regions,
+                           detect_misc_title_regions, detect_revision_regions,
+                           detect_standard_detail_regions,
+                           extract_graphics_from_data,
+                           filter_graphics_outside_regions)
     from .analysis.structural_boxes import detect_semantic_regions
     from .analysis.title_block import extract_title_blocks
     from .analysis.zoning import detect_zones
@@ -1618,10 +1595,8 @@ def _apply_ml_feedback(
         img_extractor = None
         if cfg.ml_vision_enabled and page_image is not None:
             try:
-                from .corrections.image_features import (
-                    ImageFeatureExtractor,
-                    is_vision_available,
-                )
+                from .corrections.image_features import (ImageFeatureExtractor,
+                                                         is_vision_available)
 
                 if is_vision_available():
                     img_extractor = ImageFeatureExtractor(
@@ -1635,9 +1610,7 @@ def _apply_ml_feedback(
         if cfg.ml_embeddings_enabled:
             try:
                 from .corrections.text_embeddings import (
-                    TextEmbedder,
-                    is_embeddings_available,
-                )
+                    TextEmbedder, is_embeddings_available)
 
                 if is_embeddings_available():
                     text_embedder = TextEmbedder(model_name=cfg.ml_embeddings_model)
@@ -1709,7 +1682,8 @@ def _apply_ml_feedback(
                 # Store in cache for next time (Phase 4.3)
                 if use_cache:
                     try:
-                        from .corrections.classifier import encode_features as _ef
+                        from .corrections.classifier import \
+                            encode_features as _ef
 
                         vec = _ef(
                             det["features"],
@@ -2116,10 +2090,8 @@ def run_document(
     if cfg.vocr_cand_gnn_prior_enabled and graph is not None:
         try:
             from .analysis.gnn_model import is_gnn_available, load_gnn
-            from .vocr.gnn_candidate_prior import (
-                apply_gnn_prior,
-                load_gnn_candidate_prior,
-            )
+            from .vocr.gnn_candidate_prior import (apply_gnn_prior,
+                                                   load_gnn_candidate_prior)
 
             if is_gnn_available():
                 gnn_model = load_gnn(cfg.ml_gnn_model_path)

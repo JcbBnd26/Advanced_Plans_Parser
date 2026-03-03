@@ -25,8 +25,8 @@ from plancheck.pipeline import (
     PageResult,
     _run_document_checks,
     input_fingerprint,
-    stage_callback_hook,
     run_pipeline,
+    stage_callback_hook,
 )
 
 from ..utils.box_serialization import save_boxes_json

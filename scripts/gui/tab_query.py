@@ -55,7 +55,9 @@ class QueryTab:
         # When the window is destroyed, mark as closing so background
         # threads stop scheduling UI updates.
         try:
-            self.root.bind("<Destroy>", lambda e: setattr(self, "_closing", True), add="+")
+            self.root.bind(
+                "<Destroy>", lambda e: setattr(self, "_closing", True), add="+"
+            )
         except Exception:
             pass
 
@@ -228,13 +230,21 @@ class QueryTab:
 
         def _load():
             try:
-                if self._cancel_event.is_set() or self._closing or my_gen != self._load_gen:
+                if (
+                    self._cancel_event.is_set()
+                    or self._closing
+                    or my_gen != self._load_gen
+                ):
                     return
                 from plancheck.export.run_loader import load_run
                 from plancheck.llm.query_engine import DocumentQueryEngine
 
                 dr = load_run(str(run_dir))
-                if self._cancel_event.is_set() or self._closing or my_gen != self._load_gen:
+                if (
+                    self._cancel_event.is_set()
+                    or self._closing
+                    or my_gen != self._load_gen
+                ):
                     return
                 engine = DocumentQueryEngine.from_document_result(
                     dr,
@@ -250,16 +260,28 @@ class QueryTab:
                 n_pages = len(dr.pages) if dr.pages else 0
                 self._safe_after(
                     0,
-                    lambda: self._on_engine_ready(engine, n_pages, n_chunks, run_dir)
-                    if (not self._cancel_event.is_set() and not self._closing and my_gen == self._load_gen)
-                    else None,
+                    lambda: (
+                        self._on_engine_ready(engine, n_pages, n_chunks, run_dir)
+                        if (
+                            not self._cancel_event.is_set()
+                            and not self._closing
+                            and my_gen == self._load_gen
+                        )
+                        else None
+                    ),
                 )
             except Exception as exc:
                 self._safe_after(
                     0,
-                    lambda: self._on_engine_error(exc)
-                    if (not self._cancel_event.is_set() and not self._closing and my_gen == self._load_gen)
-                    else None,
+                    lambda: (
+                        self._on_engine_error(exc)
+                        if (
+                            not self._cancel_event.is_set()
+                            and not self._closing
+                            and my_gen == self._load_gen
+                        )
+                        else None
+                    ),
                 )
 
         threading.Thread(target=_load, daemon=True).start()
@@ -307,25 +329,49 @@ class QueryTab:
 
         def _query():
             try:
-                if self._cancel_event.is_set() or self._closing or my_gen != self._query_gen:
+                if (
+                    self._cancel_event.is_set()
+                    or self._closing
+                    or my_gen != self._query_gen
+                ):
                     return
                 result = self._engine.query(question, page_filter=page_filt)
-                if self._cancel_event.is_set() or self._closing or my_gen != self._query_gen:
+                if (
+                    self._cancel_event.is_set()
+                    or self._closing
+                    or my_gen != self._query_gen
+                ):
                     return
                 self._safe_after(
                     0,
-                    lambda: self._on_answer(question, result)
-                    if (not self._cancel_event.is_set() and not self._closing and my_gen == self._query_gen)
-                    else None,
+                    lambda: (
+                        self._on_answer(question, result)
+                        if (
+                            not self._cancel_event.is_set()
+                            and not self._closing
+                            and my_gen == self._query_gen
+                        )
+                        else None
+                    ),
                 )
             except Exception as exc:
-                if self._cancel_event.is_set() or self._closing or my_gen != self._query_gen:
+                if (
+                    self._cancel_event.is_set()
+                    or self._closing
+                    or my_gen != self._query_gen
+                ):
                     return
                 self._safe_after(
                     0,
-                    lambda: self._on_query_error(exc)
-                    if (not self._cancel_event.is_set() and not self._closing and my_gen == self._query_gen)
-                    else None,
+                    lambda: (
+                        self._on_query_error(exc)
+                        if (
+                            not self._cancel_event.is_set()
+                            and not self._closing
+                            and my_gen == self._query_gen
+                        )
+                        else None
+                    ),
                 )
 
         threading.Thread(target=_query, daemon=True).start()
