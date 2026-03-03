@@ -15,7 +15,6 @@ Provides two public surfaces:
 from __future__ import annotations
 
 import json
-import sys
 import threading
 import time
 from dataclasses import fields
@@ -51,14 +50,8 @@ from plancheck.export.page_data import deserialize_page, serialize_page
 from plancheck.grouping import group_notes_columns, link_continued_columns
 from plancheck.tocr.extract import extract_tocr_from_page
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "utils"))
-from run_utils import latest_overlays_dir
-from run_utils import scale as _scale
+from ..utils.run_utils import latest_overlays_dir
+from ..utils.run_utils import scale as _scale
 
 
 def _load_font(scale: float) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -1023,10 +1016,20 @@ class OverlayViewerTab:
                     resolution=resolution,
                 )
                 elapsed = time.perf_counter() - t0
-                self.frame.after(0, lambda: self._show_image(img, elapsed))
+                try:
+                    if hasattr(self.frame, "winfo_exists") and not self.frame.winfo_exists():
+                        return
+                    self.frame.after(0, lambda: self._show_image(img, elapsed))
+                except Exception:
+                    return
             except Exception as exc:
                 elapsed = time.perf_counter() - t0
-                self.frame.after(0, lambda: self._render_error(str(exc), elapsed))
+                try:
+                    if hasattr(self.frame, "winfo_exists") and not self.frame.winfo_exists():
+                        return
+                    self.frame.after(0, lambda: self._render_error(str(exc), elapsed))
+                except Exception:
+                    return
 
         self._render_thread = threading.Thread(target=worker, daemon=True)
         self._render_thread.start()

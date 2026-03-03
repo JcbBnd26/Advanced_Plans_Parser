@@ -70,7 +70,7 @@ def _parse_revision_row(
     sorted_boxes = sorted(boxes, key=lambda b: b.x0)
 
     # Simple heuristic: first box is number, last box or boxes are date, middle is description
-    if len(sorted_boxes) == 0:
+    if not sorted_boxes:
         return None
 
     # Get texts

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from plancheck.ingest.ingest import point_in_polygon
+
+from scripts.gui.tab_annotation import _reshape_bbox_from_handle, _scale_polygon_to_bbox
+
 # ---------------------------------------------------------------------------
 # Helpers — lightweight stand-in for AnnotationTab state logic
 # ---------------------------------------------------------------------------
@@ -367,22 +371,8 @@ class TestNotesLabeling:
 
 
 # ---------------------------------------------------------------------------
-# Point-in-polygon (mirrors _point_in_polygon from tab_annotation.py)
+# Point-in-polygon
 # ---------------------------------------------------------------------------
-
-
-def _point_in_polygon(px: float, py: float, polygon: list[tuple[float, float]]) -> bool:
-    """Ray-casting point-in-polygon test."""
-    n = len(polygon)
-    inside = False
-    j = n - 1
-    for i in range(n):
-        xi, yi = polygon[i]
-        xj, yj = polygon[j]
-        if ((yi > py) != (yj > py)) and (px < (xj - xi) * (py - yi) / (yj - yi) + xi):
-            inside = not inside
-        j = i
-    return inside
 
 
 class TestPointInPolygon:
@@ -390,11 +380,11 @@ class TestPointInPolygon:
 
     def test_inside_square(self) -> None:
         sq = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
-        assert _point_in_polygon(5, 5, sq)
+        assert point_in_polygon(5, 5, sq)
 
     def test_outside_square(self) -> None:
         sq = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
-        assert not _point_in_polygon(15, 5, sq)
+        assert not point_in_polygon(15, 5, sq)
 
     def test_l_shape_inside_arm(self) -> None:
         # L-shape: bottom-left block + top-right arm
@@ -408,9 +398,9 @@ class TestPointInPolygon:
             (0, 0),
         ]
         # Inside the right arm
-        assert _point_in_polygon(15, 7, l_shape)
+        assert point_in_polygon(15, 7, l_shape)
         # Inside the left body
-        assert _point_in_polygon(5, 3, l_shape)
+        assert point_in_polygon(5, 3, l_shape)
 
     def test_l_shape_outside_notch(self) -> None:
         l_shape = [
@@ -423,22 +413,22 @@ class TestPointInPolygon:
             (0, 0),
         ]
         # Outside in the notch area (top-right of left side)
-        assert not _point_in_polygon(15, 2, l_shape)
+        assert not point_in_polygon(15, 2, l_shape)
 
     def test_inside_triangle(self) -> None:
         tri = [(0, 0), (10, 0), (5, 10), (0, 0)]
-        assert _point_in_polygon(5, 3, tri)
+        assert point_in_polygon(5, 3, tri)
 
     def test_outside_triangle(self) -> None:
         tri = [(0, 0), (10, 0), (5, 10), (0, 0)]
-        assert not _point_in_polygon(0, 10, tri)
+        assert not point_in_polygon(0, 10, tri)
 
     def test_empty_polygon(self) -> None:
-        assert not _point_in_polygon(5, 5, [])
+        assert not point_in_polygon(5, 5, [])
 
     def test_point_far_outside(self) -> None:
         sq = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
-        assert not _point_in_polygon(-100, -100, sq)
+        assert not point_in_polygon(-100, -100, sq)
 
 
 class TestPolygonFillDefault:
@@ -1551,3 +1541,23 @@ class TestWordOverlay:
         state.page = 5
         state.toggle_word_overlay()
         assert "page 5" in state.status
+
+
+# ---------------------------------------------------------------------------
+# Box reshape-handle logic
+# ---------------------------------------------------------------------------
+
+
+def test_reshape_bbox_from_handle_clamps_min_size() -> None:
+    orig = (10.0, 10.0, 20.0, 20.0)
+    # Drag the west handle past the east edge → should clamp to (ox1 - min_size)
+    new_bbox = _reshape_bbox_from_handle(orig, "w", px=100.0, py=0.0, min_size=1.0)
+    assert new_bbox == (19.0, 10.0, 20.0, 20.0)
+
+
+def test_scale_polygon_to_bbox_scales_points() -> None:
+    orig_bbox = (5.0, 10.0, 15.0, 30.0)
+    polygon = [(5.0, 10.0), (15.0, 10.0), (15.0, 30.0), (5.0, 30.0)]
+    new_bbox = (5.0, 10.0, 25.0, 50.0)  # 2x width, 2x height
+    scaled = _scale_polygon_to_bbox(orig_bbox, polygon, new_bbox)
+    assert scaled == [(5.0, 10.0), (25.0, 10.0), (25.0, 50.0), (5.0, 50.0)]

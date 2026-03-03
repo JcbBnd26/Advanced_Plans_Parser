@@ -52,16 +52,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 
-_project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "scripts" / "runners"))
-
-from run_pdf_batch import cleanup_old_runs, run_pdf  # noqa: E402
-
 from plancheck.config import GroupingConfig  # noqa: E402
+
+from ..runners.run_pdf_batch import cleanup_old_runs, run_pdf
 
 # ── Directories for harness output ─────────────────────────────────────
 

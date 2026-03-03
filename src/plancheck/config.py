@@ -497,6 +497,15 @@ class GroupingConfig:
 
     def __post_init__(self) -> None:
         """Validate field ranges to catch misconfiguration early."""
+        self.validate()
+
+    def validate(self) -> None:
+        """Validate configuration values.
+
+        This is called automatically on construction (via ``__post_init__``),
+        but is also safe to call explicitly in case a caller mutates a config
+        instance after creation.
+        """
         # -- Thresholds that must be in [0, 1] --
         _unit = [
             "iou_prune",

@@ -68,6 +68,18 @@ class TestSplitWideLines:
     def test_empty_input(self):
         assert split_wide_lines([], [], median_space_gap=5.0) == []
 
+    def test_split_line_spans_empty_indices(self, default_cfg):
+        line = Line(line_id=0, page=0, token_indices=[], baseline_y=100.0)
+        split_line_spans(line, tokens=[], median_space_gap=5.0, span_gap_mult=8.0)
+        assert line.spans == []
+
+    def test_split_line_spans_single_token(self, default_cfg):
+        tokens = [make_box(10, 100, 50, 112, "ONLY")]
+        line = Line(line_id=0, page=0, token_indices=[0], baseline_y=100.0)
+        split_line_spans(line, tokens=tokens, median_space_gap=5.0, span_gap_mult=8.0)
+        assert len(line.spans) == 1
+        assert line.spans[0].token_indices == [0]
+
 
 # ─── _partition_columns ───────────────────────────────────────────────
 

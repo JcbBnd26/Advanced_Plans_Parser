@@ -21,7 +21,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-from widgets import CollapsibleFrame, LogPanel
+from .widgets import CollapsibleFrame, LogPanel
 
 
 class RunsTab:
@@ -41,6 +41,9 @@ class RunsTab:
         self._runs_root = Path(__file__).resolve().parent.parent.parent / "runs"
         self._current_manifest: dict | None = None
         self._current_run_dir: Path | None = None
+
+        # Mousewheel scroll state for the detail panel (avoid unbind_all)
+        self._detail_wheel_active: bool = False
 
         self._build_ui()
 
@@ -136,16 +139,22 @@ class RunsTab:
         self._detail_canvas.bind("<Configure>", _resize_detail)
         self._detail_canvas.bind(
             "<Enter>",
-            lambda e: self._detail_canvas.bind_all("<MouseWheel>", self._detail_scroll),
+            lambda e: setattr(self, "_detail_wheel_active", True),
         )
         self._detail_canvas.bind(
-            "<Leave>", lambda e: self._detail_canvas.unbind_all("<MouseWheel>")
+            "<Leave>",
+            lambda e: setattr(self, "_detail_wheel_active", False),
         )
+
+        # Bind once globally; handler is gated by _detail_wheel_active
+        self.root.bind_all("<MouseWheel>", self._detail_scroll, add="+")
 
         # Initial load
         self.refresh_runs()
 
     def _detail_scroll(self, event) -> None:
+        if not self._detail_wheel_active or not self._detail_canvas.winfo_ismapped():
+            return
         self._detail_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     # ------------------------------------------------------------------
@@ -237,7 +246,11 @@ class RunsTab:
         pages = manifest.get("pages", [])
         if not pages:
             return "?"
-        errors = sum(1 for p in pages if isinstance(p, dict) and "error" in p and "stages" not in p)
+        errors = sum(
+            1
+            for p in pages
+            if isinstance(p, dict) and "error" in p and "stages" not in p
+        )
         if errors == len(pages):
             return "\u2718 Failed"
         if errors > 0:
@@ -255,11 +268,14 @@ class RunsTab:
         mins = int(secs // 60)
         return f"{mins}m {secs - mins * 60:.1f}s"
 
-    def _add_label_pair(self, parent, row: int, label: str, value: str,
-                        fg: str | None = None) -> int:
+    def _add_label_pair(
+        self, parent, row: int, label: str, value: str, fg: str | None = None
+    ) -> int:
         """Add a bold-label + value pair to a grid; return next row."""
         ttk.Label(
-            parent, text=f"{label}:", font=("TkDefaultFont", 9, "bold"),
+            parent,
+            text=f"{label}:",
+            font=("TkDefaultFont", 9, "bold"),
         ).grid(row=row, column=0, sticky="w", padx=(4, 8), pady=1)
         kw: dict[str, Any] = {"wraplength": 350}
         if fg:
@@ -272,7 +288,9 @@ class RunsTab:
     def _add_section_heading(self, parent, row: int, text: str) -> int:
         """Add a small bold heading inside a page frame; return next row."""
         ttk.Label(
-            parent, text=text, font=("TkDefaultFont", 9, "bold"),
+            parent,
+            text=text,
+            font=("TkDefaultFont", 9, "bold"),
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 1))
         return row + 1
 
@@ -316,39 +334,52 @@ class RunsTab:
                     total_ms += si.get("duration_ms", 0)
 
         srow = 0
-        srow = self._add_label_pair(summary_frame.content, srow,
-                                     "Run ID", manifest.get("run_id", "?"))
-        srow = self._add_label_pair(summary_frame.content, srow,
-                                     "Created", manifest.get("created_at", "?"))
-        srow = self._add_label_pair(summary_frame.content, srow,
-                                     "Source PDF", manifest.get("pdf_name", "?"))
+        srow = self._add_label_pair(
+            summary_frame.content, srow, "Run ID", manifest.get("run_id", "?")
+        )
+        srow = self._add_label_pair(
+            summary_frame.content, srow, "Created", manifest.get("created_at", "?")
+        )
+        srow = self._add_label_pair(
+            summary_frame.content, srow, "Source PDF", manifest.get("pdf_name", "?")
+        )
         fp = manifest.get("input_fingerprint", "?")
-        srow = self._add_label_pair(summary_frame.content, srow,
-                                     "Fingerprint", fp[:16] + "..." if len(fp) > 16 else fp)
-        srow = self._add_label_pair(summary_frame.content, srow,
-                                     "Resolution",
-                                     f"{manifest.get('render_resolution_dpi', '?')} DPI")
+        srow = self._add_label_pair(
+            summary_frame.content,
+            srow,
+            "Fingerprint",
+            fp[:16] + "..." if len(fp) > 16 else fp,
+        )
+        srow = self._add_label_pair(
+            summary_frame.content,
+            srow,
+            "Resolution",
+            f"{manifest.get('render_resolution_dpi', '?')} DPI",
+        )
         pages_list = manifest.get("pages_processed", [])
-        srow = self._add_label_pair(summary_frame.content, srow,
-                                     "Pages", str(pages_list))
+        srow = self._add_label_pair(
+            summary_frame.content, srow, "Pages", str(pages_list)
+        )
 
         # Pipeline timing
         if total_ms > 0:
             timing_text = f"{self._fmt_duration(total_ms)} across {page_count} page(s)"
             if error_count:
                 timing_text += f" ({error_count} errored)"
-            srow = self._add_label_pair(summary_frame.content, srow,
-                                         "Pipeline Time", timing_text)
+            srow = self._add_label_pair(
+                summary_frame.content, srow, "Pipeline Time", timing_text
+            )
 
         # Status
         status = self._compute_run_status(manifest)
         status_fg = (
-            "#e06c75" if "Failed" in status
-            else "#e5c07b" if "Partial" in status
-            else "#98c379"
+            "#e06c75"
+            if "Failed" in status
+            else "#e5c07b" if "Partial" in status else "#98c379"
         )
-        srow = self._add_label_pair(summary_frame.content, srow,
-                                     "Status", status, fg=status_fg)
+        srow = self._add_label_pair(
+            summary_frame.content, srow, "Status", status, fg=status_fg
+        )
 
         # ── Cross-page findings ──────────────────────────────────────
         cross_findings = manifest.get("cross_page_findings", [])
@@ -398,7 +429,11 @@ class RunsTab:
             # Build title with geometry
             page_title = f"Page {page_num}"
             if quality is not None:
-                page_title += f"  quality: {quality:.2f}" if isinstance(quality, float) else f"  quality: {quality}"
+                page_title += (
+                    f"  quality: {quality:.2f}"
+                    if isinstance(quality, float)
+                    else f"  quality: {quality}"
+                )
             if pw and ph:
                 page_title += f"  |  {pw:.0f}\u00d7{ph:.0f} pt"
             if skew:
@@ -416,7 +451,9 @@ class RunsTab:
             # ── Stage detail cards (fixed: iterate dict values) ──────
             stages = page_data.get("stages", {})
             if isinstance(stages, dict) and stages:
-                prow = self._add_section_heading(page_frame.content, prow, "Pipeline Stages")
+                prow = self._add_section_heading(
+                    page_frame.content, prow, "Pipeline Stages"
+                )
 
                 for stage_info in stages.values():
                     if not isinstance(stage_info, dict):
@@ -450,7 +487,8 @@ class RunsTab:
                     s_counts = stage_info.get("counts", {})
                     if s_counts:
                         interesting = [
-                            f"{k}={v}" for k, v in s_counts.items()
+                            f"{k}={v}"
+                            for k, v in s_counts.items()
                             if isinstance(v, (int, float)) and v != 0
                         ]
                         if interesting:
@@ -468,22 +506,32 @@ class RunsTab:
                         for out_key in ("font_names", "font_sizes"):
                             out_val = s_outputs.get(out_key)
                             if out_val and isinstance(out_val, dict):
-                                top_items = sorted(out_val.items(), key=lambda x: x[1], reverse=True)[:5]
+                                top_items = sorted(
+                                    out_val.items(), key=lambda x: x[1], reverse=True
+                                )[:5]
                                 summary = ", ".join(f"{k} ({v})" for k, v in top_items)
                                 if len(out_val) > 5:
                                     summary += f" +{len(out_val) - 5} more"
-                                label_text = "Fonts" if out_key == "font_names" else "Sizes"
+                                label_text = (
+                                    "Fonts" if out_key == "font_names" else "Sizes"
+                                )
                                 ttk.Label(
                                     page_frame.content,
                                     text=f"      {label_text}: {summary}",
                                     foreground="#abb2bf",
                                     wraplength=400,
-                                ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4)
+                                ).grid(
+                                    row=prow, column=0, columnspan=2, sticky="w", padx=4
+                                )
                                 prow += 1
 
                     # Stage error
                     if s_error:
-                        err_text = str(s_error) if not isinstance(s_error, dict) else s_error.get("message", str(s_error))
+                        err_text = (
+                            str(s_error)
+                            if not isinstance(s_error, dict)
+                            else s_error.get("message", str(s_error))
+                        )
                         ttk.Label(
                             page_frame.content,
                             text=f"      Error: {err_text}",
@@ -511,20 +559,32 @@ class RunsTab:
                     row=prow, column=0, columnspan=2, sticky="ew", pady=4
                 )
                 prow += 1
-                prow = self._add_section_heading(page_frame.content, prow, "Region Confidences")
+                prow = self._add_section_heading(
+                    page_frame.content, prow, "Region Confidences"
+                )
                 for rtype, confs in region_confs.items():
                     if not confs:
                         continue
                     conf_strs = []
                     for c in confs:
                         if isinstance(c, (int, float)):
-                            fg = "#e06c75" if c < 0.4 else "#e5c07b" if c < 0.6 else "#98c379"
+                            fg = (
+                                "#e06c75"
+                                if c < 0.4
+                                else "#e5c07b" if c < 0.6 else "#98c379"
+                            )
                             conf_strs.append(f"{c:.2f}")
                         else:
                             conf_strs.append(str(c))
                     # Use worst confidence color for the label
-                    min_c = min((c for c in confs if isinstance(c, (int, float))), default=1.0)
-                    fg = "#e06c75" if min_c < 0.4 else "#e5c07b" if min_c < 0.6 else "#98c379"
+                    min_c = min(
+                        (c for c in confs if isinstance(c, (int, float))), default=1.0
+                    )
+                    fg = (
+                        "#e06c75"
+                        if min_c < 0.4
+                        else "#e5c07b" if min_c < 0.6 else "#98c379"
+                    )
                     ttk.Label(
                         page_frame.content,
                         text=f"  {rtype}: {', '.join(conf_strs)}",
@@ -541,7 +601,9 @@ class RunsTab:
                     row=prow, column=0, columnspan=2, sticky="ew", pady=4
                 )
                 prow += 1
-                prow = self._add_section_heading(page_frame.content, prow, "OCR Reconcile")
+                prow = self._add_section_heading(
+                    page_frame.content, prow, "OCR Reconcile"
+                )
                 rec_accepted = counts.get("ocr_reconcile_accepted", 0)
                 cand_accepted = counts.get("ocr_reconcile_candidates_accepted", 0)
                 cand_rejected = counts.get("ocr_reconcile_candidates_rejected", 0)
@@ -551,12 +613,18 @@ class RunsTab:
                 if rec_total:
                     rec_lines.append(f"Direct matches: {rec_accepted}/{rec_total}")
                 if rec_cand:
-                    rate = f"{cand_accepted / rec_cand * 100:.0f}%" if rec_cand else "N/A"
-                    rec_lines.append(f"Candidates: {rec_cand} (accepted {cand_accepted}, rejected {cand_rejected}, filtered {cand_filtered}) — {rate} accept rate")
+                    rate = (
+                        f"{cand_accepted / rec_cand * 100:.0f}%" if rec_cand else "N/A"
+                    )
+                    rec_lines.append(
+                        f"Candidates: {rec_cand} (accepted {cand_accepted}, rejected {cand_rejected}, filtered {cand_filtered}) — {rate} accept rate"
+                    )
 
                 for line in rec_lines:
                     ttk.Label(
-                        page_frame.content, text=f"  {line}", foreground="#abb2bf",
+                        page_frame.content,
+                        text=f"  {line}",
+                        foreground="#abb2bf",
                         wraplength=420,
                     ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
                     prow += 1
@@ -564,12 +632,16 @@ class RunsTab:
             # ── Counts ───────────────────────────────────────────────
             # Exclude OCR reconcile keys (shown above) and show the rest
             ocr_keys = {
-                "ocr_reconcile_total", "ocr_reconcile_accepted",
-                "ocr_reconcile_candidates", "ocr_reconcile_candidates_accepted",
-                "ocr_reconcile_candidates_rejected", "ocr_reconcile_filtered_non_numeric",
+                "ocr_reconcile_total",
+                "ocr_reconcile_accepted",
+                "ocr_reconcile_candidates",
+                "ocr_reconcile_candidates_accepted",
+                "ocr_reconcile_candidates_rejected",
+                "ocr_reconcile_filtered_non_numeric",
             }
             other_counts = {
-                k: v for k, v in counts.items()
+                k: v
+                for k, v in counts.items()
                 if k not in ocr_keys and isinstance(v, (int, float))
             }
             if other_counts:
@@ -580,8 +652,10 @@ class RunsTab:
                 prow = self._add_section_heading(page_frame.content, prow, "Counts")
                 count_text = "  ".join(f"{k}={v}" for k, v in other_counts.items())
                 ttk.Label(
-                    page_frame.content, text=count_text,
-                    wraplength=420, foreground="gray",
+                    page_frame.content,
+                    text=count_text,
+                    wraplength=420,
+                    foreground="gray",
                 ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4)
                 prow += 1
 
@@ -592,7 +666,9 @@ class RunsTab:
                     row=prow, column=0, columnspan=2, sticky="ew", pady=4
                 )
                 prow += 1
-                prow = self._add_section_heading(page_frame.content, prow, "Semantic Findings")
+                prow = self._add_section_heading(
+                    page_frame.content, prow, "Semantic Findings"
+                )
                 for finding in findings:
                     if isinstance(finding, dict):
                         sev = finding.get("severity", "info")
@@ -622,7 +698,9 @@ class RunsTab:
                         foreground="#61afef",
                         cursor="hand2",
                     )
-                    link.grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
+                    link.grid(
+                        row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1
+                    )
                     full_path = (
                         self._current_run_dir / art_path
                         if self._current_run_dir
@@ -648,7 +726,9 @@ class RunsTab:
                         foreground="#61afef",
                         cursor="hand2",
                     )
-                    link.grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
+                    link.grid(
+                        row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1
+                    )
                     full_path = (
                         self._current_run_dir / exp_path
                         if self._current_run_dir

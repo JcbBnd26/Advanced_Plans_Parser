@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "producers": {
+    "bluebeam pdf library": {
+      "total_runs": 4,
+      "methods": {
+        "baseline_style_gap": {
+          "flagged": 200,
+          "hits": 0,
+          "misses": 200
+        },
+        "intraline_gap": {
+          "flagged": 200,
+          "hits": 0,
+          "misses": 200
+        },
+        "dimension_geometry_proximity": {
+          "flagged": 196,
+          "hits": 0,
+          "misses": 196
+        },
+        "regex_digit_pattern": {
+          "flagged": 4,
+          "hits": 0,
+          "misses": 4
+        },
+        "impossible_sequence": {
+          "flagged": 4,
+          "hits": 0,
+          "misses": 4
+        },
+        "semantic_no_units": {
+          "flagged": 8,
+          "hits": 0,
+          "misses": 8
+        },
+        "dense_cluster_hole": {
+          "flagged": 25,
+          "hits": 0,
+          "misses": 25
+        },
+        "token_width_anomaly": {
+          "flagged": 7,
+          "hits": 0,
+          "misses": 7
+        },
+        "vocab_trigger": {
+          "flagged": 2,
+          "hits": 0,
+          "misses": 2
+        },
+        "vector_circle_near_number": {
+          "flagged": 6,
+          "hits": 0,
+          "misses": 6
+        }
+      }
+    }
+  },
+  "updated_at": "2026-03-03T18:27:21.995706+00:00"
+}

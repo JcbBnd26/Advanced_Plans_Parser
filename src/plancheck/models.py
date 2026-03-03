@@ -630,17 +630,26 @@ class GlyphBox:
     @classmethod
     def from_dict(cls, d: dict) -> "GlyphBox":
         """Deserialize from a dict produced by :meth:`to_dict`."""
+        from pydantic import ValidationError
+
+        from .validation.schemas import GlyphBoxSchema
+
+        try:
+            v = GlyphBoxSchema.model_validate(d)
+        except ValidationError as exc:
+            raise ValueError(f"Invalid GlyphBox dict: {exc}") from exc
+
         return cls(
-            page=d["page"],
-            x0=d["x0"],
-            y0=d["y0"],
-            x1=d["x1"],
-            y1=d["y1"],
-            text=d.get("text", ""),
-            origin=d.get("origin", "text"),
-            fontname=d.get("fontname", ""),
-            font_size=d.get("font_size", 0.0),
-            confidence=d.get("confidence", 1.0),
+            page=v.page,
+            x0=v.x0,
+            y0=v.y0,
+            x1=v.x1,
+            y1=v.y1,
+            text=v.text,
+            origin=v.origin,
+            fontname=v.fontname,
+            font_size=v.font_size,
+            confidence=v.confidence,
         )
 
 
@@ -681,9 +690,18 @@ class Span:
     @classmethod
     def from_dict(cls, d: dict) -> "Span":
         """Deserialize from a dict produced by :meth:`to_dict`."""
+        from pydantic import ValidationError
+
+        from .validation.schemas import SpanSchema
+
+        try:
+            v = SpanSchema.model_validate(d)
+        except ValidationError as exc:
+            raise ValueError(f"Invalid Span dict: {exc}") from exc
+
         return cls(
-            token_indices=d.get("token_indices", []),
-            col_id=d.get("col_id"),
+            token_indices=v.token_indices,
+            col_id=v.col_id,
         )
 
 
@@ -734,12 +752,21 @@ class Line:
     @classmethod
     def from_dict(cls, d: dict) -> "Line":
         """Deserialize from a dict produced by :meth:`to_dict`."""
-        spans = [Span.from_dict(s) for s in d.get("spans", [])]
+        from pydantic import ValidationError
+
+        from .validation.schemas import LineSchema
+
+        try:
+            v = LineSchema.model_validate(d)
+        except ValidationError as exc:
+            raise ValueError(f"Invalid Line dict: {exc}") from exc
+
+        spans = [Span(token_indices=s.token_indices, col_id=s.col_id) for s in v.spans]
         return cls(
-            line_id=d["line_id"],
-            page=d["page"],
-            token_indices=d.get("token_indices", []),
-            baseline_y=d.get("baseline_y", 0.0),
+            line_id=v.line_id,
+            page=v.page,
+            token_indices=v.token_indices,
+            baseline_y=v.baseline_y,
             spans=spans,
         )
 
@@ -1179,18 +1206,27 @@ class VocrCandidate:
 
     @classmethod
     def from_dict(cls, d: dict) -> "VocrCandidate":
-        bbox = d.get("bbox", [0, 0, 0, 0])
+        from pydantic import ValidationError
+
+        from .validation.schemas import VocrCandidateSchema
+
+        try:
+            v = VocrCandidateSchema.model_validate(d)
+        except ValidationError as exc:
+            raise ValueError(f"Invalid VocrCandidate dict: {exc}") from exc
+
+        bbox = v.bbox
         return cls(
-            page=d.get("page", 0),
+            page=v.page,
             x0=bbox[0],
             y0=bbox[1],
             x1=bbox[2],
             y1=bbox[3],
-            trigger_methods=d.get("trigger_methods", []),
-            predicted_symbol=d.get("predicted_symbol", ""),
-            confidence=d.get("confidence", 0.5),
-            context=d.get("context", {}),
-            outcome=d.get("outcome", "pending"),
-            found_text=d.get("found_text", ""),
-            found_symbol=d.get("found_symbol", ""),
+            trigger_methods=v.trigger_methods,
+            predicted_symbol=v.predicted_symbol,
+            confidence=v.confidence,
+            context=v.context,
+            outcome=v.outcome,
+            found_text=v.found_text,
+            found_symbol=v.found_symbol,
         )

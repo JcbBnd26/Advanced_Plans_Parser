@@ -10,9 +10,9 @@ import os
 import sys
 from pathlib import Path
 
-from run_pdf_batch import cleanup_old_runs, run_pdf
-
 from plancheck.config import GroupingConfig
+
+from .run_pdf_batch import cleanup_old_runs, run_pdf
 
 
 def hex_to_rgba(hex_color: str, alpha: int = 200) -> tuple:

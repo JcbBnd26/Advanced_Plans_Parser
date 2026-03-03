@@ -74,11 +74,13 @@ def _load_label_patterns() -> dict[str, list[re.Pattern[str]]]:
                 raw[label] = patterns
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         log.warning(
-            "Could not load label_registry.json (%s), using fallback patterns", exc
+            "Could not load label_registry.json (%s), using fallback patterns",
+            exc,
+            exc_info=True,
         )
         raw = _FALLBACK_PATTERNS
     except Exception as exc:
-        log.error("Unexpected error loading label_registry: %s", exc)
+        log.exception("Unexpected error loading label_registry")
         raw = _FALLBACK_PATTERNS
 
     if not raw:

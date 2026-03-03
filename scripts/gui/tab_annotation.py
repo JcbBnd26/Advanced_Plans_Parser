@@ -7,48 +7,79 @@ Every correction is persisted to ``CorrectionStore`` immediately.
 from __future__ import annotations
 
 import copy
+import json
 import threading
 import tkinter as tk
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 from typing import Any, List, Optional
 from uuid import uuid4
 
-_project = Path(__file__).resolve().parent.parent.parent
-
 from PIL import Image, ImageTk
-from widgets import LogPanel, StatusBar
-from worker import PipelineWorker
 
 from plancheck.analysis.box_merge import merge_boxes, polygon_bbox
 from plancheck.corrections.classifier import ElementClassifier
 from plancheck.corrections.features import featurize_region
 from plancheck.corrections.store import CorrectionStore
 from plancheck.ingest.ingest import (extract_text_in_bbox,
-                                     extract_text_in_polygon)
+                                     extract_text_in_polygon, point_in_polygon)
 
-# ── Geometry helpers ───────────────────────────────────────────────────
+from .widgets import LogPanel, StatusBar
+from .worker import PipelineWorker
 
 
-def _point_in_polygon(px: float, py: float, polygon: list[tuple[float, float]]) -> bool:
-    """Ray-casting point-in-polygon test.
+def _reshape_bbox_from_handle(
+    orig_bbox: tuple[float, float, float, float],
+    handle: str,
+    px: float,
+    py: float,
+    *,
+    min_size: float = 1.0,
+) -> tuple[float, float, float, float]:
+    """Compute a resized bbox when dragging a named handle.
 
-    *polygon* is a list of (x, y) vertices forming a closed ring
-    (first == last vertex).  Returns True if (px, py) lies inside.
+    Coordinates are in PDF space.
     """
-    n = len(polygon)
-    inside = False
-    j = n - 1
-    for i in range(n):
-        xi, yi = polygon[i]
-        xj, yj = polygon[j]
-        if ((yi > py) != (yj > py)) and (px < (xj - xi) * (py - yi) / (yj - yi) + xi):
-            inside = not inside
-        j = i
-    return inside
+    ox0, oy0, ox1, oy1 = orig_bbox
+    nx0, ny0, nx1, ny1 = ox0, oy0, ox1, oy1
 
+    if "w" in handle:
+        nx0 = min(px, ox1 - min_size)
+    if "e" in handle:
+        nx1 = max(px, ox0 + min_size)
+    if "n" in handle:
+        ny0 = min(py, oy1 - min_size)
+    if "s" in handle:
+        ny1 = max(py, oy0 + min_size)
+
+    return (nx0, ny0, nx1, ny1)
+
+
+def _scale_polygon_to_bbox(
+    orig_bbox: tuple[float, float, float, float],
+    polygon: list[tuple[float, float]],
+    new_bbox: tuple[float, float, float, float],
+) -> list[tuple[float, float]]:
+    """Scale polygon points from orig_bbox into new_bbox.
+
+    This keeps each point's relative position within the bbox.
+    """
+    ox0, oy0, ox1, oy1 = orig_bbox
+    nx0, ny0, nx1, ny1 = new_bbox
+
+    ow = max(ox1 - ox0, 1e-6)
+    oh = max(oy1 - oy0, 1e-6)
+    nw = nx1 - nx0
+    nh = ny1 - ny0
+
+    scaled: list[tuple[float, float]] = []
+    for px, py in polygon:
+        u = (px - ox0) / ow
+        v = (py - oy0) / oh
+        scaled.append((nx0 + u * nw, ny0 + v * nh))
+    return scaled
 
 # ── CanvasBox ──────────────────────────────────────────────────────────
 
@@ -67,6 +98,7 @@ class CanvasBox:
     # Canvas item IDs (set after drawing)
     rect_id: int = 0
     label_id: int = 0
+    conf_dot_id: int = 0
     handle_ids: list[int] = field(default_factory=list)
     # State
     selected: bool = False
@@ -152,6 +184,13 @@ class AnnotationTab:
         self._worker: PipelineWorker | None = None
         self._classifier = ElementClassifier()
 
+        # Shutdown safety: avoid scheduling after() onto a destroyed root
+        self._closing: bool = False
+
+        # Cooperative cancellation for background training
+        self._train_cancel_event = threading.Event()
+        self._train_gen: int = 0
+
         # Undo / redo stacks
         self._undo_stack: list[dict] = []
         self._redo_stack: list[dict] = []
@@ -159,6 +198,7 @@ class AnnotationTab:
         # Drag-handle state
         self._drag_handle: str | None = None
         self._drag_orig_bbox: tuple[float, float, float, float] | None = None
+        self._drag_orig_polygon: list[tuple[float, float]] | None = None
 
         # Move-drag state (click inside already-selected box to drag)
         self._move_dragging: bool = False
@@ -168,6 +208,9 @@ class AnnotationTab:
 
         # Pan state
         self._pan_start: tuple[int, int] | None = None
+
+        # Mousewheel scroll state for the inspector panel (avoid unbind_all)
+        self._insp_wheel_active: bool = False
 
         # Clipboard for box copy/paste
         self._copied_box_template: dict | None = None
@@ -186,15 +229,28 @@ class AnnotationTab:
         self._filter_label_vars: dict[str, tk.BooleanVar] = {}
         self._filter_conf_min: tk.DoubleVar = tk.DoubleVar(value=0.0)
         self._filter_uncorrected_only: tk.BooleanVar = tk.BooleanVar(value=False)
+        self._filter_frame: ttk.Frame | None = None
+        self._active_filter_color_type: str | None = None
+        self._filter_color_btn: ttk.Button | None = None
 
         # Model metrics cache
         self._last_metrics: dict | None = None
 
         self._build_ui()
 
+        try:
+            self.root.bind("<Destroy>", lambda e: setattr(self, "_closing", True), add="+")
+        except Exception:
+            pass
+
         # Subscribe to GuiState events
         self.state.subscribe("pdf_changed", self._on_pdf_changed)
         self.state.subscribe("run_completed", self._on_run_completed)
+
+    def request_cancel(self) -> None:
+        """Best-effort cancel of background model training."""
+        self._train_cancel_event.set()
+        self._train_gen += 1
 
     # ── Helpers: read-only text / copy menu ────────────────────────
 
@@ -457,19 +513,25 @@ class AnnotationTab:
         self._insp_canvas.bind("<Configure>", _insp_canvas_configure)
 
         # Mouse-wheel scrolling for the inspector panel
-        def _insp_enter(event: tk.Event) -> None:
-            self._insp_canvas.bind_all(
-                "<MouseWheel>",
-                lambda ev: self._insp_canvas.yview_scroll(
-                    int(-1 * (ev.delta / 120)), "units"
-                ),
-            )
+        self._insp_canvas.bind(
+            "<Enter>",
+            lambda e: setattr(self, "_insp_wheel_active", True),
+        )
+        self._insp_canvas.bind(
+            "<Leave>",
+            lambda e: setattr(self, "_insp_wheel_active", False),
+        )
 
-        def _insp_leave(event: tk.Event) -> None:
-            self._insp_canvas.unbind_all("<MouseWheel>")
+        def _on_inspector_mousewheel(event) -> None:
+            if (
+                not self._insp_wheel_active
+                or not self._insp_canvas.winfo_ismapped()
+            ):
+                return
+            self._insp_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-        self._insp_canvas.bind("<Enter>", _insp_enter)
-        self._insp_canvas.bind("<Leave>", _insp_leave)
+        # Bind once globally; handler is gated by _insp_wheel_active
+        self.root.bind_all("<MouseWheel>", _on_inspector_mousewheel, add="+")
 
         row = 0
         ttk.Label(inspector, text="ID:").grid(
@@ -669,19 +731,34 @@ class AnnotationTab:
         )
 
         row += 1
-        filter_frame = ttk.Frame(inspector)
-        filter_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=8)
-        for i, etype in enumerate(self.ELEMENT_TYPES):
-            var = tk.BooleanVar(value=True)
-            self._filter_label_vars[etype] = var
-            color = self.LABEL_COLORS.get(etype, "#888")
-            cb = ttk.Checkbutton(
-                filter_frame,
-                text=etype,
-                variable=var,
-                command=self._apply_filters,
-            )
-            cb.grid(row=i // 2, column=i % 2, sticky="w")
+        filter_btns = ttk.Frame(inspector)
+        filter_btns.grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(2, 0))
+        ttk.Button(
+            filter_btns,
+            text="Show All",
+            command=self._select_all_filter_types,
+            width=10,
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(
+            filter_btns,
+            text="Hide All",
+            command=self._deselect_all_filter_types,
+            width=10,
+        ).pack(side="left")
+        self._filter_color_btn = ttk.Button(
+            filter_btns,
+            text="Pick Color",
+            command=self._choose_active_filter_color,
+            width=18,
+        )
+        self._filter_color_btn.pack(side="left", padx=(8, 0))
+
+        row += 1
+        self._filter_frame = ttk.Frame(inspector)
+        self._filter_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=8)
+        if self.ELEMENT_TYPES:
+            self._active_filter_color_type = self.ELEMENT_TYPES[0]
+        self._rebuild_filter_controls()
 
         row += 1
         conf_frame = ttk.Frame(inspector)
@@ -815,8 +892,17 @@ class AnnotationTab:
         _btn_stats = ttk.Button(
             inspector, text="Refresh Stats", command=self._refresh_stats
         )
-        _btn_stats.grid(row=row, column=0, columnspan=2, padx=4, pady=2)
+        _btn_stats.grid(row=row, column=0, padx=4, pady=2)
         self._tooltip(_btn_stats, "Recalculate annotation statistics from the database")
+        _btn_clear_runs = ttk.Button(
+            inspector, text="Clear Old Runs", command=self._on_clear_old_runs
+        )
+        _btn_clear_runs.grid(row=row, column=1, padx=4, pady=2)
+        self._tooltip(
+            _btn_clear_runs,
+            "Remove detection data from old pipeline runs "
+            "(preserves corrections and ML training data)",
+        )
 
         # ── Active Learning ───────────────────────────────────────
         row += 1
@@ -910,6 +996,11 @@ class AnnotationTab:
         self.root.bind("<Key-l>", self._key_link_column)
         self.root.bind("<Key-w>", self._key_toggle_words)
 
+        # Load any persisted element types from data/label_registry.json.
+        # This must run after the inspector/filter UI exists because
+        # _register_element_type updates comboboxes and filter controls.
+        self._load_element_types_from_registry()
+
         # Initialize model status
         self._update_model_status()
 
@@ -919,7 +1010,7 @@ class AnnotationTab:
         f = filedialog.askopenfilename(
             title="Select PDF",
             filetypes=[("PDF", "*.pdf"), ("All", "*.*")],
-            initialdir=str(_project / "input"),
+            initialdir=str(Path("input")),
         )
         if f:
             self.state.set_pdf(Path(f))
@@ -974,13 +1065,92 @@ class AnnotationTab:
 
     # ── Dynamic element types ──────────────────────────────────────
 
-    def _register_element_type(self, name: str) -> None:
-        """Register a new element type with auto-assigned color.
+    def _normalize_element_type_name(self, name: str) -> str:
+        return name.strip().lower().replace(" ", "_")
+
+    def _label_registry_path(self) -> Path:
+        # scripts/gui/tab_annotation.py -> repo root is parent.parent.parent
+        return (
+            Path(__file__).resolve().parent.parent.parent
+            / "data"
+            / "label_registry.json"
+        )
+
+    def _load_label_registry_json(self) -> dict:
+        path = self._label_registry_path()
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {"version": "1.0", "label_registry": []}
+        except Exception:
+            return {"version": "1.0", "label_registry": []}
+
+    def _save_label_registry_json(self, data: dict) -> None:
+        path = self._label_registry_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, indent=4) + "\n", encoding="utf-8")
+        tmp.replace(path)
+
+    def _persist_element_type_to_registry(
+        self, *, label: str, display_name: str, color: str
+    ) -> None:
+        data = self._load_label_registry_json()
+        reg = data.get("label_registry")
+        if not isinstance(reg, list):
+            reg = []
+            data["label_registry"] = reg
+
+        existing: dict | None = None
+        for entry in reg:
+            if isinstance(entry, dict) and entry.get("label") == label:
+                existing = entry
+                break
+
+        if existing is None:
+            reg.append(
+                {
+                    "label": label,
+                    "display_name": display_name,
+                    "color": color,
+                    "description": "",
+                    "aliases": [],
+                    "expected_zones": [],
+                    "text_patterns": [],
+                }
+            )
+        else:
+            existing["display_name"] = display_name
+            existing["color"] = color
+
+        if "version" not in data:
+            data["version"] = "1.0"
+        self._save_label_registry_json(data)
+
+    def _load_element_types_from_registry(self) -> None:
+        data = self._load_label_registry_json()
+        reg = data.get("label_registry", [])
+        if not isinstance(reg, list):
+            return
+        for entry in reg:
+            if not isinstance(entry, dict):
+                continue
+            label = entry.get("label", "")
+            color = entry.get("color", "")
+            if not label:
+                continue
+            if isinstance(color, str) and color.startswith("#") and len(color) == 7:
+                self._register_element_type(label, color=color)
+            else:
+                self._register_element_type(label)
+
+    def _register_element_type(self, name: str, *, color: str | None = None) -> None:
+        """Register a new element type (optionally with explicit color).
 
         Updates LABEL_COLORS, ELEMENT_TYPES, the type combo boxes,
         and the filter checkboxes.
         """
-        name = name.strip().lower().replace(" ", "_")
+        name = self._normalize_element_type_name(name)
         if not name or name in self.LABEL_COLORS:
             return
 
@@ -1002,8 +1172,9 @@ class AnnotationTab:
             "#808000",
             "#000075",
         ]
-        idx = len(self.LABEL_COLORS) % len(_palette)
-        color = _palette[idx]
+        if not (isinstance(color, str) and color.startswith("#") and len(color) == 7):
+            idx = len(self.LABEL_COLORS) % len(_palette)
+            color = _palette[idx]
 
         self.LABEL_COLORS[name] = color
         if name not in self.ELEMENT_TYPES:
@@ -1012,32 +1183,106 @@ class AnnotationTab:
         # Update combo boxes
         self._type_combo.configure(values=self.ELEMENT_TYPES)
 
-        # Add filter checkbox
         if name not in self._filter_label_vars:
-            var = tk.BooleanVar(value=True)
-            self._filter_label_vars[name] = var
-            # Find the filter frame and add to it
-            for child in self.frame.winfo_children():
-                for sub in child.winfo_children():
-                    if isinstance(sub, ttk.Frame):
-                        for w in sub.winfo_children():
-                            if isinstance(w, ttk.Checkbutton):
-                                parent = sub
-                                i = len(
-                                    [
-                                        c
-                                        for c in parent.winfo_children()
-                                        if isinstance(c, ttk.Checkbutton)
-                                    ]
-                                )
-                                cb = ttk.Checkbutton(
-                                    parent,
-                                    text=name,
-                                    variable=var,
-                                    command=self._apply_filters,
-                                )
-                                cb.grid(row=i // 2, column=i % 2, sticky="w")
-                                return
+            self._filter_label_vars[name] = tk.BooleanVar(value=True)
+        self._rebuild_filter_controls()
+
+    def _rebuild_filter_controls(self) -> None:
+        """Rebuild per-type filter rows with checkboxes and clickable labels."""
+        if self._filter_frame is None:
+            return
+
+        for child in self._filter_frame.winfo_children():
+            child.destroy()
+
+        if self._active_filter_color_type not in self.ELEMENT_TYPES:
+            self._active_filter_color_type = self.ELEMENT_TYPES[0] if self.ELEMENT_TYPES else None
+
+        for i, etype in enumerate(self.ELEMENT_TYPES):
+            if etype not in self._filter_label_vars:
+                self._filter_label_vars[etype] = tk.BooleanVar(value=True)
+
+            is_active = etype == self._active_filter_color_type
+            row_bg = "SystemHighlight" if is_active else self._filter_frame.winfo_toplevel().cget("bg")
+            row_fg = "SystemHighlightText" if is_active else "SystemWindowText"
+
+            row_frame = tk.Frame(self._filter_frame, bg=row_bg)
+            row_frame.grid(row=i // 2, column=i % 2, sticky="w", pady=1, padx=(0, 8))
+
+            cb = tk.Checkbutton(
+                row_frame,
+                variable=self._filter_label_vars[etype],
+                command=self._apply_filters,
+                bg=row_bg,
+                activebackground=row_bg,
+                highlightthickness=0,
+                borderwidth=0,
+            )
+            cb.pack(side="left")
+
+            lbl = tk.Label(
+                row_frame,
+                text=etype,
+                bg=row_bg,
+                fg=row_fg,
+                cursor="hand2",
+                padx=4,
+            )
+            lbl.pack(side="left")
+            lbl.bind("<Button-1>", lambda _e, label=etype: self._set_active_filter_color_type(label))
+
+        self._update_filter_color_button_label()
+
+    def _set_active_filter_color_type(self, element_type: str) -> None:
+        """Set the active element type target for the shared color picker."""
+        if element_type not in self.ELEMENT_TYPES:
+            return
+        self._active_filter_color_type = element_type
+        self._rebuild_filter_controls()
+
+    def _update_filter_color_button_label(self) -> None:
+        """Refresh shared color button text for the active element type."""
+        if self._filter_color_btn is None:
+            return
+        if self._active_filter_color_type:
+            self._filter_color_btn.configure(
+                text=f"Pick Color: {self._active_filter_color_type}"
+            )
+            self._filter_color_btn.state(["!disabled"])
+        else:
+            self._filter_color_btn.configure(text="Pick Color")
+            self._filter_color_btn.state(["disabled"])
+
+    def _choose_active_filter_color(self) -> None:
+        """Prompt for color of the currently selected filter label type."""
+        element_type = self._active_filter_color_type
+        if not element_type:
+            return
+        current = self.LABEL_COLORS.get(element_type, "#888888")
+        _rgb, chosen = colorchooser.askcolor(
+            color=current,
+            title=f"Choose color for {element_type}",
+            parent=self.root,
+        )
+        if not chosen:
+            return
+
+        self.LABEL_COLORS[element_type] = chosen
+        self._rebuild_filter_controls()
+        self._draw_all_boxes()
+        self._apply_filters()
+
+    def _select_all_filter_types(self) -> None:
+        """Enable all element-type filter checkboxes."""
+        for var in self._filter_label_vars.values():
+            var.set(True)
+        self._apply_filters()
+
+    def _deselect_all_filter_types(self) -> None:
+        """Disable all element-type filter checkboxes."""
+        for var in self._filter_label_vars.values():
+            var.set(False)
+        self._apply_filters()
 
     def _on_add_element_type(self) -> None:
         """Prompt user to add a new element type."""
@@ -1183,6 +1428,9 @@ class AnnotationTab:
             self._canvas.delete(cbox.rect_id)
         if cbox.label_id:
             self._canvas.delete(cbox.label_id)
+        if cbox.conf_dot_id:
+            self._canvas.delete(cbox.conf_dot_id)
+            cbox.conf_dot_id = 0
         for hid in cbox.handle_ids:
             self._canvas.delete(hid)
         cbox.handle_ids.clear()
@@ -1239,7 +1487,7 @@ class AnnotationTab:
         if cbox.confidence is not None:
             conf_color = self._confidence_color(cbox.confidence)
             dot_r = 4
-            self._canvas.create_oval(
+            cbox.conf_dot_id = self._canvas.create_oval(
                 cx0 - dot_r - 2,
                 cy0 - 12 - dot_r,
                 cx0 - 2 + dot_r,
@@ -1351,6 +1599,11 @@ class AnnotationTab:
                     if hx0 <= cx <= hx1 and hy0 <= cy <= hy1:
                         self._drag_handle = HANDLE_POSITIONS[i]
                         self._drag_orig_bbox = self._selected_box.pdf_bbox
+                        self._drag_orig_polygon = (
+                            list(self._selected_box.polygon)
+                            if self._selected_box.polygon
+                            else None
+                        )
                         return
 
         # Find which box was clicked
@@ -1368,7 +1621,7 @@ class AnnotationTab:
                 continue
             if cbox.polygon:
                 # Point-in-polygon test for merged boxes
-                if _point_in_polygon(pdf_x, pdf_y, cbox.polygon):
+                if point_in_polygon(pdf_x, pdf_y, cbox.polygon):
                     clicked = cbox
                     break
             else:
@@ -1439,7 +1692,7 @@ class AnnotationTab:
             ):
                 continue
             if cbox.polygon:
-                if _point_in_polygon(pdf_x, pdf_y, cbox.polygon):
+                if point_in_polygon(pdf_x, pdf_y, cbox.polygon):
                     clicked = cbox
                     break
             else:
@@ -1551,8 +1804,16 @@ class AnnotationTab:
 
         menu.add_command(label="Copy Text  (Ctrl+C)", command=_copy_word_text)
 
+        # ── Create New Type ──────────────────────────────────────
+        menu.add_separator()
+        menu.add_command(
+            label="Create New Type…",
+            command=self._on_create_new_type_from_words,
+        )
+
         # ── Merge / Create Detection ──────────────────────────────
         if n >= 2:
+            menu.add_separator()
             if self._selected_box:
                 menu.add_command(
                     label=f"Reshape \u2039{self._selected_box.element_type}\u203a to Words  (M)",
@@ -1599,11 +1860,57 @@ class AnnotationTab:
 
         menu.tk_popup(event.x_root, event.y_root)
 
+    def _on_create_new_type_from_words(self) -> None:
+        """Prompt for a new type name + color, persist it, then create from selected words."""
+        if not self._selected_word_rids:
+            return
+
+        raw = simpledialog.askstring(
+            "Create New Type",
+            "Enter new type name:",
+            parent=self.root,
+        )
+        if not raw:
+            return
+
+        label = self._normalize_element_type_name(raw)
+        if not label:
+            return
+
+        if label in self.LABEL_COLORS:
+            messagebox.showwarning(
+                "Type Exists",
+                f'Type "{label}" already exists.',
+                parent=self.root,
+            )
+            return
+
+        _rgb, hex_color = colorchooser.askcolor(
+            title="Choose Type Color",
+            parent=self.root,
+        )
+        if not hex_color:
+            return
+
+        self._register_element_type(label, color=hex_color)
+        try:
+            self._persist_element_type_to_registry(
+                label=label,
+                display_name=raw.strip(),
+                color=hex_color,
+            )
+        except Exception:
+            self._status.configure(text="Warning: failed to write label_registry.json")
+
+        # Create detection from words using this type (force create, no classifier override)
+        self._type_var.set(label)
+        self._merge_words_into_detection(forced_type=label, force_create=True)
+
     def _create_words_as_type(self, element_type: str) -> None:
         """Create a new detection from selected words with a specific type."""
         old_type = self._type_var.get()
         self._type_var.set(element_type)
-        self._merge_words_into_detection()
+        self._merge_words_into_detection(forced_type=element_type, force_create=True)
         self._type_var.set(old_type)
 
     def _select_all_words(self) -> None:
@@ -1776,7 +2083,7 @@ class AnnotationTab:
         btn_f = ttk.Frame(name_win)
         btn_f.pack(pady=8)
         ttk.Button(btn_f, text="OK", command=on_ok).pack(side="left", padx=4)
-        ttk.Button(btn_f, text="Cancel", command=on_cancel).pack(side="left", padx=4)
+        ttk.Button(btn_f, text="ABORT", command=on_cancel).pack(side="left", padx=4)
 
         name_win.wait_window()
 
@@ -2165,16 +2472,19 @@ class AnnotationTab:
         py = cy / eff
 
         # Compute new bbox based on which handle is being dragged
-        nx0, ny0, nx1, ny1 = ox0, oy0, ox1, oy1
-        h = self._drag_handle
-        if "w" in h:
-            nx0 = min(px, ox1 - 1)
-        if "e" in h:
-            nx1 = max(px, ox0 + 1)
-        if "n" in h:
-            ny0 = min(py, oy1 - 1)
-        if "s" in h:
-            ny1 = max(py, oy0 + 1)
+        if not self._drag_handle:
+            return
+        nx0, ny0, nx1, ny1 = _reshape_bbox_from_handle(
+            self._drag_orig_bbox, self._drag_handle, px, py, min_size=1.0
+        )
+
+        # If this is a merged box rendered as a polygon, reshape the polygon too.
+        if self._selected_box.polygon and self._drag_orig_polygon:
+            self._selected_box.polygon = _scale_polygon_to_bbox(
+                self._drag_orig_bbox,
+                self._drag_orig_polygon,
+                (nx0, ny0, nx1, ny1),
+            )
 
         # Live update on canvas
         self._selected_box.pdf_bbox = (nx0, ny0, nx1, ny1)
@@ -2198,6 +2508,7 @@ class AnnotationTab:
             self._finalize_reshape()
             self._drag_handle = None
             self._drag_orig_bbox = None
+            self._drag_orig_polygon = None
             return
 
         # Finalize add-mode draw
@@ -2223,7 +2534,12 @@ class AnnotationTab:
         if orig_bbox == new_bbox:
             return  # no change
 
-        self._push_undo("reshape", cbox, extra={"orig_bbox": orig_bbox})
+        extra: dict = {"orig_bbox": orig_bbox}
+        if self._drag_orig_polygon is not None:
+            extra["orig_polygon"] = copy.deepcopy(self._drag_orig_polygon)
+            extra["polygon"] = copy.deepcopy(cbox.polygon)
+
+        self._push_undo("reshape", cbox, extra=extra)
         self._store.save_correction(
             doc_id=self._doc_id,
             page=self._page,
@@ -2238,6 +2554,8 @@ class AnnotationTab:
         cbox.corrected = True
         self._session_count += 1
         self._update_session_label()
+        if cbox.polygon:
+            self._store.update_detection_polygon(cbox.detection_id, cbox.polygon, new_bbox)
         self._draw_box(cbox)
 
     def _finalize_add(self, cx: float, cy: float) -> None:
@@ -2295,7 +2613,7 @@ class AnnotationTab:
         btn_f = ttk.Frame(type_win)
         btn_f.pack(pady=10)
         ttk.Button(btn_f, text="OK", command=on_ok).pack(side="left", padx=4)
-        ttk.Button(btn_f, text="Cancel", command=on_cancel).pack(side="left", padx=4)
+        ttk.Button(btn_f, text="ABORT", command=on_cancel).pack(side="left", padx=4)
 
         type_win.wait_window()
 
@@ -2490,6 +2808,8 @@ class AnnotationTab:
                 self._canvas.delete(cbox.rect_id)
             if cbox.label_id:
                 self._canvas.delete(cbox.label_id)
+            if cbox.conf_dot_id:
+                self._canvas.delete(cbox.conf_dot_id)
             for hid in cbox.handle_ids:
                 self._canvas.delete(hid)
             if cbox in self._canvas_boxes:
@@ -2760,7 +3080,7 @@ class AnnotationTab:
                 target.corrected = rec.get("corrected", False)
                 # Restore polygon if the undo record saved one
                 if "orig_polygon" in rec:
-                    target.polygon = rec["orig_polygon"]
+                    target.polygon = copy.deepcopy(rec["orig_polygon"])
                 self._draw_box(target)
             self._status.configure(text="Undo reshape")
         elif action == "delete":
@@ -2839,8 +3159,11 @@ class AnnotationTab:
         elif action == "reshape" and target:
             target.pdf_bbox = rec["pdf_bbox"]
             target.corrected = True
-            # If undo record has orig_polygon, redo clears it (word-merge reshape)
-            if "orig_polygon" in rec:
+            # If undo record includes a polygon, restore it. Otherwise keep legacy
+            # behavior (some reshape flows intentionally clear the polygon).
+            if "polygon" in rec:
+                target.polygon = copy.deepcopy(rec["polygon"])
+            elif "orig_polygon" in rec:
                 target.polygon = None
             self._draw_box(target)
             self._status.configure(text="Redo reshape")
@@ -3108,7 +3431,9 @@ class AnnotationTab:
             text=f"Merged {len(targets)} boxes → {merged_type} (polygon with {len(merged_poly)} vertices)"
         )
 
-    def _merge_words_into_detection(self) -> None:
+    def _merge_words_into_detection(
+        self, *, forced_type: str | None = None, force_create: bool = False
+    ) -> None:
         """Reshape the currently selected detection to the enclosing bbox
         of the selected word-overlay rectangles, or create a new detection
         if no detection box is selected.  When multiple words are selected
@@ -3165,7 +3490,7 @@ class AnnotationTab:
 
         n_words = len(word_bboxes)
 
-        if self._selected_box:
+        if self._selected_box and not force_create and forced_type is None:
             # ── Reshape existing detection ───────────────────────
             cbox = self._selected_box
             orig_bbox = cbox.pdf_bbox
@@ -3210,10 +3535,10 @@ class AnnotationTab:
             )
         else:
             # ── Create new detection from words ──────────────────
-            # Auto-label via classifier if possible
+            # Auto-label via classifier if possible, unless user forced a type
             features = featurize_region("misc_title", new_bbox, None, 2448.0, 1584.0)
-            chosen_type = self._type_var.get() or "misc_title"
-            if features and self._classifier.model_exists():
+            chosen_type = forced_type or (self._type_var.get() or "misc_title")
+            if forced_type is None and features and self._classifier.model_exists():
                 try:
                     pred_label, pred_conf = self._classifier.predict(features)
                     if pred_conf and pred_conf > 0.5:
@@ -3680,14 +4005,25 @@ class AnnotationTab:
         self._model_status_label.configure(text="Training…", foreground="orange")
         self.root.update_idletasks()
 
+        # Cancel any previous training run
+        self._train_cancel_event.clear()
+        self._train_gen += 1
+        my_gen = self._train_gen
+
         def _train():
             try:
+                if (
+                    self._train_cancel_event.is_set()
+                    or self._closing
+                    or my_gen != self._train_gen
+                ):
+                    return
                 from plancheck.corrections.store import CorrectionStore as _CS
 
                 store = _CS()
                 n_examples = store.build_training_set()
                 if n_examples < 10:
-                    self.root.after(
+                    self._safe_after(
                         0,
                         lambda: self._model_status_label.configure(
                             text=f"Need more data ({n_examples} examples)",
@@ -3701,9 +4037,23 @@ class AnnotationTab:
                 tmp = Path(tempfile.mkdtemp()) / "train.jsonl"
                 store.export_training_jsonl(tmp)
 
+                if (
+                    self._train_cancel_event.is_set()
+                    or self._closing
+                    or my_gen != self._train_gen
+                ):
+                    return
+
                 clf = ElementClassifier()
                 metrics = clf.train(str(tmp))
                 self._last_metrics = metrics
+
+                if (
+                    self._train_cancel_event.is_set()
+                    or self._closing
+                    or my_gen != self._train_gen
+                ):
+                    return
 
                 # Record training run in the database
                 try:
@@ -3715,7 +4065,7 @@ class AnnotationTab:
 
                 acc = metrics.get("accuracy", 0)
                 f1m = metrics.get("f1_macro", 0)
-                self.root.after(
+                self._safe_after(
                     0,
                     lambda: self._model_status_label.configure(
                         text=f"Model trained — acc {acc:.1%}  F1 {f1m:.1%}",
@@ -3725,7 +4075,7 @@ class AnnotationTab:
                 # Reload classifier
                 self._classifier = ElementClassifier()
             except Exception as exc:
-                self.root.after(
+                self._safe_after(
                     0,
                     lambda: self._model_status_label.configure(
                         text=f"Train failed: {exc}",
@@ -3734,6 +4084,20 @@ class AnnotationTab:
                 )
 
         threading.Thread(target=_train, daemon=True).start()
+
+    def _safe_after(self, delay_ms: int, callback) -> None:
+        """Schedule callback on the UI thread if the window still exists."""
+        if getattr(self, "_closing", False):
+            return
+        try:
+            if hasattr(self.root, "winfo_exists") and not self.root.winfo_exists():
+                return
+        except Exception:
+            pass
+        try:
+            self.root.after(delay_ms, callback)
+        except Exception:
+            pass
 
     def _on_show_metrics(self) -> None:
         """Show the last training metrics in a popup."""
@@ -3861,6 +4225,26 @@ class AnnotationTab:
             self._stats_label.configure(text=text)
         except Exception as exc:
             self._stats_label.configure(text=f"Error: {exc}")
+
+    def _on_clear_old_runs(self) -> None:
+        """Remove detection data from old pipeline runs, keeping only the latest."""
+        ok = messagebox.askyesno(
+            "Clear Old Run Data",
+            "This will remove detection data from old pipeline runs.\n"
+            "Corrections and ML training data will be preserved.\n\n"
+            "Continue?",
+            parent=self.root,
+        )
+        if not ok:
+            return
+        try:
+            n = self._store.purge_all_stale_detections()
+            self._refresh_stats()
+            if self._pdf_path:
+                self._navigate_to_page()
+            self._status.configure(text=f"Purged {n} old detection(s)")
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc), parent=self.root)
 
     # ── Active learning ────────────────────────────────────────────
 

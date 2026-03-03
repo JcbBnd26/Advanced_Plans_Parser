@@ -17,7 +17,7 @@
             ],
             "text_patterns": [
                 "^\\d+\\.",
-                "^•",
+                "^\u2022",
                 "SHALL",
                 "PER CODE",
                 "ALL.*SHALL"
@@ -283,6 +283,15 @@
                 "header",
                 "standard_detail"
             ]
+        },
+        {
+            "label": "county",
+            "display_name": "county",
+            "color": "#ff55aa",
+            "description": "",
+            "aliases": [],
+            "expected_zones": [],
+            "text_patterns": []
         }
     ]
 }

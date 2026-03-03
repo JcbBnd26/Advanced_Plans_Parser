@@ -462,7 +462,7 @@ def extract_tocr_from_words(
     ):
         diag["below_min_density"] = True
 
-    if len(boxes) == 0:
+    if not boxes:
         log.warning(
             "TOCR page %d: zero tokens extracted (blank or image-only page)",
             page_num,
@@ -604,7 +604,7 @@ def extract_tocr_from_page(
         diag["below_min_density"] = True
 
     # Quality warnings
-    if len(boxes) == 0:
+    if not boxes:
         log.warning(
             "TOCR page %d: zero tokens extracted (blank or image-only page)",
             page_num,
@@ -681,10 +681,7 @@ def extract_tocr_page(
             page = pdf.pages[page_num]
             return extract_tocr_from_page(page, page_num, cfg, mode=mode)
     except Exception as exc:
-        import traceback
-
-        log.error("TOCR page %d: extraction failed: %s", page_num, exc)
-        traceback.print_exc()
+        log.exception("TOCR page %d: extraction failed", page_num)
         diag = _empty_diagnostics(cfg)
         diag["error"] = str(exc)
         return TocrPageResult(

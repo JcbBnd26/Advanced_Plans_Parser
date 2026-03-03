@@ -448,7 +448,7 @@ class DocumentIndex:
         try:
             results = self._collection.query(**kwargs)
         except Exception as exc:
-            log.warning("ChromaDB query failed: %s", exc)
+            log.warning("ChromaDB query failed: %s", exc, exc_info=True)
             return []
 
         search_results: list[SearchResult] = []

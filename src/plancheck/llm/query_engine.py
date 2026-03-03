@@ -339,7 +339,7 @@ class DocumentQueryEngine:
                     ],
                 )
         except Exception as exc:
-            log.warning("Query engine LLM call failed: %s", exc)
+            log.warning("Query engine LLM call failed: %s", exc, exc_info=True)
             result = QueryResult(
                 text=f"Error: {exc}",
                 search_results=search_results,

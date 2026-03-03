@@ -10,15 +10,7 @@ import pdfplumber
 from plancheck.grouping.font_metrics import FontMetricsAnalyzer  # noqa: E402
 from plancheck.grouping.font_metrics import VisualMetricsAnalyzer
 
-
-def _make_run_dir(run_root: Path, run_prefix: str) -> Path:
-    """Create a timestamped run folder matching the main pipeline convention."""
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"run_{stamp}_fontdiag_{run_prefix}"
-    run_dir = run_root / run_name
-    for sub in ["artifacts", "overlays", "exports", "logs"]:
-        (run_dir / sub).mkdir(parents=True, exist_ok=True)
-    return run_dir
+from ..utils.run_utils import make_run_dir
 
 
 def run_diagnostics(
@@ -123,7 +115,7 @@ def main() -> None:
         out_dir = args.out_dir
     else:
         run_prefix = args.pdf.stem.replace(" ", "_")[:20]
-        out_dir = _make_run_dir(args.run_root, run_prefix)
+        out_dir = make_run_dir(runs_root=args.run_root, label=f"fontdiag_{run_prefix}")
         print(f"Font diagnostics -> {out_dir}", flush=True)
 
     out_path = run_diagnostics(

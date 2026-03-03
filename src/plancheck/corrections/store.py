@@ -178,18 +178,34 @@ class CorrectionStore:
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
-        self._conn = sqlite3.connect(str(db_path))
+        self._lock_path = db_path.with_suffix(db_path.suffix + ".lock")
+        self._conn = sqlite3.connect(str(db_path), timeout=10.0)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.executescript(_DDL)
-        self._conn.commit()
-        self._migrate()
+        from .db_lock import acquire_lock
+
+        with acquire_lock(self._lock_path, timeout_sec=30.0):
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=10000")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            self._conn.executescript(_DDL)
+            self._conn.commit()
+            self._migrate_locked()
+
+    def _write_lock(self):
+        from .db_lock import acquire_lock
+
+        return acquire_lock(self._lock_path, timeout_sec=30.0)
 
     # ── helpers ────────────────────────────────────────────────────────
 
     def _migrate(self) -> None:
         """Apply lightweight schema migrations for columns added after v1."""
+        # Migrations are write operations and must be serialized across processes.
+        with self._write_lock():
+            self._migrate_locked()
+
+    def _migrate_locked(self) -> None:
+        """Implementation of migrations; caller must hold the write lock."""
         # polygon_json on detections
         det_cols = {
             r["name"]
@@ -287,21 +303,22 @@ class CorrectionStore:
                 except (AttributeError, TypeError):
                     pass
 
-        self._conn.execute(
-            "INSERT OR IGNORE INTO documents "
-            "(doc_id, filename, pdf_path, page_count, ingested_at, "
-            " page_width, page_height) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                doc_id,
-                pdf_path.name,
-                str(pdf_path.resolve()),
-                page_count,
-                _utcnow_iso(),
-                pw,
-                ph,
-            ),
-        )
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO documents "
+                "(doc_id, filename, pdf_path, page_count, ingested_at, "
+                " page_width, page_height) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    doc_id,
+                    pdf_path.name,
+                    str(pdf_path.resolve()),
+                    page_count,
+                    _utcnow_iso(),
+                    pw,
+                    ph,
+                ),
+            )
+            self._conn.commit()
         return doc_id
 
     # ── detections ─────────────────────────────────────────────────────
@@ -321,28 +338,98 @@ class CorrectionStore:
         """Persist one detection and return its ``det_…`` ID."""
         detection_id = _gen_id("det_")
         poly_json = json.dumps(polygon) if polygon else None
-        self._conn.execute(
-            "INSERT INTO detections "
-            "(detection_id, doc_id, page, run_id, element_type, confidence, "
-            " bbox_x0, bbox_y0, bbox_x1, bbox_y1, text_content, "
-            " features_json, polygon_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                detection_id,
-                doc_id,
-                page,
-                run_id,
-                element_type,
-                confidence,
-                *bbox,
-                text_content,
-                json.dumps(features),
-                poly_json,
-                _utcnow_iso(),
-            ),
-        )
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT INTO detections "
+                "(detection_id, doc_id, page, run_id, element_type, confidence, "
+                " bbox_x0, bbox_y0, bbox_x1, bbox_y1, text_content, "
+                " features_json, polygon_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    detection_id,
+                    doc_id,
+                    page,
+                    run_id,
+                    element_type,
+                    confidence,
+                    *bbox,
+                    text_content,
+                    json.dumps(features),
+                    poly_json,
+                    _utcnow_iso(),
+                ),
+            )
+            self._conn.commit()
         return detection_id
+
+    def purge_old_detections_for_doc(
+        self, doc_id: str, keep_run_id: str
+    ) -> int:
+        """Delete old pipeline detections for *doc_id*, keeping only *keep_run_id*.
+
+        Manual annotations (``run_id`` starting with ``'manual'``) are
+        always preserved.  Orphaned ``box_groups`` / ``box_group_members``
+        whose detections no longer exist are cleaned up as well.
+
+        Returns the number of deleted detection rows.
+        """
+        with self._write_lock():
+            cur = self._conn.execute(
+                "DELETE FROM detections "
+                "WHERE doc_id = ? AND run_id != ? AND run_id NOT LIKE 'manual%'",
+                (doc_id, keep_run_id),
+            )
+            n_deleted = cur.rowcount
+
+            # Cascade-clean orphaned group members
+            self._conn.execute(
+                "DELETE FROM box_group_members "
+                "WHERE detection_id NOT IN (SELECT detection_id FROM detections)"
+            )
+            # Remove empty groups
+            self._conn.execute(
+                "DELETE FROM box_groups WHERE group_id NOT IN "
+                "(SELECT DISTINCT group_id FROM box_group_members)"
+            )
+            self._conn.commit()
+        return n_deleted
+
+    def purge_all_stale_detections(self) -> int:
+        """For every document, keep only the latest pipeline run's detections.
+
+        Manual annotations are always preserved.  Returns the total
+        number of deleted detection rows.
+        """
+        with self._write_lock():
+            # Find the latest non-manual run_id per doc_id
+            latest_rows = self._conn.execute(
+                "SELECT doc_id, run_id FROM detections "
+                "WHERE run_id NOT LIKE 'manual%' "
+                "GROUP BY doc_id "
+                "HAVING created_at = MAX(created_at)"
+            ).fetchall()
+            keep = {r["doc_id"]: r["run_id"] for r in latest_rows}
+
+            total = 0
+            for did, rid in keep.items():
+                cur = self._conn.execute(
+                    "DELETE FROM detections "
+                    "WHERE doc_id = ? AND run_id != ? AND run_id NOT LIKE 'manual%'",
+                    (did, rid),
+                )
+                total += cur.rowcount
+
+            # Cascade-clean orphaned group members / groups
+            self._conn.execute(
+                "DELETE FROM box_group_members "
+                "WHERE detection_id NOT IN (SELECT detection_id FROM detections)"
+            )
+            self._conn.execute(
+                "DELETE FROM box_groups WHERE group_id NOT IN "
+                "(SELECT DISTINCT group_id FROM box_group_members)"
+            )
+            self._conn.commit()
+        return total
 
     def update_detection_polygon(
         self,
@@ -352,19 +439,20 @@ class CorrectionStore:
     ) -> None:
         """Update the polygon (and optionally bbox) of an existing detection."""
         poly_json = json.dumps(polygon) if polygon else None
-        if bbox is not None:
-            self._conn.execute(
-                "UPDATE detections SET polygon_json = ?, "
-                "bbox_x0 = ?, bbox_y0 = ?, bbox_x1 = ?, bbox_y1 = ? "
-                "WHERE detection_id = ?",
-                (poly_json, *bbox, detection_id),
-            )
-        else:
-            self._conn.execute(
-                "UPDATE detections SET polygon_json = ? WHERE detection_id = ?",
-                (poly_json, detection_id),
-            )
-        self._conn.commit()
+        with self._write_lock():
+            if bbox is not None:
+                self._conn.execute(
+                    "UPDATE detections SET polygon_json = ?, "
+                    "bbox_x0 = ?, bbox_y0 = ?, bbox_x1 = ?, bbox_y1 = ? "
+                    "WHERE detection_id = ?",
+                    (poly_json, *bbox, detection_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE detections SET polygon_json = ? WHERE detection_id = ?",
+                    (poly_json, detection_id),
+                )
+            self._conn.commit()
 
     # ── corrections ────────────────────────────────────────────────────
 
@@ -387,34 +475,35 @@ class CorrectionStore:
         """Persist a human correction and return its ``cor_…`` ID."""
         correction_id = _gen_id("cor_")
         orig = original_bbox or (None, None, None, None)
-        self._conn.execute(
-            "INSERT INTO corrections "
-            "(correction_id, detection_id, doc_id, page, correction_type, "
-            " original_element_type, corrected_element_type, "
-            " orig_bbox_x0, orig_bbox_y0, orig_bbox_x1, orig_bbox_y1, "
-            " corr_bbox_x0, corr_bbox_y0, corr_bbox_x1, corr_bbox_y1, "
-            " corrected_text, corrected_features_json, "
-            " annotator, corrected_at, session_id, notes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                correction_id,
-                detection_id,
-                doc_id,
-                page,
-                correction_type,
-                original_label,
-                corrected_label,
-                *orig,
-                *corrected_bbox,
-                corrected_text,
-                json.dumps(corrected_features) if corrected_features else None,
-                annotator,
-                _utcnow_iso(),
-                session_id,
-                notes,
-            ),
-        )
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT INTO corrections "
+                "(correction_id, detection_id, doc_id, page, correction_type, "
+                " original_element_type, corrected_element_type, "
+                " orig_bbox_x0, orig_bbox_y0, orig_bbox_x1, orig_bbox_y1, "
+                " corr_bbox_x0, corr_bbox_y0, corr_bbox_x1, corr_bbox_y1, "
+                " corrected_text, corrected_features_json, "
+                " annotator, corrected_at, session_id, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    correction_id,
+                    detection_id,
+                    doc_id,
+                    page,
+                    correction_type,
+                    original_label,
+                    corrected_label,
+                    *orig,
+                    *corrected_bbox,
+                    corrected_text,
+                    json.dumps(corrected_features) if corrected_features else None,
+                    annotator,
+                    _utcnow_iso(),
+                    session_id,
+                    notes,
+                ),
+            )
+            self._conn.commit()
         return correction_id
 
     def accept_detection(self, detection_id: str, doc_id: str, page: int) -> str:
@@ -572,31 +661,33 @@ class CorrectionStore:
         Returns the ``grp_…`` group ID.
         """
         group_id = _gen_id("grp_")
-        self._conn.execute(
-            "INSERT INTO box_groups "
-            "(group_id, doc_id, page, group_label, root_detection_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (group_id, doc_id, page, group_label, root_detection_id, _utcnow_iso()),
-        )
-        # Root is always member 0
-        self._conn.execute(
-            "INSERT OR IGNORE INTO box_group_members "
-            "(group_id, detection_id, sort_order) VALUES (?, ?, 0)",
-            (group_id, root_detection_id),
-        )
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT INTO box_groups "
+                "(group_id, doc_id, page, group_label, root_detection_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (group_id, doc_id, page, group_label, root_detection_id, _utcnow_iso()),
+            )
+            # Root is always member 0
+            self._conn.execute(
+                "INSERT OR IGNORE INTO box_group_members "
+                "(group_id, detection_id, sort_order) VALUES (?, ?, 0)",
+                (group_id, root_detection_id),
+            )
+            self._conn.commit()
         return group_id
 
     def add_to_group(
         self, group_id: str, detection_id: str, sort_order: int = 0
     ) -> None:
         """Add a detection as a child member of a group."""
-        self._conn.execute(
-            "INSERT OR IGNORE INTO box_group_members "
-            "(group_id, detection_id, sort_order) VALUES (?, ?, ?)",
-            (group_id, detection_id, sort_order),
-        )
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO box_group_members "
+                "(group_id, detection_id, sort_order) VALUES (?, ?, ?)",
+                (group_id, detection_id, sort_order),
+            )
+            self._conn.commit()
 
     def remove_from_group(self, group_id: str, detection_id: str) -> None:
         """Remove a detection from a group.
@@ -612,19 +703,22 @@ class CorrectionStore:
         if row and row["root_detection_id"] == detection_id:
             self.delete_group(group_id)
             return
-        self._conn.execute(
-            "DELETE FROM box_group_members " "WHERE group_id = ? AND detection_id = ?",
-            (group_id, detection_id),
-        )
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "DELETE FROM box_group_members "
+                "WHERE group_id = ? AND detection_id = ?",
+                (group_id, detection_id),
+            )
+            self._conn.commit()
 
     def delete_group(self, group_id: str) -> None:
         """Delete a group and all its member associations."""
-        self._conn.execute(
-            "DELETE FROM box_group_members WHERE group_id = ?", (group_id,)
-        )
-        self._conn.execute("DELETE FROM box_groups WHERE group_id = ?", (group_id,))
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "DELETE FROM box_group_members WHERE group_id = ?", (group_id,)
+            )
+            self._conn.execute("DELETE FROM box_groups WHERE group_id = ?", (group_id,))
+            self._conn.commit()
 
     def get_groups_for_page(self, doc_id: str, page: int) -> list[dict[str, Any]]:
         """Return all groups on a page with their members."""
@@ -785,71 +879,74 @@ class CorrectionStore:
         """
         from collections import defaultdict
 
-        self._conn.execute("DELETE FROM training_examples")
+        with self._write_lock():
+            self._conn.execute("DELETE FROM training_examples")
 
-        # ── Positive examples (relabel / accept / reshape) ──────────
-        rows = self._conn.execute(
-            "SELECT c.correction_id, c.detection_id, c.corrected_element_type, "
-            "       c.corrected_features_json, d.features_json "
-            "FROM corrections c "
-            "JOIN detections d ON c.detection_id = d.detection_id "
-            "WHERE c.correction_type != 'delete' "
-            "  AND c.detection_id IS NOT NULL"
-        ).fetchall()
+            # ── Positive examples (relabel / accept / reshape) ──────────
+            rows = self._conn.execute(
+                "SELECT c.correction_id, c.detection_id, c.corrected_element_type, "
+                "       c.corrected_features_json, d.features_json "
+                "FROM corrections c "
+                "JOIN detections d ON c.detection_id = d.detection_id "
+                "WHERE c.correction_type != 'delete' "
+                "  AND c.detection_id IS NOT NULL"
+            ).fetchall()
 
-        # ── Negative examples (deletions → false positives) ─────────
-        delete_rows = self._conn.execute(
-            "SELECT c.correction_id, c.detection_id, "
-            "       c.corrected_features_json, d.features_json "
-            "FROM corrections c "
-            "JOIN detections d ON c.detection_id = d.detection_id "
-            "WHERE c.correction_type = 'delete' "
-            "  AND c.detection_id IS NOT NULL"
-        ).fetchall()
+            # ── Negative examples (deletions → false positives) ─────────
+            delete_rows = self._conn.execute(
+                "SELECT c.correction_id, c.detection_id, "
+                "       c.corrected_features_json, d.features_json "
+                "FROM corrections c "
+                "JOIN detections d ON c.detection_id = d.detection_id "
+                "WHERE c.correction_type = 'delete' "
+                "  AND c.detection_id IS NOT NULL"
+            ).fetchall()
 
-        # ── Stratified split: group by label, force distribution ────
-        by_label: dict[str, list] = defaultdict(list)
-        for r in rows:
-            by_label[r["corrected_element_type"]].append(r)
-        for r in delete_rows:
-            by_label["__negative__"].append(r)
+            # ── Stratified split: group by label, force distribution ────
+            by_label: dict[str, list] = defaultdict(list)
+            for r in rows:
+                by_label[r["corrected_element_type"]].append(r)
+            for r in delete_rows:
+                by_label["__negative__"].append(r)
 
-        now = _utcnow_iso()
-        count = 0
-        for _label, group in sorted(by_label.items()):
-            # Sort deterministically within this class using MD5
-            group.sort(key=lambda r: self._deterministic_sort_key(r["detection_id"]))
-            n = len(group)
-            train_end = max(1, int(n * 0.7))  # at least 1 in train
-            val_end = max(train_end + 1, int(n * 0.9)) if n >= 2 else train_end
-            for i, r in enumerate(group):
-                features_json = r["corrected_features_json"] or r["features_json"]
-                if i < train_end:
-                    split = "train"
-                elif i < val_end:
-                    split = "val"
-                else:
-                    split = "test"
-                self._conn.execute(
-                    "INSERT INTO training_examples "
-                    "(example_id, source, correction_id, detection_id, "
-                    " label, features_json, split, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        _gen_id("ex_"),
-                        "correction",
-                        r["correction_id"],
-                        r["detection_id"],
-                        _label,
-                        features_json,
-                        split,
-                        now,
-                    ),
+            now = _utcnow_iso()
+            count = 0
+            for _label, group in sorted(by_label.items()):
+                # Sort deterministically within this class using MD5
+                group.sort(
+                    key=lambda r: self._deterministic_sort_key(r["detection_id"])
                 )
-                count += 1
+                n = len(group)
+                train_end = max(1, int(n * 0.7))  # at least 1 in train
+                val_end = max(train_end + 1, int(n * 0.9)) if n >= 2 else train_end
+                for i, r in enumerate(group):
+                    features_json = r["corrected_features_json"] or r["features_json"]
+                    if i < train_end:
+                        split = "train"
+                    elif i < val_end:
+                        split = "val"
+                    else:
+                        split = "test"
+                    self._conn.execute(
+                        "INSERT INTO training_examples "
+                        "(example_id, source, correction_id, detection_id, "
+                        " label, features_json, split, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            _gen_id("ex_"),
+                            "correction",
+                            r["correction_id"],
+                            r["detection_id"],
+                            _label,
+                            features_json,
+                            split,
+                            now,
+                        ),
+                    )
+                    count += 1
 
-        self._conn.commit()
-        return count
+            self._conn.commit()
+            return count
 
     def export_training_jsonl(self, output_path: Path) -> int:
         """Write training examples as JSON-Lines to *output_path*.
@@ -899,9 +996,10 @@ class CorrectionStore:
         suffix = f"_{tag}" if tag else ""
         dest = snap_dir / f"corrections_{ts}{suffix}.db"
 
-        # Flush WAL to disk before copying
-        self._conn.execute("PRAGMA wal_checkpoint(FULL)")
-        shutil.copy2(str(self._db_path), str(dest))
+        with self._write_lock():
+            # Flush WAL to disk before copying
+            self._conn.execute("PRAGMA wal_checkpoint(FULL)")
+            shutil.copy2(str(self._db_path), str(dest))
         return dest
 
     def list_snapshots(self) -> list[dict[str, Any]]:
@@ -949,17 +1047,19 @@ class CorrectionStore:
         if not snapshot_path.is_file():
             raise FileNotFoundError(f"Snapshot not found: {snapshot_path}")
 
-        # Close current connection
-        self._conn.close()
+        with self._write_lock():
+            # Close current connection
+            self._conn.close()
 
-        # Replace
-        shutil.copy2(str(snapshot_path), str(self._db_path))
+            # Replace
+            shutil.copy2(str(snapshot_path), str(self._db_path))
 
-        # Reconnect
-        self._conn = sqlite3.connect(str(self._db_path))
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
+            # Reconnect
+            self._conn = sqlite3.connect(str(self._db_path), timeout=10.0)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=10000")
+            self._conn.execute("PRAGMA foreign_keys=ON")
 
     # ── training runs ──────────────────────────────────────────────────
 
@@ -1002,33 +1102,34 @@ class CorrectionStore:
         hyper_json = json.dumps(hyperparams) if hyperparams else ""
         fs_json = json.dumps(feature_set) if feature_set else ""
         tc_json = json.dumps(training_curves) if training_curves else ""
-        self._conn.execute(
-            "INSERT INTO training_runs "
-            "(run_id, trained_at, n_train, n_val, accuracy, f1_macro, f1_weighted, "
-            " labels_json, per_class_json, model_path, notes, holdout_preds_json, "
-            " hyperparams_json, feature_set_json, training_curves_json, "
-            " feature_version) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                run_id,
-                _utcnow_iso(),
-                metrics.get("n_train", 0),
-                metrics.get("n_val", 0),
-                metrics.get("accuracy", 0.0),
-                metrics.get("f1_macro", 0.0),
-                metrics.get("f1_weighted", 0.0),
-                json.dumps(metrics.get("labels", [])),
-                json.dumps(metrics.get("per_class", {})),
-                model_path,
-                notes,
-                hp_json,
-                hyper_json,
-                fs_json,
-                tc_json,
-                feature_version,
-            ),
-        )
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT INTO training_runs "
+                "(run_id, trained_at, n_train, n_val, accuracy, f1_macro, f1_weighted, "
+                " labels_json, per_class_json, model_path, notes, holdout_preds_json, "
+                " hyperparams_json, feature_set_json, training_curves_json, "
+                " feature_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    _utcnow_iso(),
+                    metrics.get("n_train", 0),
+                    metrics.get("n_val", 0),
+                    metrics.get("accuracy", 0.0),
+                    metrics.get("f1_macro", 0.0),
+                    metrics.get("f1_weighted", 0.0),
+                    json.dumps(metrics.get("labels", [])),
+                    json.dumps(metrics.get("per_class", {})),
+                    model_path,
+                    notes,
+                    hp_json,
+                    hyper_json,
+                    fs_json,
+                    tc_json,
+                    feature_version,
+                ),
+            )
+            self._conn.commit()
         return run_id
 
     def get_training_history(self) -> list[dict[str, Any]]:
@@ -1195,19 +1296,20 @@ class CorrectionStore:
             Schema version (from :data:`FEATURE_VERSION`).
         """
         cache_key = f"{detection_id}:v{feature_version}"
-        self._conn.execute(
-            "INSERT OR REPLACE INTO feature_cache "
-            "(cache_key, detection_id, feature_version, vector_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                cache_key,
-                detection_id,
-                feature_version,
-                json.dumps(vector),
-                _utcnow_iso(),
-            ),
-        )
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT OR REPLACE INTO feature_cache "
+                "(cache_key, detection_id, feature_version, vector_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    cache_key,
+                    detection_id,
+                    feature_version,
+                    json.dumps(vector),
+                    _utcnow_iso(),
+                ),
+            )
+            self._conn.commit()
 
     def get_cached_features(
         self,
@@ -1246,15 +1348,16 @@ class CorrectionStore:
         int
             Number of rows deleted.
         """
-        if feature_version is None:
-            cur = self._conn.execute("DELETE FROM feature_cache")
-        else:
-            cur = self._conn.execute(
-                "DELETE FROM feature_cache WHERE feature_version != ?",
-                (feature_version,),
-            )
-        self._conn.commit()
-        return cur.rowcount
+        with self._write_lock():
+            if feature_version is None:
+                cur = self._conn.execute("DELETE FROM feature_cache")
+            else:
+                cur = self._conn.execute(
+                    "DELETE FROM feature_cache WHERE feature_version != ?",
+                    (feature_version,),
+                )
+            self._conn.commit()
+            return cur.rowcount
 
     def cache_stats(self) -> dict[str, int]:
         """Return summary stats about the feature cache.
@@ -1322,31 +1425,32 @@ class CorrectionStore:
             Pre-computed feature vector for the classifier.
         """
         outcome_id = _gen_id("co_")
-        self._conn.execute(
-            "INSERT INTO candidate_outcomes "
-            "(outcome_id, doc_id, page, run_id, trigger_methods, "
-            " predicted_symbol, found_symbol, outcome, confidence, "
-            " bbox_x0, bbox_y0, bbox_x1, bbox_y1, "
-            " page_width, page_height, features_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                outcome_id,
-                doc_id,
-                page,
-                run_id,
-                ",".join(trigger_methods),
-                predicted_symbol,
-                found_symbol,
-                outcome,
-                confidence,
-                *bbox,
-                page_width,
-                page_height,
-                json.dumps(features or {}),
-                _utcnow_iso(),
-            ),
-        )
-        self._conn.commit()
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT INTO candidate_outcomes "
+                "(outcome_id, doc_id, page, run_id, trigger_methods, "
+                " predicted_symbol, found_symbol, outcome, confidence, "
+                " bbox_x0, bbox_y0, bbox_x1, bbox_y1, "
+                " page_width, page_height, features_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    outcome_id,
+                    doc_id,
+                    page,
+                    run_id,
+                    ",".join(trigger_methods),
+                    predicted_symbol,
+                    found_symbol,
+                    outcome,
+                    confidence,
+                    *bbox,
+                    page_width,
+                    page_height,
+                    json.dumps(features or {}),
+                    _utcnow_iso(),
+                ),
+            )
+            self._conn.commit()
         return outcome_id
 
     def save_candidate_outcomes_batch(
@@ -1374,43 +1478,44 @@ class CorrectionStore:
         int
             Number of rows inserted.
         """
-        now = _utcnow_iso()
-        count = 0
-        for c in candidates:
-            if c.outcome not in ("hit", "miss"):
-                continue
-            outcome_id = _gen_id("co_")
-            self._conn.execute(
-                "INSERT INTO candidate_outcomes "
-                "(outcome_id, doc_id, page, run_id, trigger_methods, "
-                " predicted_symbol, found_symbol, outcome, confidence, "
-                " bbox_x0, bbox_y0, bbox_x1, bbox_y1, "
-                " page_width, page_height, features_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    outcome_id,
-                    doc_id,
-                    c.page,
-                    run_id,
-                    ",".join(c.trigger_methods),
-                    c.predicted_symbol or "",
-                    c.found_symbol or "",
-                    c.outcome,
-                    c.confidence,
-                    c.x0,
-                    c.y0,
-                    c.x1,
-                    c.y1,
-                    page_width,
-                    page_height,
-                    json.dumps({}),
-                    now,
-                ),
-            )
-            count += 1
-        if count:
-            self._conn.commit()
-        return count
+        with self._write_lock():
+            now = _utcnow_iso()
+            count = 0
+            for c in candidates:
+                if c.outcome not in ("hit", "miss"):
+                    continue
+                outcome_id = _gen_id("co_")
+                self._conn.execute(
+                    "INSERT INTO candidate_outcomes "
+                    "(outcome_id, doc_id, page, run_id, trigger_methods, "
+                    " predicted_symbol, found_symbol, outcome, confidence, "
+                    " bbox_x0, bbox_y0, bbox_x1, bbox_y1, "
+                    " page_width, page_height, features_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        outcome_id,
+                        doc_id,
+                        c.page,
+                        run_id,
+                        ",".join(c.trigger_methods),
+                        c.predicted_symbol or "",
+                        c.found_symbol or "",
+                        c.outcome,
+                        c.confidence,
+                        c.x0,
+                        c.y0,
+                        c.x1,
+                        c.y1,
+                        page_width,
+                        page_height,
+                        json.dumps({}),
+                        now,
+                    ),
+                )
+                count += 1
+            if count:
+                self._conn.commit()
+            return count
 
     def get_candidate_outcomes(
         self,

@@ -612,7 +612,16 @@ class VisualMetricsAnalyzer:
         if visual_width <= 0:
             return None
 
+        # Guard against corrupted glyphs producing a near-zero visual width.
+        # This can create extreme inflation factors that are not meaningful.
+        if reported_width > 0:
+            min_visual_width = max(0.01 * reported_width, 0.05)
+            if visual_width < min_visual_width:
+                return None
+
         inflation_factor = reported_width / visual_width
+        if inflation_factor > 1000:
+            return None
         overhang = reported_width - visual_width
         overhang_percent = (
             (overhang / reported_width) * 100 if reported_width > 0 else 0

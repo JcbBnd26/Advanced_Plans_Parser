@@ -8,17 +8,13 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-_project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "scripts" / "runners"))
-
-from widgets import CollapsibleFrame, LogPanel
-from worker import PipelineWorker
+from .widgets import CollapsibleFrame, LogPanel
+from .worker import PipelineWorker
 
 
 class RecreationTab:
@@ -196,14 +192,14 @@ class RecreationTab:
     def _select_run_dir(self) -> None:
         d = filedialog.askdirectory(
             title="Select Run Directory",
-            initialdir=str(_project / "runs"),
+            initialdir=str(Path("runs")),
         )
         if d:
             self._run_dir = Path(d)
             self._dir_label_var.set(self._run_dir.name)
 
     def _pick_latest_run(self) -> None:
-        runs_root = _project / "runs"
+        runs_root = Path("runs")
         if not runs_root.is_dir():
             messagebox.showinfo("No Runs", "No runs directory found.")
             return
@@ -226,7 +222,7 @@ class RecreationTab:
         f = filedialog.askopenfilename(
             title="Select Source PDF for Watermark",
             filetypes=[("PDF", "*.pdf"), ("All", "*.*")],
-            initialdir=str(_project / "input"),
+            initialdir=str(Path("input")),
         )
         if f:
             self._source_pdf = Path(f)

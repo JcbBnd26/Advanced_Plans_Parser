@@ -20,9 +20,6 @@ import logging
 import sys
 from pathlib import Path
 
-# Ensure project root is importable
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
 from plancheck.corrections.retrain_trigger import auto_retrain_candidate_classifier
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")

@@ -50,6 +50,16 @@ class TestCropPatch:
         assert arr.shape[1] == 100
         assert arr.shape[0] == 100
 
+    def test_grayscale_page_image_returns_rgb_array(self):
+        # Regression: grayscale ('L') images produced 2D arrays (H, W)
+        # which crash PaddleX text detection.
+        img = Image.new("L", (100, 100), 255)
+        cand = VocrCandidate(page=0, x0=10, y0=20, x1=50, y1=60)
+        arr = _crop_patch(img, cand, 100.0, 100.0)
+        assert arr is not None
+        assert arr.ndim == 3
+        assert arr.shape[2] == 3
+
 
 # ── _ocr_crop ──────────────────────────────────────────────────────────
 
@@ -66,6 +76,9 @@ class TestOcrCrop:
         ]
         crop = np.zeros((20, 40, 3), dtype=np.uint8)
         results = _ocr_crop(mock_ocr, crop, 0.5)
+        args, _kwargs = mock_ocr.predict.call_args
+        assert isinstance(args[0], list)
+        assert len(args[0]) == 1
         assert len(results) == 1
         text, conf, bbox = results[0]
         assert text == "45°"

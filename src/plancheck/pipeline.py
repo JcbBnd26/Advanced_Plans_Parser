@@ -20,10 +20,11 @@ import logging
 import time
 import traceback
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Generator, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, List, Optional
 
 from .config import GroupingConfig
 
@@ -49,6 +50,29 @@ if TYPE_CHECKING:
     from .reconcile.reconcile import ReconcileResult
 
 log = logging.getLogger(__name__)
+
+# Optional stage status hook (used by the GUI to update a progress bar).
+# Stored in a ContextVar so callers can scope the callback via a contextmanager.
+_ON_STAGE: ContextVar[Callable[[str, str], None] | None] = ContextVar(
+    "_ON_STAGE", default=None
+)
+
+
+@contextmanager
+def stage_callback_hook(
+    callback: Callable[[str, str], None] | None,
+) -> Generator[None, None, None]:
+    """Temporarily install a stage status callback for this context.
+
+    The callback is invoked as ``callback(stage_name, status)`` where status is
+    one of: ``pending`` (caller-driven), ``running``, ``done``, ``skipped``, ``error``.
+    """
+
+    token = _ON_STAGE.set(callback)
+    try:
+        yield
+    finally:
+        _ON_STAGE.reset(token)
 
 # ── Skip reasons (exhaustive enumeration) ──────────────────────────────
 
@@ -266,6 +290,16 @@ def run_stage(
     before doing expensive work. Timing is handled automatically.
     """
     should_run, skip_reason = gate(stage, cfg, inputs)
+    on_stage = _ON_STAGE.get()
+
+    def _notify(status: str) -> None:
+        if on_stage is None:
+            return
+        try:
+            on_stage(stage, status)
+        except Exception:
+            # Progress reporting must never break the pipeline.
+            log.debug("Stage callback failed: %s %s", stage, status, exc_info=True)
 
     sr = StageResult(stage=stage)
     # A stage is "enabled" in config even if a runtime dependency is
@@ -289,10 +323,12 @@ def run_stage(
         sr.ran = False
         sr.status = "skipped"
         sr.skip_reason = skip_reason
+        _notify("skipped")
         yield sr
         return
 
     sr.ran = True
+    _notify("running")
     t0 = time.perf_counter()
     try:
         yield sr
@@ -306,11 +342,18 @@ def run_stage(
             "message": str(exc),
             "stack": traceback.format_exc(),
         }
+        _notify("error")
         # Re-raise so the outer handler can decide fallback policy.
         raise
     finally:
         elapsed = time.perf_counter() - t0
         sr.duration_ms = int(elapsed * 1000)
+        if sr.status == "success":
+            _notify("done")
+        elif sr.status == "failed":
+            _notify("error")
+        else:
+            _notify("skipped")
 
 
 # ── Input fingerprint (determinism aid) ────────────────────────────────
@@ -1306,6 +1349,10 @@ def run_pipeline(
         from .corrections.features import featurize, featurize_region
 
         doc_id = correction_store.register_document(pdf_path)
+
+        # Purge old pipeline detections for this document so the DB
+        # only keeps the freshest run (manual annotations preserved).
+        correction_store.purge_old_detections_for_doc(doc_id, keep_run_id=run_id)
 
         # Build zone map: block index → ZoneTag.value
         block_zone_map: dict[int, str] = {}

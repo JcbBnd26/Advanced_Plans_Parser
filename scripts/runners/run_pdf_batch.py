@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from plancheck import (
     BlockCluster,
@@ -23,15 +25,12 @@ from plancheck.pipeline import (
     PageResult,
     _run_document_checks,
     input_fingerprint,
+    stage_callback_hook,
     run_pipeline,
 )
 
-
-def make_run_dir(base: Path, name: str) -> Path:
-    run_dir = base / name
-    for sub in ["artifacts", "overlays", "exports", "logs"]:
-        (run_dir / sub).mkdir(parents=True, exist_ok=True)
-    return run_dir
+from ..utils.box_serialization import save_boxes_json
+from ..utils.run_utils import make_run_dir
 
 
 def cleanup_old_runs(run_root: Path, keep: int = 50) -> None:
@@ -44,22 +43,6 @@ def cleanup_old_runs(run_root: Path, keep: int = 50) -> None:
     for old_dir in run_dirs[keep:]:
         shutil.rmtree(old_dir, ignore_errors=True)
         print(f"Cleaned up old run: {old_dir.name}")
-
-
-def save_boxes_json(boxes: list[GlyphBox], out_path: Path) -> None:
-    serializable = [
-        {
-            "page": b.page,
-            "x0": b.x0,
-            "y0": b.y0,
-            "x1": b.x1,
-            "y1": b.y1,
-            "text": b.text,
-            "origin": b.origin,
-        }
-        for b in boxes
-    ]
-    out_path.write_text(json.dumps(serializable, indent=2))
 
 
 def summarize(blocks: list[BlockCluster]) -> str:
@@ -85,6 +68,7 @@ def process_page(
     cfg: GroupingConfig | None = None,
     correction_store: "CorrectionStore | None" = None,
     run_id: str | None = None,
+    stage_callback: Callable[[str, str], None] | None = None,
 ) -> dict:
     """Process a single page and return page results for manifest.
 
@@ -99,15 +83,34 @@ def process_page(
     pdf_stem = pdf.stem.replace(" ", "_")
     t0 = _time.perf_counter()
 
+    # ── Optional per-stage progress updates (GUI) ─────────────────────
+    if stage_callback is not None:
+        for st in (
+            "ingest",
+            "tocr",
+            "vocrpp",
+            "vocr",
+            "reconcile",
+            "grouping",
+            "analysis",
+            "checks",
+            "export",
+        ):
+            try:
+                stage_callback(st, "pending")
+            except Exception:
+                pass
+
     # ── Run the canonical library pipeline ────────────────────────────
-    pr: PageResult = run_pipeline(
-        pdf,
-        page_num,
-        cfg=cfg,
-        resolution=resolution,
-        correction_store=correction_store,
-        run_id=run_id,
-    )
+    with stage_callback_hook(stage_callback):
+        pr: PageResult = run_pipeline(
+            pdf,
+            page_num,
+            cfg=cfg,
+            resolution=resolution,
+            correction_store=correction_store,
+            run_id=run_id,
+        )
 
     # ── Materialise artefacts to disk ─────────────────────────────────
     _materialise_page(pr, pdf, run_dir, pdf_stem, resolution, cfg)
@@ -545,6 +548,8 @@ def run_pdf(
     run_prefix: str,
     color_overrides: dict | None = None,
     cfg: GroupingConfig | None = None,
+    cancel_event: threading.Event | None = None,
+    stage_callback: Callable[[str, str], None] | None = None,
 ) -> Path:
     """Process pages of a single PDF and create one run folder with all results."""
     if cfg is None:
@@ -555,9 +560,7 @@ def run_pdf(
     end_page = end if end is not None else total_pages
 
     # Create single run folder for this PDF
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"run_{stamp}_{run_prefix}"
-    run_dir = make_run_dir(run_root, run_name)
+    run_dir = make_run_dir(runs_root=run_root, label=run_prefix)
 
     # Persist detections to the correction store so the annotation
     # tab can display them immediately after the run completes.
@@ -569,7 +572,13 @@ def run_pdf(
     print(f"Processing {pdf.name} -> {run_dir}", flush=True)
 
     page_results = []
+    processed_pages: list[int] = []
+    cancelled = False
     for page_num in range(start, end_page):
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            print("Cancellation requested — stopping after current page.")
+            break
         try:
             result = process_page(
                 pdf,
@@ -580,14 +589,17 @@ def run_pdf(
                 cfg=cfg,
                 correction_store=correction_store,
                 run_id=_run_id,
+                stage_callback=stage_callback,
             )
             page_results.append(result)
+            processed_pages.append(page_num)
         except Exception as exc:  # pragma: no cover
             import traceback
 
             traceback.print_exc()
             print(f"  page {page_num}: ERROR {exc}", flush=True)
             page_results.append({"page": page_num, "error": str(exc)})
+            processed_pages.append(page_num)
 
     # ── Cross-page checks ─────────────────────────────────────────────
     page_result_objects = [
@@ -601,7 +613,7 @@ def run_pdf(
         cross_page_findings = _run_document_checks(pr_list)
 
     # Write single manifest for entire run
-    pages_list = list(range(start, end_page))
+    pages_list = processed_pages
     # Strip internal _page_result refs before serialisation
     clean_results = [
         (
@@ -623,6 +635,7 @@ def run_pdf(
         # Keep legacy key for backward compat
         "settings": vars(cfg),
         "pages_processed": pages_list,
+        "cancelled": cancelled,
         "pages": clean_results,
         "cross_page_findings": [f.to_dict() for f in cross_page_findings],
     }

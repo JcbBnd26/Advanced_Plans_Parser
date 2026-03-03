@@ -54,10 +54,12 @@ docs/                   Implementation notes & status logs
 
 ```bash
 pip install -r requirements.txt
+# Install the `plancheck` package (src/ layout) so scripts can import it:
+pip install -e .
 # Process a full PDF (all pages):
-python scripts/runners/run_pdf_batch.py input/your.pdf
+python -m scripts.runners.run_pdf_batch input/your.pdf
 # Process a single page:
-python scripts/runners/run_pdf_page.py input/your.pdf --page 0
+python -m scripts.runners.run_pdf_page input/your.pdf --page 0
 # Launch the GUI:
 launch_gui.bat
 ```

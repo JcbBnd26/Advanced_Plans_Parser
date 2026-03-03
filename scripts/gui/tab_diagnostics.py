@@ -9,18 +9,13 @@ layer in a future release.
 
 from __future__ import annotations
 
-import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-_project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "scripts" / "runners"))
-sys.path.insert(0, str(_project / "scripts" / "diagnostics"))
-
-from widgets import CollapsibleFrame, LogPanel
-from worker import PipelineWorker
+from .widgets import CollapsibleFrame, LogPanel
+from .worker import PipelineWorker
 
 
 class DiagnosticsTab:
@@ -38,6 +33,9 @@ class DiagnosticsTab:
         notebook.add(self.frame, text="Diagnostics")
 
         self._worker: PipelineWorker | None = None
+
+        # Mousewheel scroll state (avoid unbind_all, which breaks other tabs)
+        self._wheel_active: bool = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -61,18 +59,18 @@ class DiagnosticsTab:
             self._canvas.itemconfig(cw, width=event.width)
 
         self._canvas.bind("<Configure>", _resize)
-        self._canvas.bind(
-            "<Enter>",
-            lambda e: self._canvas.bind_all(
-                "<MouseWheel>",
-                lambda ev: self._canvas.yview_scroll(
-                    int(-1 * (ev.delta / 120)), "units"
-                ),
-            ),
-        )
-        self._canvas.bind("<Leave>", lambda e: self._canvas.unbind_all("<MouseWheel>"))
+        self._canvas.bind("<Enter>", lambda e: setattr(self, "_wheel_active", True))
+        self._canvas.bind("<Leave>", lambda e: setattr(self, "_wheel_active", False))
+
+        # Bind once globally; handler is gated by _wheel_active
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
 
         row = 0
+
+    def _on_mousewheel(self, event) -> None:
+        if not self._wheel_active or not self._canvas.winfo_ismapped():
+            return
+        self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         # ── 1. Font Diagnostics ──────────────────────────────────────
         font_section = CollapsibleFrame(
@@ -420,15 +418,19 @@ class DiagnosticsTab:
             messagebox.showinfo("No Tools", "Enable at least one diagnostics tool.")
             return
 
-        runs_root = _project / "runs"
+        runs_root = Path("runs")
         self.log_panel.clear()
 
         self._worker = PipelineWorker(self.root, self.log_panel)
 
         def target():
-            from run_font_metrics_diagnostics import _make_run_dir, run_diagnostics
+            from ..diagnostics.run_font_metrics_diagnostics import run_diagnostics
+            from ..utils.run_utils import make_run_dir
 
-            run_dir = _make_run_dir(runs_root, pdf.stem[:15])
+            run_dir = make_run_dir(
+                runs_root=runs_root,
+                label=f"fontdiag_{pdf.stem.replace(' ', '_')[:15]}",
+            )
             out = run_diagnostics(
                 pdf=pdf,
                 out_dir=run_dir,
@@ -472,22 +474,22 @@ class DiagnosticsTab:
             )
             return
 
-        runs_root = _project / "runs"
+        runs_root = Path("runs")
         ocr_dpi = int(self._bench_ocr_dpi.get())
         self.log_panel.clear()
 
         self._worker = PipelineWorker(self.root, self.log_panel)
 
         def target():
-            from run_benchmark import (
+            from plancheck.config import GroupingConfig
+
+            from ..diagnostics.run_benchmark import (
                 _CONDITIONS,
                 _build_comparison,
                 _print_table,
                 _read_manifest,
             )
-            from run_pdf_batch import run_pdf
-
-            from plancheck.config import GroupingConfig
+            from ..runners.run_pdf_batch import run_pdf
 
             manifests = {}
             for cond in conditions:
@@ -524,9 +526,9 @@ class DiagnosticsTab:
     # ------------------------------------------------------------------
 
     def _run_calibration_diagram(self) -> None:
-        db_path = _project / "data" / "corrections.db"
-        model_path = _project / "data" / "element_classifier.pkl"
-        jsonl_path = _project / "data" / "training_data.jsonl"
+        db_path = Path("data") / "corrections.db"
+        model_path = Path("data") / "element_classifier.pkl"
+        jsonl_path = Path("data") / "training_data.jsonl"
 
         if not model_path.exists():
             messagebox.showwarning(
@@ -614,7 +616,7 @@ class DiagnosticsTab:
     # ------------------------------------------------------------------
 
     def _refresh_training_runs(self) -> None:
-        db_path = _project / "data" / "corrections.db"
+        db_path = Path("data") / "corrections.db"
         if not db_path.exists():
             messagebox.showwarning(
                 "No Database",
@@ -662,7 +664,7 @@ class DiagnosticsTab:
             )
             return
 
-        db_path = _project / "data" / "corrections.db"
+        db_path = Path("data") / "corrections.db"
         from plancheck.corrections.store import CorrectionStore
 
         store = CorrectionStore(db_path)

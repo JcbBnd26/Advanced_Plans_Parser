@@ -12,16 +12,12 @@ Features:
 from __future__ import annotations
 
 import json
-import sys
 import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
-
-_project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "src"))
 
 
 class QueryTab:
@@ -41,6 +37,14 @@ class QueryTab:
         self._chat_history: list[dict] = []
         self._busy = False
 
+        # Shutdown safety: avoid scheduling after() onto a destroyed root
+        self._closing: bool = False
+
+        # Cooperative cancellation for background work
+        self._cancel_event = threading.Event()
+        self._load_gen: int = 0
+        self._query_gen: int = 0
+
         # Default LLM settings
         self._provider = tk.StringVar(value="ollama")
         self._model = tk.StringVar(value="llama3.1:8b")
@@ -48,8 +52,22 @@ class QueryTab:
 
         self._build_ui()
 
+        # When the window is destroyed, mark as closing so background
+        # threads stop scheduling UI updates.
+        try:
+            self.root.bind("<Destroy>", lambda e: setattr(self, "_closing", True), add="+")
+        except Exception:
+            pass
+
         # React to run completions
         self.state.subscribe("run_completed", self._on_run_completed)
+
+    def request_cancel(self) -> None:
+        """Best-effort cancel of background tasks (load/query)."""
+        self._cancel_event.set()
+        # Bump generations so any in-flight results are ignored
+        self._load_gen += 1
+        self._query_gen += 1
 
     # ------------------------------------------------------------------
     # Build UI
@@ -174,10 +192,10 @@ class QueryTab:
 
     def _load_run(self) -> None:
         """Browse for a run directory."""
-        runs_root = _project / "runs"
+        runs_root = Path("runs")
         d = filedialog.askdirectory(
             title="Select Run Directory",
-            initialdir=str(runs_root) if runs_root.exists() else str(_project),
+            initialdir=str(runs_root) if runs_root.exists() else str(Path(".")),
         )
         if d:
             self._init_engine(Path(d))
@@ -203,12 +221,21 @@ class QueryTab:
         self._append_system(f"Loading run: {run_dir.name}...")
         self._set_busy(True)
 
+        # Cancel any previous load
+        self._cancel_event.clear()
+        self._load_gen += 1
+        my_gen = self._load_gen
+
         def _load():
             try:
+                if self._cancel_event.is_set() or self._closing or my_gen != self._load_gen:
+                    return
                 from plancheck.export.run_loader import load_run
                 from plancheck.llm.query_engine import DocumentQueryEngine
 
                 dr = load_run(str(run_dir))
+                if self._cancel_event.is_set() or self._closing or my_gen != self._load_gen:
+                    return
                 engine = DocumentQueryEngine.from_document_result(
                     dr,
                     provider=self._provider.get(),
@@ -221,11 +248,19 @@ class QueryTab:
                 )
                 n_chunks = engine.index.count
                 n_pages = len(dr.pages) if dr.pages else 0
-                self.root.after(
-                    0, lambda: self._on_engine_ready(engine, n_pages, n_chunks, run_dir)
+                self._safe_after(
+                    0,
+                    lambda: self._on_engine_ready(engine, n_pages, n_chunks, run_dir)
+                    if (not self._cancel_event.is_set() and not self._closing and my_gen == self._load_gen)
+                    else None,
                 )
             except Exception as exc:
-                self.root.after(0, lambda: self._on_engine_error(exc))
+                self._safe_after(
+                    0,
+                    lambda: self._on_engine_error(exc)
+                    if (not self._cancel_event.is_set() and not self._closing and my_gen == self._load_gen)
+                    else None,
+                )
 
         threading.Thread(target=_load, daemon=True).start()
 
@@ -263,16 +298,53 @@ class QueryTab:
         self._append_user(question)
         self._set_busy(True)
 
+        # Cancel any previous query and start a new generation
+        self._cancel_event.clear()
+        self._query_gen += 1
+        my_gen = self._query_gen
+
         page_filt = self._parse_page_filter()
 
         def _query():
             try:
+                if self._cancel_event.is_set() or self._closing or my_gen != self._query_gen:
+                    return
                 result = self._engine.query(question, page_filter=page_filt)
-                self.root.after(0, lambda: self._on_answer(question, result))
+                if self._cancel_event.is_set() or self._closing or my_gen != self._query_gen:
+                    return
+                self._safe_after(
+                    0,
+                    lambda: self._on_answer(question, result)
+                    if (not self._cancel_event.is_set() and not self._closing and my_gen == self._query_gen)
+                    else None,
+                )
             except Exception as exc:
-                self.root.after(0, lambda: self._on_query_error(exc))
+                if self._cancel_event.is_set() or self._closing or my_gen != self._query_gen:
+                    return
+                self._safe_after(
+                    0,
+                    lambda: self._on_query_error(exc)
+                    if (not self._cancel_event.is_set() and not self._closing and my_gen == self._query_gen)
+                    else None,
+                )
 
         threading.Thread(target=_query, daemon=True).start()
+
+    def _safe_after(self, delay_ms: int, callback) -> None:
+        """Schedule callback on the UI thread if the window still exists."""
+        if self._closing:
+            return
+        try:
+            if hasattr(self.root, "winfo_exists") and not self.root.winfo_exists():
+                return
+        except Exception:
+            pass
+        if callback is None:
+            return
+        try:
+            self.root.after(delay_ms, callback)
+        except Exception:
+            pass
 
     def _on_search(self) -> None:
         """Semantic search without LLM."""

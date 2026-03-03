@@ -51,6 +51,10 @@ def _crop_patch(
         return None
 
     crop = image.crop((px0, py0, px1, py1))
+    # PaddleX text detection expects H×W×C.  If the page image is grayscale
+    # (mode 'L') or palette-based, np.array(crop) becomes 2D and crashes.
+    if crop.mode != "RGB":
+        crop = crop.convert("RGB")
     return np.array(crop)
 
 
@@ -64,7 +68,11 @@ def _ocr_crop(
     Coordinates are in *crop-local* pixels.
     """
     results: List[Tuple[str, float, List[float]]] = []
-    for page_result in ocr.predict(crop_array):
+    # PaddleX/PaddleOCR predict() expects either a single image *or* a batch.
+    # Some versions treat a NumPy array as an iterable (yielding rows), which
+    # turns an H×W×C image into W×C slices and crashes downstream. Always pass
+    # a 1-item batch to be unambiguous.
+    for page_result in ocr.predict([crop_array]):
         polys = (
             page_result.get("dt_polys")
             if hasattr(page_result, "get")

@@ -15,22 +15,16 @@ release.
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-# Ensure imports work
-_project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "scripts" / "runners"))
-sys.path.insert(0, str(_project / "scripts" / "utils"))
-
-from widgets import LogPanel, StageProgressBar
-from worker import PipelineWorker
-
 from plancheck.config import GroupingConfig
+
+from .widgets import LogPanel, StageProgressBar
+from .worker import PipelineWorker
 
 # ---------------------------------------------------------------------------
 # Note: All advanced field lists (TOCR / VOCRPP / VOCR / Reconcile / Geometry)
@@ -59,6 +53,9 @@ class PipelineTab:
 
         # Worker
         self._worker: PipelineWorker | None = None
+
+        # Mousewheel scroll state (avoid unbind_all, which breaks other tabs)
+        self._wheel_active: bool = False
 
         self._build_ui()
 
@@ -91,8 +88,11 @@ class PipelineTab:
             self._canvas.itemconfig(self._canvas_window, width=event.width)
 
         self._canvas.bind("<Configure>", _on_canvas_configure)
-        self._canvas.bind("<Enter>", lambda e: self._bind_mousewheel())
-        self._canvas.bind("<Leave>", lambda e: self._unbind_mousewheel())
+        self._canvas.bind("<Enter>", lambda e: setattr(self, "_wheel_active", True))
+        self._canvas.bind("<Leave>", lambda e: setattr(self, "_wheel_active", False))
+
+        # Bind once globally; handler is gated by _wheel_active
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
 
         row = 0
 
@@ -271,7 +271,7 @@ class PipelineTab:
 
         self.cancel_button = ttk.Button(
             btn_frame,
-            text="Cancel",
+            text="ABORT",
             command=self._cancel_processing,
             state="disabled",
         )
@@ -327,7 +327,7 @@ class PipelineTab:
         f = filedialog.askopenfilename(
             title="Select PDF File",
             filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
-            initialdir=_project / "input",
+            initialdir=str(Path("input")),
         )
         if f:
             path = Path(f)
@@ -371,17 +371,9 @@ class PipelineTab:
         end = int(end_str) if end_str else None
         return start, end
 
-    # ------------------------------------------------------------------
-    # Mousewheel binding for the scrollable area
-    # ------------------------------------------------------------------
-
-    def _bind_mousewheel(self) -> None:
-        self._canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-
-    def _unbind_mousewheel(self) -> None:
-        self._canvas.unbind_all("<MouseWheel>")
-
     def _on_mousewheel(self, event) -> None:
+        if not self._wheel_active or not self._canvas.winfo_ismapped():
+            return
         self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     # ------------------------------------------------------------------
@@ -394,8 +386,8 @@ class PipelineTab:
             return
         try:
             start, end = self._parse_page_range()
-        except ValueError:
-            messagebox.showerror("Invalid Input", "Page numbers must be integers.")
+        except ValueError as exc:
+            messagebox.showerror("Invalid Input", str(exc) or "Invalid page range")
             return
         try:
             resolution = int(self.resolution_var.get())
@@ -404,7 +396,7 @@ class PipelineTab:
 
         cfg = self._collect_config()
 
-        runs_root = _project / "runs"
+        runs_root = Path("runs")
 
         self.log_panel.clear()
         self.stage_bar.reset()
@@ -412,12 +404,15 @@ class PipelineTab:
         self.cancel_button.config(state="normal")
 
         self._worker = PipelineWorker(self.root, self.log_panel, self.stage_bar)
+        worker = self._worker
 
         def target():
-            from run_pdf_batch import cleanup_old_runs, run_pdf
+            from ..runners.run_pdf_batch import cleanup_old_runs, run_pdf
 
             results = []
             for pdf_path in self.pdf_files:
+                if worker and worker.cancel_event.is_set():
+                    break
                 run_prefix = pdf_path.stem.replace(" ", "_")[:20]
                 run_dir = run_pdf(
                     pdf=pdf_path,
@@ -427,6 +422,8 @@ class PipelineTab:
                     run_root=runs_root,
                     run_prefix=run_prefix,
                     cfg=cfg,
+                    cancel_event=worker.cancel_event if worker else None,
+                    stage_callback=worker.post_stage if worker else None,
                 )
                 results.append(run_dir)
             cleanup_old_runs(runs_root, keep=50)

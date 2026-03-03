@@ -12,9 +12,9 @@ from datetime import datetime
 from tkinter import messagebox, ttk
 from typing import Any
 
-from widgets import CollapsibleFrame
-
 from plancheck.corrections.store import CorrectionStore
+
+from .widgets import CollapsibleFrame
 
 
 def _fmt_bytes(n: int) -> str:
@@ -55,8 +55,14 @@ class DatabaseTab:
         self._selected_doc_id: str | None = None
         self._selected_run_id: str | None = None
 
+        # Mousewheel scroll state for the right-hand detail panel
+        self._detail_wheel_active: bool = False
+
         self._build_ui()
-        self._refresh()
+        # Defer initial refresh until the tab is first selected so the
+        # user doesn't see stale historical data on startup.
+        self._needs_refresh = True
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed, add="+")
 
         # Auto-refresh when a pipeline run finishes or PDF changes
         self.state.subscribe("run_completed", self._refresh)
@@ -156,23 +162,39 @@ class DatabaseTab:
         )
 
         # Mousewheel scroll
-        def _on_enter(event: tk.Event) -> None:
-            self._detail_canvas.bind_all(
-                "<MouseWheel>",
-                lambda ev: self._detail_canvas.yview_scroll(
-                    int(-1 * (ev.delta / 120)), "units"
-                ),
-            )
+        self._detail_canvas.bind(
+            "<Enter>",
+            lambda e: setattr(self, "_detail_wheel_active", True),
+        )
+        self._detail_canvas.bind(
+            "<Leave>",
+            lambda e: setattr(self, "_detail_wheel_active", False),
+        )
 
-        def _on_leave(event: tk.Event) -> None:
-            self._detail_canvas.unbind_all("<MouseWheel>")
+        # Bind once globally; handler is gated by _detail_wheel_active
+        self.root.bind_all("<MouseWheel>", self._on_detail_mousewheel, add="+")
 
-        self._detail_canvas.bind("<Enter>", _on_enter)
-        self._detail_canvas.bind("<Leave>", _on_leave)
+    def _on_detail_mousewheel(self, event) -> None:
+        if not self._detail_wheel_active or not self._detail_canvas.winfo_ismapped():
+            return
+        self._detail_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     # ------------------------------------------------------------------
     # Refresh / populate
     # ------------------------------------------------------------------
+
+    def _on_tab_changed(self, event: tk.Event) -> None:
+        """Lazy-load on first visit to the Database tab."""
+        if not self._needs_refresh:
+            return
+        try:
+            selected = self.notebook.index(self.notebook.select())
+            my_index = self.notebook.index(self.frame)
+        except Exception:
+            return
+        if selected == my_index:
+            self._refresh()
+            self._needs_refresh = False
 
     def _refresh(self) -> None:
         """Reload everything from the database."""
@@ -180,6 +202,7 @@ class DatabaseTab:
         self._populate_overview()
         now = datetime.now().strftime("%H:%M:%S")
         self._status_label.configure(text=f"Refreshed {now}")
+        self._needs_refresh = False
 
     def _populate_doc_tree(self) -> None:
         self._doc_tree.delete(*self._doc_tree.get_children())

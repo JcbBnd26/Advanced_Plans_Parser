@@ -10,22 +10,14 @@ import pdfplumber
 from plancheck.vocrpp.preprocess import OcrPreprocessConfig  # noqa: E402
 from plancheck.vocrpp.preprocess import preprocess_image_for_ocr
 
+from ..utils.run_utils import make_run_dir
+
 
 def render_page_image(pdf_path: Path, page_num: int, resolution: int = 200):
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[page_num]
         img_page = page.to_image(resolution=resolution)
         return img_page.original.copy(), float(page.width), float(page.height)
-
-
-def _make_run_dir(run_root: Path, run_prefix: str) -> Path:
-    """Create a timestamped run folder matching the main pipeline convention."""
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"run_{stamp}_ocr_preproc_{run_prefix}"
-    run_dir = run_root / run_name
-    for sub in ["artifacts", "overlays", "exports", "logs"]:
-        (run_dir / sub).mkdir(parents=True, exist_ok=True)
-    return run_dir
 
 
 def process_pdf_pages(
@@ -291,7 +283,9 @@ def main() -> None:
         if out_pdf is None:
             # Create a proper run subfolder for the output PDF
             run_prefix = args.pdf.stem.replace(" ", "_")[:20]
-            pdf_run_dir = _make_run_dir(args.run_root, run_prefix)
+            pdf_run_dir = make_run_dir(
+                runs_root=args.run_root, label=f"ocr_preproc_{run_prefix}"
+            )
             out_pdf = pdf_run_dir / "exports" / f"{args.pdf.stem}_ocr_preprocessed.pdf"
         print(f"OCR preprocess (PDF only) -> {out_pdf}", flush=True)
         process_pdf_to_pdf(
@@ -305,7 +299,9 @@ def main() -> None:
     else:
         # Derive run prefix from PDF name
         run_prefix = args.pdf.stem.replace(" ", "_")[:20]
-        run_dir = _make_run_dir(args.run_root, run_prefix)
+        run_dir = make_run_dir(
+            runs_root=args.run_root, label=f"ocr_preproc_{run_prefix}"
+        )
         print(f"OCR preprocess -> {run_dir}", flush=True)
 
         process_pdf_pages(

@@ -25,14 +25,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
 _root = Path(__file__).resolve().parents[2]
-if str(_root / "src") not in sys.path:
-    sys.path.insert(0, str(_root / "src"))
 
 DEFAULT_BANK = _root / "tests" / "query" / "question_bank.json"
 

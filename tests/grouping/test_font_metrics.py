@@ -3,11 +3,14 @@
 import json
 import string
 
+import numpy as np
+
 from plancheck.grouping.font_metrics import (
     EXPECTED_WIDTH_RATIOS,
     FontMetricsAnalyzer,
     FontMetricsAnomaly,
     PageMetricsReport,
+    VisualMetricsAnalyzer,
     VisualMetricsReport,
     WordVisualAnomaly,
     save_metrics_report,
@@ -221,6 +224,33 @@ class TestVisualMetricsReport:
         )
         names = report.get_anomalous_fonts()
         assert names == ["VisFont"]
+
+
+class TestVisualMetricsAnalyzer:
+    def test_analyze_word_skips_near_zero_visual_width(self):
+        analyzer = VisualMetricsAnalyzer(resolution=300, dark_threshold=200)
+        scale = 20.0
+        gray_arr = np.full((800, 1200), 255, dtype=np.uint8)
+
+        word = {
+            "text": "TESTWORD",
+            "x0": 10.0,
+            "x1": 50.0,
+            "top": 10.0,
+            "bottom": 20.0,
+            "fontname": "TestFont",
+        }
+
+        # Place only a few dark columns inside the word region to force an
+        # extremely narrow visual extent.
+        pad = 5
+        px_x0 = max(0, int(word["x0"] * scale) - pad)
+        px_y0 = max(0, int(word["top"] * scale) - pad)
+        px_y1 = min(gray_arr.shape[0], int(word["bottom"] * scale) + pad)
+        gray_arr[px_y0:px_y1, px_x0 + 50 : px_x0 + 53] = 0
+
+        anomaly = analyzer._analyze_word(word, gray_arr, scale, 100.0, 100.0)
+        assert anomaly is None
 
     def test_get_correction_factor(self):
         report = VisualMetricsReport(

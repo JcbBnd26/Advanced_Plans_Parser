@@ -22,19 +22,14 @@ load_config) without direct coupling.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-# Add src and scripts to path for imports
-_project = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_project / "scripts" / "runners"))
-sys.path.insert(0, str(_project / "scripts" / "utils"))
-sys.path.insert(0, str(_project / "scripts" / "gui"))
-
+import logging
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, ttk
 
 from plancheck.config import GroupingConfig
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # GuiState – shared state + pub/sub
@@ -74,7 +69,9 @@ class GuiState:
             try:
                 cb()
             except Exception:
-                pass  # Don't let one subscriber crash others
+                logger.exception(
+                    "GuiState subscriber failed for event=%s callback=%r", event, cb
+                )
 
     def set_pdf(self, path: Path | None) -> None:
         self.pdf_path = path
@@ -108,20 +105,56 @@ class PlanParserGUI:
         self._build_ui()
         self._bind_shortcuts()
 
+        # Shutdown safety: cancel background workers before destroying the root.
+        try:
+            self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        except Exception:
+            pass
+
+    def _on_close(self) -> None:
+        """Best-effort shutdown: cancel workers, then close the window."""
+        for tab in (
+            getattr(self, "_pipeline_tab", None),
+            getattr(self, "_diagnostics_tab", None),
+            getattr(self, "_recreation_tab", None),
+            getattr(self, "_annotation_tab", None),
+            getattr(self, "_query_tab", None),
+        ):
+            if not tab:
+                continue
+
+            request_cancel = getattr(tab, "request_cancel", None)
+            if callable(request_cancel):
+                try:
+                    request_cancel()
+                except Exception:
+                    pass
+
+            worker = getattr(tab, "_worker", None)
+            if worker and hasattr(worker, "cancel"):
+                try:
+                    worker.cancel()
+                except Exception:
+                    pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
     def _build_ui(self) -> None:
         # ── Tab container ─────────────────────────────────────────────
         self.notebook = ttk.Notebook(self.root)
         self.notebook.grid(row=0, column=0, sticky="nsew")
 
         # ── Import and create each tab ────────────────────────────────
-        from tab_annotation import AnnotationTab
-        from tab_database import DatabaseTab
-        from tab_diagnostics import DiagnosticsTab
-        from tab_pipeline import PipelineTab
-        from tab_query import QueryTab
-        from tab_recreation import RecreationTab
-        from tab_runs import RunsTab
-        from widgets import StatusBar
+        from .tab_annotation import AnnotationTab
+        from .tab_database import DatabaseTab
+        from .tab_diagnostics import DiagnosticsTab
+        from .tab_pipeline import PipelineTab
+        from .tab_query import QueryTab
+        from .tab_recreation import RecreationTab
+        from .tab_runs import RunsTab
+        from .widgets import StatusBar
 
         self._pipeline_tab = PipelineTab(self.notebook, self.state)
         self._runs_tab = RunsTab(self.notebook, self.state)
@@ -154,7 +187,7 @@ class PlanParserGUI:
         f = filedialog.askopenfilename(
             title="Select PDF File",
             filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
-            initialdir=str(_project / "input"),
+            initialdir=str(Path("input")),
         )
         if f:
             self.state.set_pdf(Path(f))
@@ -165,8 +198,7 @@ class PlanParserGUI:
             parts.append(f"PDF: {self.state.pdf_path.name}")
         if self.state.last_run_dir:
             parts.append(f"Last run: {self.state.last_run_dir.name}")
-        if parts:
-            self._status_bar.set_status(" | ".join(parts))
+        self._status_bar.set_status(" | ".join(parts) if parts else "Ready")
 
 
 def main() -> None:

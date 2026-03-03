@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import sys
 import textwrap
 import time
 from pathlib import Path
@@ -158,8 +157,6 @@ def _benchmark_live(
     policy: str,
 ) -> dict:
     """Call the LLM and measure latency + response length."""
-    # Import the existing LLMClient
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
     from plancheck.checks.llm_checks import LLMClient
 
     client = LLMClient(

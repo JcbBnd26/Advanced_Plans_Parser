@@ -169,8 +169,23 @@ class PipelineWorker:
         except queue.Empty:
             pass
 
+        # If the root window has been destroyed, stop polling quietly.
+        try:
+            root_exists = bool(self.root.winfo_exists())
+        except Exception:
+            root_exists = True
+
+        if not root_exists:
+            self._polling = False
+            return
+
         if self.is_running:
-            self.root.after(50, self._poll)
+            try:
+                self.root.after(50, self._poll)
+            except Exception:
+                # Window likely closing; stop polling
+                self._polling = False
+                return
         else:
             # Drain remaining messages
             try:
@@ -186,26 +201,43 @@ class PipelineWorker:
         if kind == "log":
             _, text, level = msg
             if self.log_panel:
-                self.log_panel.write(text, level)
+                try:
+                    self.log_panel.write(text, level)
+                except Exception:
+                    pass
         elif kind == "stage":
             _, stage_name, status = msg
             if self.stage_bar:
-                self.stage_bar.set_stage(stage_name, status)
+                try:
+                    self.stage_bar.set_stage(stage_name, status)
+                except Exception:
+                    pass
             if self.log_panel and status == "running":
-                self.log_panel.write(f"▸ {stage_name}...", "STAGE")
+                try:
+                    self.log_panel.write(f"▸ {stage_name}...", "STAGE")
+                except Exception:
+                    pass
         elif kind == "done":
             _, result, error, elapsed = msg
             if self.log_panel:
-                if error:
-                    self.log_panel.write(
-                        f"\nPipeline failed after {elapsed:.1f}s: {error}", "ERROR"
-                    )
-                else:
-                    self.log_panel.write(
-                        f"\nPipeline finished in {elapsed:.1f}s", "SUCCESS"
-                    )
+                try:
+                    if error:
+                        self.log_panel.write(
+                            f"\nPipeline failed after {elapsed:.1f}s: {error}",
+                            "ERROR",
+                        )
+                    else:
+                        self.log_panel.write(
+                            f"\nPipeline finished in {elapsed:.1f}s",
+                            "SUCCESS",
+                        )
+                except Exception:
+                    pass
             if self._on_done:
-                self._on_done(result, error, elapsed)
+                try:
+                    self._on_done(result, error, elapsed)
+                except Exception:
+                    pass
 
     def post_stage(self, stage: str, status: str) -> None:
         """Post a stage update (call from within the worker target)."""

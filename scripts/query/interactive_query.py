@@ -29,13 +29,7 @@ Commands inside the interactive loop:
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
-
-# Ensure src is on path
-_root = Path(__file__).resolve().parents[2]
-if str(_root / "src") not in sys.path:
-    sys.path.insert(0, str(_root / "src"))
 
 
 def _load_from_pdf(pdf_path: str, page: int) -> "PageResult":
