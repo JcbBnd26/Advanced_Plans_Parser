@@ -10,6 +10,8 @@ from plancheck.ingest.ingest import extract_text_in_bbox, extract_text_in_polygo
 
 from .annotation_state import CanvasBox
 
+# Foreground color used to prompt the user to run the pipeline
+_PIPELINE_PENDING_COLOR = "#cc6600"
 
 class PdfLoaderMixin:
     """Mixin providing PDF loading, navigation, and zoom methods."""
@@ -113,7 +115,7 @@ class PdfLoaderMixin:
         """Toggle the pdfplumber word-boxes overlay on or off."""
         self._word_overlay_on = self._word_overlay_var.get()
         if self._word_overlay_on:
-            if not self._canvas_boxes:
+            if not self._pipeline_ran_for_doc:
                 self._word_overlay_var.set(False)
                 self._word_overlay_on = False
                 self._status.configure(
@@ -234,7 +236,7 @@ class PdfLoaderMixin:
                 )
             else:
                 self._page_elements_label.configure(
-                    text="Run pipeline first", foreground="#cc6600"
+                    text="Run pipeline first", foreground=_PIPELINE_PENDING_COLOR
                 )
             return
         counts = Counter(cb.element_type for cb in self._canvas_boxes)
