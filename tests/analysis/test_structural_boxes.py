@@ -1,23 +1,27 @@
-"""Tests for _structural_boxes.py — structural box detection, classification,
+"""Tests for structural box detection, classification,
 and semantic region growth."""
 
 from __future__ import annotations
 
 import pytest
 
+from plancheck.analysis.box_classifier import (
+    _promote_sub_boxes,
+    classify_structural_boxes,
+)
+from plancheck.analysis.semantic_regions import (
+    _first_row_text,
+    _grow_region_from_anchor,
+    _label_from_header_text,
+    create_synthetic_regions,
+    detect_semantic_regions,
+)
 from plancheck.analysis.structural_boxes import (
     BoxType,
     SemanticRegion,
     StructuralBox,
     _dedup_boxes,
     _detect_boxes_from_lines,
-    _first_row_text,
-    _grow_region_from_anchor,
-    _label_from_header_text,
-    _promote_sub_boxes,
-    classify_structural_boxes,
-    create_synthetic_regions,
-    detect_semantic_regions,
     detect_structural_boxes,
     mask_blocks_by_structural_boxes,
 )
