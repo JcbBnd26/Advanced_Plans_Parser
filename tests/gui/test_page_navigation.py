@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from plancheck.ingest.ingest import point_in_polygon
-from scripts.gui.tab_annotation import _reshape_bbox_from_handle, _scale_polygon_to_bbox
+from scripts.gui.annotation_state import _reshape_bbox_from_handle, _scale_polygon_to_bbox
 
 # ---------------------------------------------------------------------------
 # Helpers — lightweight stand-in for AnnotationTab state logic
