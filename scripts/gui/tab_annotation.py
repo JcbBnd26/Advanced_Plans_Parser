@@ -81,6 +81,7 @@ def _scale_polygon_to_bbox(
         scaled.append((nx0 + u * nw, ny0 + v * nh))
     return scaled
 
+
 # ── CanvasBox ──────────────────────────────────────────────────────────
 
 
@@ -158,6 +159,7 @@ class AnnotationTab:
         self._pdf_path: Path | None = None
         self._doc_id: str | None = None
         self._run_id: str = ""
+        self._pipeline_ran_for_doc: bool = False
         self._page: int = 0
         self._page_count: int = 0
         self._resolution: int = 150
@@ -239,7 +241,9 @@ class AnnotationTab:
         self._build_ui()
 
         try:
-            self.root.bind("<Destroy>", lambda e: setattr(self, "_closing", True), add="+")
+            self.root.bind(
+                "<Destroy>", lambda e: setattr(self, "_closing", True), add="+"
+            )
         except Exception:
             pass
 
@@ -523,10 +527,7 @@ class AnnotationTab:
         )
 
         def _on_inspector_mousewheel(event) -> None:
-            if (
-                not self._insp_wheel_active
-                or not self._insp_canvas.winfo_ismapped()
-            ):
+            if not self._insp_wheel_active or not self._insp_canvas.winfo_ismapped():
                 return
             self._insp_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
@@ -732,7 +733,9 @@ class AnnotationTab:
 
         row += 1
         filter_btns = ttk.Frame(inspector)
-        filter_btns.grid(row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(2, 0))
+        filter_btns.grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(2, 0)
+        )
         ttk.Button(
             filter_btns,
             text="Show All",
@@ -808,7 +811,9 @@ class AnnotationTab:
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=4)
         row += 1
         self._page_elements_label = ttk.Label(
-            inspector, text="(no page loaded)", foreground="gray",
+            inspector,
+            text="(no page loaded)",
+            foreground="gray",
             font=("TkDefaultFont", 8),
         )
         self._page_elements_label.grid(
@@ -1035,6 +1040,10 @@ class AnnotationTab:
             self._canvas_boxes.clear()
             self._selected_box = None
             self._multi_selected.clear()
+            # Reset word overlay — it should only be active after pipeline runs
+            self._word_overlay_var.set(False)
+            self._word_overlay_on = False
+            self._pipeline_ran_for_doc = False
             self._canvas.delete("all")
             # Render first page preview
             self._navigate_to_page()
@@ -1050,6 +1059,7 @@ class AnnotationTab:
         The pipeline now persists detections to the correction store,
         so refreshing the page will pick up the fresh results.
         """
+        self._pipeline_ran_for_doc = True
         if self._pdf_path:
             self._navigate_to_page()
 
@@ -1196,14 +1206,20 @@ class AnnotationTab:
             child.destroy()
 
         if self._active_filter_color_type not in self.ELEMENT_TYPES:
-            self._active_filter_color_type = self.ELEMENT_TYPES[0] if self.ELEMENT_TYPES else None
+            self._active_filter_color_type = (
+                self.ELEMENT_TYPES[0] if self.ELEMENT_TYPES else None
+            )
 
         for i, etype in enumerate(self.ELEMENT_TYPES):
             if etype not in self._filter_label_vars:
                 self._filter_label_vars[etype] = tk.BooleanVar(value=True)
 
             is_active = etype == self._active_filter_color_type
-            row_bg = "SystemHighlight" if is_active else self._filter_frame.winfo_toplevel().cget("bg")
+            row_bg = (
+                "SystemHighlight"
+                if is_active
+                else self._filter_frame.winfo_toplevel().cget("bg")
+            )
             row_fg = "SystemHighlightText" if is_active else "SystemWindowText"
 
             row_frame = tk.Frame(self._filter_frame, bg=row_bg)
@@ -1229,7 +1245,10 @@ class AnnotationTab:
                 padx=4,
             )
             lbl.pack(side="left")
-            lbl.bind("<Button-1>", lambda _e, label=etype: self._set_active_filter_color_type(label))
+            lbl.bind(
+                "<Button-1>",
+                lambda _e, label=etype: self._set_active_filter_color_type(label),
+            )
 
         self._update_filter_color_button_label()
 
@@ -1401,11 +1420,26 @@ class AnnotationTab:
         self._canvas.delete("det_box")
         self._canvas.delete("det_label")
         self._canvas.delete("det_handle")
+        self._canvas.delete("pipeline_prompt")
         for cbox in self._canvas_boxes:
             self._draw_box(cbox)
         # Refresh word overlay if active
         if self._word_overlay_on:
             self._draw_word_overlay()
+
+    def _draw_pipeline_prompt(self) -> None:
+        """Draw a centered watermark prompting the user to run the pipeline."""
+        self._canvas.delete("pipeline_prompt")
+        cw = self._canvas.winfo_width()
+        ch = self._canvas.winfo_height()
+        cx, cy = cw // 2, ch // 2
+        self._canvas.create_text(
+            cx, cy,
+            text="Run pipeline to detect elements",
+            font=("Segoe UI", 18, "bold"),
+            fill="#aaaaaa",
+            tags="pipeline_prompt",
+        )
 
     def _confidence_color(self, conf: float | None) -> str:
         """Return a hex color for the confidence badge.
@@ -2555,7 +2589,9 @@ class AnnotationTab:
         self._session_count += 1
         self._update_session_label()
         if cbox.polygon:
-            self._store.update_detection_polygon(cbox.detection_id, cbox.polygon, new_bbox)
+            self._store.update_detection_polygon(
+                cbox.detection_id, cbox.polygon, new_bbox
+            )
         self._draw_box(cbox)
 
     def _finalize_add(self, cx: float, cy: float) -> None:
@@ -2906,6 +2942,13 @@ class AnnotationTab:
         """Toggle the pdfplumber word-boxes overlay on or off."""
         self._word_overlay_on = self._word_overlay_var.get()
         if self._word_overlay_on:
+            if not self._canvas_boxes:
+                self._word_overlay_var.set(False)
+                self._word_overlay_on = False
+                self._status.configure(
+                    text="Run the pipeline first to enable word overlay"
+                )
+                return
             self._draw_word_overlay()
         else:
             self._clear_word_overlay()
@@ -3942,25 +3985,28 @@ class AnnotationTab:
             self._status.configure(text=f"Error rendering page: {exc}")
             return
 
-        # Load detections from latest pipeline run only
+        # Load detections only after pipeline has run for this doc this session
         self._doc_id = self._store.register_document(self._pdf_path)
-        dets = self._store.get_latest_detections_for_page(self._doc_id, self._page)
         self._canvas_boxes.clear()
         self._selected_box = None
         self._multi_selected.clear()
 
-        for d in dets:
-            self._canvas_boxes.append(
-                CanvasBox(
-                    detection_id=d["detection_id"],
-                    element_type=d["element_type"],
-                    confidence=d["confidence"],
-                    text_content=d["text_content"],
-                    features=d["features"],
-                    pdf_bbox=d["bbox"],
-                    polygon=d.get("polygon"),
-                )
+        if self._pipeline_ran_for_doc:
+            dets = self._store.get_latest_detections_for_page(
+                self._doc_id, self._page
             )
+            for d in dets:
+                self._canvas_boxes.append(
+                    CanvasBox(
+                        detection_id=d["detection_id"],
+                        element_type=d["element_type"],
+                        confidence=d["confidence"],
+                        text_content=d["text_content"],
+                        features=d["features"],
+                        pdf_bbox=d["bbox"],
+                        polygon=d.get("polygon"),
+                    )
+                )
 
         # Deduplicate overlapping same-type boxes
         self._deduplicate_boxes()
@@ -3975,8 +4021,12 @@ class AnnotationTab:
             page_label += f" of {self._page_count}"
         if n > 0:
             self._status.configure(text=f"{page_label} — {n} detections")
+        elif self._pipeline_ran_for_doc:
+            self._status.configure(text=f"{page_label} — no detections on this page")
         else:
-            self._status.configure(text=f"{page_label} — ready for annotation")
+            self._status.configure(text=f"{page_label} — run pipeline to load detections")
+            # Draw a watermark on the canvas
+            self._draw_pipeline_prompt()
         self._update_page_summary()
 
     # ── Page element summary ───────────────────────────────────────
@@ -3984,9 +4034,14 @@ class AnnotationTab:
     def _update_page_summary(self) -> None:
         """Refresh the per-page element type summary in the sidebar."""
         if not self._canvas_boxes:
-            self._page_elements_label.configure(
-                text="(no detections)", foreground="gray"
-            )
+            if self._pipeline_ran_for_doc:
+                self._page_elements_label.configure(
+                    text="(no detections on this page)", foreground="gray"
+                )
+            else:
+                self._page_elements_label.configure(
+                    text="Run pipeline first", foreground="#cc6600"
+                )
             return
         counts = Counter(cb.element_type for cb in self._canvas_boxes)
         total = sum(counts.values())
@@ -3994,9 +4049,7 @@ class AnnotationTab:
         for etype, n in counts.most_common():
             color = self.LABEL_COLORS.get(etype, "#888888")
             lines.append(f"  {etype}: {n}")
-        self._page_elements_label.configure(
-            text="\n".join(lines), foreground="#222222"
-        )
+        self._page_elements_label.configure(text="\n".join(lines), foreground="#222222")
 
     # ── Model training ─────────────────────────────────────────────
 
