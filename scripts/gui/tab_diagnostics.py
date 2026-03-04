@@ -11,75 +11,40 @@ from __future__ import annotations
 
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 from typing import Any
 
 from .widgets import CollapsibleFrame, LogPanel
 from .worker import PipelineWorker
 
 
-class DiagnosticsTab:
-    """Tab 4: Diagnostics tools."""
+# ---------------------------------------------------------------------------
+# Section 1 – Font Diagnostics
+# ---------------------------------------------------------------------------
 
-    def __init__(self, notebook: ttk.Notebook, gui_state: Any) -> None:
-        self.notebook = notebook
-        self.state = gui_state
-        self.root = notebook.winfo_toplevel()
 
-        self.frame = ttk.Frame(notebook)
-        self.frame.columnconfigure(0, weight=1)
-        self.frame.rowconfigure(0, weight=3)
-        self.frame.rowconfigure(1, weight=1)
-        notebook.add(self.frame, text="Diagnostics")
+class FontDiagnosticsSection(CollapsibleFrame):
+    """Collapsible section for font metrics diagnostic tools."""
 
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            parent, "Font Metrics Diagnostics", initially_open=True, **kwargs
+        )
+        self._log = log_panel
+        self._state = state
+        self._root = root
         self._worker: PipelineWorker | None = None
+        self._build()
 
-        # Mousewheel scroll state (avoid unbind_all, which breaks other tabs)
-        self._wheel_active: bool = False
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        pad = {"padx": 10, "pady": 4}
-
-        # ── Scrollable top ───────────────────────────────────────────
-        self._canvas = tk.Canvas(self.frame, highlightthickness=0)
-        sb = ttk.Scrollbar(self.frame, orient="vertical", command=self._canvas.yview)
-        self._inner = ttk.Frame(self._canvas)
-        self._inner.columnconfigure(0, weight=1)
-        self._inner.bind(
-            "<Configure>",
-            lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")),
-        )
-        cw = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
-        self._canvas.configure(yscrollcommand=sb.set)
-        self._canvas.grid(row=0, column=0, sticky="nsew")
-        sb.grid(row=0, column=1, sticky="ns")
-
-        def _resize(event):
-            self._canvas.itemconfig(cw, width=event.width)
-
-        self._canvas.bind("<Configure>", _resize)
-        self._canvas.bind("<Enter>", lambda e: setattr(self, "_wheel_active", True))
-        self._canvas.bind("<Leave>", lambda e: setattr(self, "_wheel_active", False))
-
-        # Bind once globally; handler is gated by _wheel_active
-        self.root.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
-
-        row = 0
-
-    def _on_mousewheel(self, event) -> None:
-        if not self._wheel_active or not self._canvas.winfo_ismapped():
-            return
-        self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        # ── 1. Font Diagnostics ──────────────────────────────────────
-        font_section = CollapsibleFrame(
-            self._inner, "Font Metrics Diagnostics", initially_open=True
-        )
-        font_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
-
-        fc = font_section.content
+    def _build(self) -> None:
+        fc = self.content
         fc.columnconfigure(0, weight=1)
 
         self.font_metrics_var = tk.BooleanVar(value=False)
@@ -109,12 +74,69 @@ class DiagnosticsTab:
             command=self._run_font_diagnostics,
         ).grid(row=3, column=0, sticky="w", pady=(4, 2))
 
-        # ── 2. Benchmark Runner ──────────────────────────────────────
-        bench_section = CollapsibleFrame(self._inner, "A/B/C/D Benchmark")
-        bench_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
+    def _run_font_diagnostics(self) -> None:
+        pdf = self._state.pdf_path
+        if not pdf:
+            messagebox.showwarning("No PDF", "Select a PDF in the Pipeline tab first.")
+            return
+        if not (self.font_metrics_var.get() or self.visual_metrics_var.get()):
+            messagebox.showinfo("No Tools", "Enable at least one diagnostics tool.")
+            return
 
-        bc = bench_section.content
+        runs_root = Path("runs")
+        self._log.clear()
+        self._worker = PipelineWorker(self._root, self._log)
+
+        def target():
+            from ..diagnostics.run_font_metrics_diagnostics import run_diagnostics
+            from ..utils.run_utils import make_run_dir
+
+            run_dir = make_run_dir(
+                runs_root=runs_root,
+                label=f"fontdiag_{pdf.stem.replace(' ', '_')[:15]}",
+            )
+            return run_diagnostics(
+                pdf=pdf,
+                out_dir=run_dir,
+                start=0,
+                end=None,
+                run_heuristic=self.font_metrics_var.get(),
+                run_visual=self.visual_metrics_var.get(),
+                visual_resolution=300,
+            )
+
+        def on_done(result, error, elapsed):
+            if result and not error:
+                self._log.write(f"Report saved: {result}", "SUCCESS")
+
+        self._worker.run(target, on_done=on_done)
+
+
+# ---------------------------------------------------------------------------
+# Section 2 – A/B/C/D Benchmark
+# ---------------------------------------------------------------------------
+
+
+class BenchmarkSection(CollapsibleFrame):
+    """Collapsible section for the A/B/C/D pipeline benchmark runner."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, "A/B/C/D Benchmark", **kwargs)
+        self._log = log_panel
+        self._state = state
+        self._root = root
+        self._worker: PipelineWorker | None = None
+        self._build()
+
+    def _build(self) -> None:
+        bc = self.content
         bc.columnconfigure(1, weight=1)
 
         ttk.Label(bc, text="Compare pipeline conditions on the same page(s):").grid(
@@ -161,299 +183,8 @@ class DiagnosticsTab:
             foreground="gray",
         ).grid(row=4, column=0, columnspan=3, sticky="w")
 
-        # (Sections 3–5 removed: VOCRPP Preview / Config Tuning Harness /
-        #  Grouping Playground → managed by LLM layer in a future release.)
-
-        # ── 3. ML Calibration ───────────────────────────────────────
-        cal_section = CollapsibleFrame(self._inner, "ML Calibration")
-        cal_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
-
-        cc = cal_section.content
-        cc.columnconfigure(0, weight=1)
-
-        ttk.Label(
-            cc,
-            text="Generate a reliability diagram and ECE for the trained model.",
-            foreground="gray",
-        ).grid(row=0, column=0, sticky="w", pady=2)
-
-        cal_btns = ttk.Frame(cc)
-        cal_btns.grid(row=1, column=0, sticky="w", pady=4)
-        ttk.Button(
-            cal_btns,
-            text="Generate Reliability Diagram",
-            command=self._run_calibration_diagram,
-        ).pack(side="left", padx=2)
-
-        self._cal_canvas_frame = ttk.Frame(cc)
-        self._cal_canvas_frame.grid(row=2, column=0, sticky="ew", pady=2)
-
-        # ── 4. Model Comparison ──────────────────────────────────────
-        cmp_section = CollapsibleFrame(self._inner, "Model Comparison")
-        cmp_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
-
-        mc = cmp_section.content
-        mc.columnconfigure(1, weight=1)
-
-        ttk.Label(
-            mc,
-            text="Compare two training runs side-by-side.",
-            foreground="gray",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
-
-        ttk.Label(mc, text="Run A:").grid(row=1, column=0, sticky="w", pady=2)
-        self._cmp_run_a = tk.StringVar()
-        self._cmp_combo_a = ttk.Combobox(
-            mc,
-            textvariable=self._cmp_run_a,
-            state="readonly",
-            width=40,
-        )
-        self._cmp_combo_a.grid(row=1, column=1, sticky="w", padx=4)
-
-        ttk.Label(mc, text="Run B:").grid(row=2, column=0, sticky="w", pady=2)
-        self._cmp_run_b = tk.StringVar()
-        self._cmp_combo_b = ttk.Combobox(
-            mc,
-            textvariable=self._cmp_run_b,
-            state="readonly",
-            width=40,
-        )
-        self._cmp_combo_b.grid(row=2, column=1, sticky="w", padx=4)
-
-        cmp_btns = ttk.Frame(mc)
-        cmp_btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Button(
-            cmp_btns,
-            text="Refresh Runs",
-            command=self._refresh_training_runs,
-        ).pack(side="left", padx=2)
-        ttk.Button(
-            cmp_btns,
-            text="Compare",
-            command=self._compare_runs,
-        ).pack(side="left", padx=2)
-
-        # ── 5. Layout Model (LayoutLMv3) ─────────────────────────────
-        layout_section = CollapsibleFrame(self._inner, "Layout Model (LayoutLMv3)")
-        layout_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
-
-        lm = layout_section.content
-        lm.columnconfigure(1, weight=1)
-
-        ttk.Label(
-            lm,
-            text="Run LayoutLMv3 layout detection on the current page.",
-            foreground="gray",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
-
-        ttk.Label(lm, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
-        self._layout_model_var = tk.StringVar(value="microsoft/layoutlmv3-base")
-        ttk.Entry(lm, textvariable=self._layout_model_var, width=50).grid(
-            row=1,
-            column=1,
-            sticky="ew",
-            padx=4,
-        )
-
-        layout_btns = ttk.Frame(lm)
-        layout_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Button(
-            layout_btns,
-            text="Run Layout Detection",
-            command=self._run_layout_detection,
-        ).pack(side="left", padx=2)
-        ttk.Button(
-            layout_btns,
-            text="Check Availability",
-            command=self._check_layout_avail,
-        ).pack(side="left", padx=2)
-
-        # ── 6. Text Embeddings ───────────────────────────────────────
-        emb_section = CollapsibleFrame(
-            self._inner, "Text Embeddings (Sentence-Transformer)"
-        )
-        emb_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
-
-        em = emb_section.content
-        em.columnconfigure(1, weight=1)
-
-        ttk.Label(
-            em,
-            text="Dense semantic embeddings for block text (supplements kw_* features).",
-            foreground="gray",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
-
-        ttk.Label(em, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
-        self._emb_model_var = tk.StringVar(value="all-MiniLM-L6-v2")
-        ttk.Entry(em, textvariable=self._emb_model_var, width=50).grid(
-            row=1,
-            column=1,
-            sticky="ew",
-            padx=4,
-        )
-
-        emb_btns = ttk.Frame(em)
-        emb_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Button(
-            emb_btns,
-            text="Check Availability",
-            command=self._check_embeddings_avail,
-        ).pack(side="left", padx=2)
-        ttk.Button(
-            emb_btns,
-            text="Test Embedding",
-            command=self._test_embedding,
-        ).pack(side="left", padx=2)
-
-        # ── 7. LLM Semantic Checks ──────────────────────────────────
-        llm_section = CollapsibleFrame(self._inner, "LLM Semantic Checks")
-        llm_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
-
-        lc = llm_section.content
-        lc.columnconfigure(1, weight=1)
-
-        ttk.Label(
-            lc,
-            text="Optional LLM-assisted content analysis (off by default).",
-            foreground="gray",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
-
-        ttk.Label(lc, text="Provider:").grid(row=1, column=0, sticky="w", pady=2)
-        self._llm_provider_var = tk.StringVar(value="ollama")
-        ttk.Combobox(
-            lc,
-            textvariable=self._llm_provider_var,
-            width=20,
-            values=["ollama", "openai", "anthropic"],
-            state="readonly",
-        ).grid(row=1, column=1, sticky="w", padx=4)
-
-        ttk.Label(lc, text="Model:").grid(row=2, column=0, sticky="w", pady=2)
-        self._llm_model_var = tk.StringVar(value="llama3.1:8b")
-        ttk.Entry(lc, textvariable=self._llm_model_var, width=50).grid(
-            row=2,
-            column=1,
-            sticky="ew",
-            padx=4,
-        )
-
-        llm_btns = ttk.Frame(lc)
-        llm_btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Button(
-            llm_btns,
-            text="Check Availability",
-            command=self._check_llm_avail,
-        ).pack(side="left", padx=2)
-        ttk.Button(
-            llm_btns,
-            text="Run LLM Checks",
-            command=self._run_llm_checks,
-        ).pack(side="left", padx=2)
-
-        # ── 8. Cross-Page GNN ───────────────────────────────────────
-        gnn_section = CollapsibleFrame(self._inner, "Cross-Page GNN")
-        gnn_section.grid(row=row, column=0, sticky="ew", **pad)
-        row += 1
-
-        gn = gnn_section.content
-        gn.columnconfigure(1, weight=1)
-
-        ttk.Label(
-            gn,
-            text="Graph neural network for cross-page inconsistency detection.",
-            foreground="gray",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
-
-        ttk.Label(gn, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
-        self._gnn_model_var = tk.StringVar(value="data/document_gnn.pt")
-        ttk.Entry(gn, textvariable=self._gnn_model_var, width=50).grid(
-            row=1,
-            column=1,
-            sticky="ew",
-            padx=4,
-        )
-
-        gnn_btns = ttk.Frame(gn)
-        gnn_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Button(
-            gnn_btns,
-            text="Check Availability",
-            command=self._check_gnn_avail,
-        ).pack(side="left", padx=2)
-
-        # ── Log panel ────────────────────────────────────────────────
-        self.log_panel = LogPanel(self.frame, height=8)
-        self.log_panel.grid(
-            row=1, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 6)
-        )
-
-    # ------------------------------------------------------------------
-    # PDF helper (uses shared state)
-    # ------------------------------------------------------------------
-
-    def _get_pdf_and_pages(self) -> tuple[Path | None, int, int | None]:
-        """Try to get the PDF and page range from the Pipeline tab state."""
-        pdf = self.state.pdf_path
-        if pdf is None:
-            messagebox.showwarning("No PDF", "Select a PDF in the Pipeline tab first.")
-            return None, 0, None
-        return pdf, 0, None
-
-    # ------------------------------------------------------------------
-    # Font Diagnostics
-    # ------------------------------------------------------------------
-
-    def _run_font_diagnostics(self) -> None:
-        pdf = self.state.pdf_path
-        if not pdf:
-            messagebox.showwarning("No PDF", "Select a PDF in the Pipeline tab first.")
-            return
-        if not (self.font_metrics_var.get() or self.visual_metrics_var.get()):
-            messagebox.showinfo("No Tools", "Enable at least one diagnostics tool.")
-            return
-
-        runs_root = Path("runs")
-        self.log_panel.clear()
-
-        self._worker = PipelineWorker(self.root, self.log_panel)
-
-        def target():
-            from ..diagnostics.run_font_metrics_diagnostics import run_diagnostics
-            from ..utils.run_utils import make_run_dir
-
-            run_dir = make_run_dir(
-                runs_root=runs_root,
-                label=f"fontdiag_{pdf.stem.replace(' ', '_')[:15]}",
-            )
-            out = run_diagnostics(
-                pdf=pdf,
-                out_dir=run_dir,
-                start=0,
-                end=None,
-                run_heuristic=self.font_metrics_var.get(),
-                run_visual=self.visual_metrics_var.get(),
-                visual_resolution=300,
-            )
-            return out
-
-        def on_done(result, error, elapsed):
-            if result and not error:
-                self.log_panel.write(f"Report saved: {result}", "SUCCESS")
-
-        self._worker.run(target, on_done=on_done)
-
-    # ------------------------------------------------------------------
-    # Benchmark
-    # ------------------------------------------------------------------
-
     def _run_benchmark(self) -> None:
-        pdf = self.state.pdf_path
+        pdf = self._state.pdf_path
         if not pdf:
             messagebox.showwarning("No PDF", "Select a PDF in the Pipeline tab first.")
             return
@@ -476,9 +207,8 @@ class DiagnosticsTab:
 
         runs_root = Path("runs")
         ocr_dpi = int(self._bench_ocr_dpi.get())
-        self.log_panel.clear()
-
-        self._worker = PipelineWorker(self.root, self.log_panel)
+        self._log.clear()
+        self._worker = PipelineWorker(self._root, self._log)
 
         def target():
             from plancheck.config import GroupingConfig
@@ -517,16 +247,56 @@ class DiagnosticsTab:
 
         def on_done(result, error, elapsed):
             if not error:
-                self.log_panel.write("Benchmark complete.", "SUCCESS")
+                self._log.write("Benchmark complete.", "SUCCESS")
 
         self._worker.run(target, on_done=on_done)
 
-    # ------------------------------------------------------------------
-    # ML Calibration
-    # ------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Section 3 – ML Calibration
+# ---------------------------------------------------------------------------
+
+
+class MLCalibrationSection(CollapsibleFrame):
+    """Collapsible section for ML model calibration diagnostics."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, "ML Calibration", **kwargs)
+        self._log = log_panel
+        self._state = state
+        self._root = root
+        self._worker: PipelineWorker | None = None
+        self._build()
+
+    def _build(self) -> None:
+        cc = self.content
+        cc.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            cc,
+            text="Generate a reliability diagram and ECE for the trained model.",
+            foreground="gray",
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
+        cal_btns = ttk.Frame(cc)
+        cal_btns.grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Button(
+            cal_btns,
+            text="Generate Reliability Diagram",
+            command=self._run_calibration_diagram,
+        ).pack(side="left", padx=2)
+
+        self._cal_canvas_frame = ttk.Frame(cc)
+        self._cal_canvas_frame.grid(row=2, column=0, sticky="ew", pady=2)
 
     def _run_calibration_diagram(self) -> None:
-        db_path = Path("data") / "corrections.db"
         model_path = Path("data") / "element_classifier.pkl"
         jsonl_path = Path("data") / "training_data.jsonl"
 
@@ -542,38 +312,30 @@ class DiagnosticsTab:
             )
             return
 
-        self.log_panel.clear()
-        self._worker = PipelineWorker(self.root, self.log_panel)
+        self._log.clear()
+        self._worker = PipelineWorker(self._root, self._log)
 
         def target():
             from plancheck.corrections.classifier import ElementClassifier
 
             clf = ElementClassifier(model_path=model_path)
-            result = clf.calibration_curve(jsonl_path)
-            return result
+            return clf.calibration_curve(jsonl_path)
 
         def on_done(result, error, elapsed):
             if error or not result:
                 return
             ece = result.get("ece", 0.0)
             curves = result.get("curves", {})
-            self.log_panel.write(
-                f"Expected Calibration Error (ECE): {ece:.4f}",
-                "INFO",
-            )
+            self._log.write(f"Expected Calibration Error (ECE): {ece:.4f}", "INFO")
             for cls_name, data in curves.items():
                 n_bins = len(data["mean_predicted"])
-                self.log_panel.write(
-                    f"  {cls_name}: {n_bins} bins",
-                    "INFO",
-                )
+                self._log.write(f"  {cls_name}: {n_bins} bins", "INFO")
             self._draw_reliability_diagram(curves, ece)
 
         self._worker.run(target, on_done=on_done)
 
     def _draw_reliability_diagram(self, curves: dict, ece: float) -> None:
         """Render a reliability diagram into the calibration canvas frame."""
-        # Clear previous
         for w in self._cal_canvas_frame.winfo_children():
             w.destroy()
 
@@ -584,9 +346,8 @@ class DiagnosticsTab:
             from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
             from matplotlib.figure import Figure
         except ImportError:
-            self.log_panel.write(
-                "matplotlib not installed — cannot render diagram.",
-                "WARNING",
+            self._log.write(
+                "matplotlib not installed — cannot render diagram.", "WARNING"
             )
             return
 
@@ -611,17 +372,66 @@ class DiagnosticsTab:
         canvas.draw()
         canvas.get_tk_widget().pack(fill="x", expand=True)
 
-    # ------------------------------------------------------------------
-    # Model Comparison
-    # ------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Section 4 – Model Comparison
+# ---------------------------------------------------------------------------
+
+
+class ModelComparisonSection(CollapsibleFrame):
+    """Collapsible section for comparing two training runs side-by-side."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, "Model Comparison", **kwargs)
+        self._log = log_panel
+        self._state = state
+        self._root = root
+        self._build()
+
+    def _build(self) -> None:
+        mc = self.content
+        mc.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            mc,
+            text="Compare two training runs side-by-side.",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(mc, text="Run A:").grid(row=1, column=0, sticky="w", pady=2)
+        self._cmp_run_a = tk.StringVar()
+        self._cmp_combo_a = ttk.Combobox(
+            mc, textvariable=self._cmp_run_a, state="readonly", width=40
+        )
+        self._cmp_combo_a.grid(row=1, column=1, sticky="w", padx=4)
+
+        ttk.Label(mc, text="Run B:").grid(row=2, column=0, sticky="w", pady=2)
+        self._cmp_run_b = tk.StringVar()
+        self._cmp_combo_b = ttk.Combobox(
+            mc, textvariable=self._cmp_run_b, state="readonly", width=40
+        )
+        self._cmp_combo_b.grid(row=2, column=1, sticky="w", padx=4)
+
+        cmp_btns = ttk.Frame(mc)
+        cmp_btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            cmp_btns, text="Refresh Runs", command=self._refresh_training_runs
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            cmp_btns, text="Compare", command=self._compare_runs
+        ).pack(side="left", padx=2)
 
     def _refresh_training_runs(self) -> None:
         db_path = Path("data") / "corrections.db"
         if not db_path.exists():
-            messagebox.showwarning(
-                "No Database",
-                "corrections.db not found.",
-            )
+            messagebox.showwarning("No Database", "corrections.db not found.")
             return
 
         from plancheck.corrections.store import CorrectionStore
@@ -634,11 +444,10 @@ class DiagnosticsTab:
             messagebox.showinfo("No Runs", "No training runs found.")
             return
 
-        display_values = []
-        for run in history:
-            display_values.append(
-                f"{run['run_id']} | F1={run['f1_weighted']:.3f} | {run['trained_at'][:16]}"
-            )
+        display_values = [
+            f"{run['run_id']} | F1={run['f1_weighted']:.3f} | {run['trained_at'][:16]}"
+            for run in history
+        ]
 
         self._cmp_combo_a["values"] = display_values
         self._cmp_combo_b["values"] = display_values
@@ -649,18 +458,14 @@ class DiagnosticsTab:
             self._cmp_combo_a.current(0)
             self._cmp_combo_b.current(0)
 
-        self.log_panel.write(
-            f"Loaded {len(history)} training run(s).",
-            "INFO",
-        )
+        self._log.write(f"Loaded {len(history)} training run(s).", "INFO")
 
     def _compare_runs(self) -> None:
         run_a_str = self._cmp_run_a.get()
         run_b_str = self._cmp_run_b.get()
         if not run_a_str or not run_b_str:
             messagebox.showwarning(
-                "Select Runs",
-                "Select two training runs to compare.",
+                "Select Runs", "Select two training runs to compare."
             )
             return
 
@@ -671,7 +476,6 @@ class DiagnosticsTab:
         history = store.get_training_history()
         store.close()
 
-        # Extract run_id from the display string ("run_xxxx | ...")
         id_a = run_a_str.split(" | ")[0].strip()
         id_b = run_b_str.split(" | ")[0].strip()
 
@@ -682,84 +486,120 @@ class DiagnosticsTab:
             messagebox.showwarning("Not Found", "Could not find selected runs.")
             return
 
-        self.log_panel.clear()
-        self.log_panel.write(
-            f"Comparing {id_a} vs {id_b}",
-            "INFO",
+        self._log.clear()
+        self._log.write(f"Comparing {id_a} vs {id_b}", "INFO")
+        self._log.write(
+            f"{'Metric':<25} {'Run A':>10} {'Run B':>10} {'Delta':>10}", "INFO"
         )
-        self.log_panel.write(
-            f"{'Metric':<25} {'Run A':>10} {'Run B':>10} {'Delta':>10}",
-            "INFO",
-        )
-        self.log_panel.write("-" * 57, "INFO")
+        self._log.write("-" * 57, "INFO")
 
         for metric in ("accuracy", "f1_macro", "f1_weighted"):
             va = run_a.get(metric, 0.0)
             vb = run_b.get(metric, 0.0)
             delta = vb - va
             sign = "+" if delta >= 0 else ""
-            self.log_panel.write(
-                f"{metric:<25} {va:>10.4f} {vb:>10.4f} {sign}{delta:>9.4f}",
-                "INFO",
+            self._log.write(
+                f"{metric:<25} {va:>10.4f} {vb:>10.4f} {sign}{delta:>9.4f}", "INFO"
             )
 
-        # Per-class comparison
         pc_a = run_a.get("per_class", {})
         pc_b = run_b.get("per_class", {})
         all_classes = sorted(set(pc_a.keys()) | set(pc_b.keys()))
         if all_classes:
-            self.log_panel.write("", "INFO")
-            self.log_panel.write(
-                f"{'Class':<20} {'F1(A)':>8} {'F1(B)':>8} {'Delta':>8}",
-                "INFO",
+            self._log.write("", "INFO")
+            self._log.write(
+                f"{'Class':<20} {'F1(A)':>8} {'F1(B)':>8} {'Delta':>8}", "INFO"
             )
-            self.log_panel.write("-" * 46, "INFO")
+            self._log.write("-" * 46, "INFO")
             for cls in all_classes:
                 f1_a = pc_a.get(cls, {}).get("f1", 0.0)
                 f1_b = pc_b.get(cls, {}).get("f1", 0.0)
                 delta = f1_b - f1_a
                 sign = "+" if delta >= 0 else ""
-                self.log_panel.write(
-                    f"{cls:<20} {f1_a:>8.4f} {f1_b:>8.4f} {sign}{delta:>7.4f}",
-                    "INFO",
+                self._log.write(
+                    f"{cls:<20} {f1_a:>8.4f} {f1_b:>8.4f} {sign}{delta:>7.4f}", "INFO"
                 )
 
-    # ------------------------------------------------------------------
-    # Layout Model (LayoutLMv3)
-    # ------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Section 5 – Layout Model (LayoutLMv3)
+# ---------------------------------------------------------------------------
+
+
+class LayoutModelSection(CollapsibleFrame):
+    """Collapsible section for LayoutLMv3 layout detection."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, "Layout Model (LayoutLMv3)", **kwargs)
+        self._log = log_panel
+        self._state = state
+        self._root = root
+        self._worker: PipelineWorker | None = None
+        self._build()
+
+    def _build(self) -> None:
+        lm = self.content
+        lm.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            lm,
+            text="Run LayoutLMv3 layout detection on the current page.",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(lm, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
+        self._layout_model_var = tk.StringVar(value="microsoft/layoutlmv3-base")
+        ttk.Entry(lm, textvariable=self._layout_model_var, width=50).grid(
+            row=1, column=1, sticky="ew", padx=4
+        )
+
+        layout_btns = ttk.Frame(lm)
+        layout_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            layout_btns, text="Run Layout Detection", command=self._run_layout_detection
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            layout_btns, text="Check Availability", command=self._check_layout_avail
+        ).pack(side="left", padx=2)
 
     def _check_layout_avail(self) -> None:
-        """Check if LayoutLMv3 dependencies are available."""
-        self.log_panel.clear()
+        self._log.clear()
         try:
             from plancheck.analysis.layout_model import is_layout_available
 
             avail = is_layout_available()
             if avail:
-                self.log_panel.write(
+                self._log.write(
                     "LayoutLMv3 is available (transformers + torch installed).",
                     "SUCCESS",
                 )
             else:
-                self.log_panel.write(
+                self._log.write(
                     "LayoutLMv3 NOT available. Install with: pip install 'plancheck[layout]'",
                     "WARNING",
                 )
         except Exception as exc:
-            self.log_panel.write(f"Error checking availability: {exc}", "ERROR")
+            self._log.write(f"Error checking availability: {exc}", "ERROR")
 
     def _run_layout_detection(self) -> None:
-        """Run LayoutLMv3 layout detection on the current page."""
-        pdf, _, _ = self._get_pdf_and_pages()
+        pdf = self._state.pdf_path
         if pdf is None:
+            messagebox.showwarning("No PDF", "Select a PDF in the Pipeline tab first.")
             return
         model_name = self._layout_model_var.get().strip()
         if not model_name:
             messagebox.showwarning("No Model", "Enter a LayoutLMv3 model name or path.")
             return
 
-        self.log_panel.clear()
-        self._worker = PipelineWorker(self.root, self.log_panel)
+        self._log.clear()
+        self._worker = PipelineWorker(self._root, self._log)
 
         def target():
             from plancheck import GlyphBox, GroupingConfig, extract_tokens
@@ -781,13 +621,7 @@ class DiagnosticsTab:
             image = render_page_image(pdf, 0, resolution=150)
 
             print(f"Running layout detection ({model_name})...")
-            preds = predict_layout(
-                image,
-                tokens,
-                pw,
-                ph,
-                model_name_or_path=model_name,
-            )
+            preds = predict_layout(image, tokens, pw, ph, model_name_or_path=model_name)
 
             print(f"\nLayout predictions: {len(preds)}")
             for p in preds:
@@ -802,42 +636,82 @@ class DiagnosticsTab:
         def on_done(result, error, elapsed):
             if not error:
                 n = len(result) if result else 0
-                self.log_panel.write(
+                self._log.write(
                     f"Layout detection complete: {n} regions ({elapsed:.1f}s).",
                     "SUCCESS",
                 )
 
         self._worker.run(target, on_done=on_done)
 
-    # ------------------------------------------------------------------
-    # Text Embeddings (Sentence-Transformer)
-    # ------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Section 6 – Text Embeddings (Sentence-Transformer)
+# ---------------------------------------------------------------------------
+
+
+class TextEmbeddingsSection(CollapsibleFrame):
+    """Collapsible section for sentence-transformer embedding tools."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, "Text Embeddings (Sentence-Transformer)", **kwargs)
+        self._log = log_panel
+        self._state = state
+        self._root = root
+        self._worker: PipelineWorker | None = None
+        self._build()
+
+    def _build(self) -> None:
+        em = self.content
+        em.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            em,
+            text="Dense semantic embeddings for block text (supplements kw_* features).",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(em, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
+        self._emb_model_var = tk.StringVar(value="all-MiniLM-L6-v2")
+        ttk.Entry(em, textvariable=self._emb_model_var, width=50).grid(
+            row=1, column=1, sticky="ew", padx=4
+        )
+
+        emb_btns = ttk.Frame(em)
+        emb_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            emb_btns, text="Check Availability", command=self._check_embeddings_avail
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            emb_btns, text="Test Embedding", command=self._test_embedding
+        ).pack(side="left", padx=2)
 
     def _check_embeddings_avail(self) -> None:
-        """Check if sentence-transformers is available."""
-        self.log_panel.clear()
+        self._log.clear()
         try:
             from plancheck.corrections.text_embeddings import is_embeddings_available
 
             avail = is_embeddings_available()
             if avail:
-                self.log_panel.write(
-                    "sentence-transformers is available.",
-                    "SUCCESS",
-                )
+                self._log.write("sentence-transformers is available.", "SUCCESS")
             else:
-                self.log_panel.write(
+                self._log.write(
                     "sentence-transformers NOT available. Install with: "
                     "pip install 'plancheck[embeddings]'",
                     "WARNING",
                 )
         except Exception as exc:
-            self.log_panel.write(f"Error checking availability: {exc}", "ERROR")
+            self._log.write(f"Error checking availability: {exc}", "ERROR")
 
     def _test_embedding(self) -> None:
-        """Compute an embedding for a test string and show dimensions."""
-        self.log_panel.clear()
-        self._worker = PipelineWorker(self.root, self.log_panel)
+        self._log.clear()
+        self._worker = PipelineWorker(self._root, self._log)
         model_name = self._emb_model_var.get().strip() or "all-MiniLM-L6-v2"
 
         def target():
@@ -874,41 +748,93 @@ class DiagnosticsTab:
 
         def on_done(result, error, elapsed):
             if not error:
-                self.log_panel.write(
+                self._log.write(
                     f"Embedding test complete ({elapsed:.1f}s).", "SUCCESS"
                 )
 
         self._worker.run(target, on_done=on_done)
 
-    # ------------------------------------------------------------------
-    # LLM Semantic Checks
-    # ------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Section 7 – LLM Semantic Checks
+# ---------------------------------------------------------------------------
+
+
+class LLMSemanticChecksSection(CollapsibleFrame):
+    """Collapsible section for optional LLM-assisted content analysis."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, "LLM Semantic Checks", **kwargs)
+        self._log = log_panel
+        self._state = state
+        self._root = root
+        self._worker: PipelineWorker | None = None
+        self._build()
+
+    def _build(self) -> None:
+        lc = self.content
+        lc.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            lc,
+            text="Optional LLM-assisted content analysis (off by default).",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(lc, text="Provider:").grid(row=1, column=0, sticky="w", pady=2)
+        self._llm_provider_var = tk.StringVar(value="ollama")
+        ttk.Combobox(
+            lc,
+            textvariable=self._llm_provider_var,
+            width=20,
+            values=["ollama", "openai", "anthropic"],
+            state="readonly",
+        ).grid(row=1, column=1, sticky="w", padx=4)
+
+        ttk.Label(lc, text="Model:").grid(row=2, column=0, sticky="w", pady=2)
+        self._llm_model_var = tk.StringVar(value="llama3.1:8b")
+        ttk.Entry(lc, textvariable=self._llm_model_var, width=50).grid(
+            row=2, column=1, sticky="ew", padx=4
+        )
+
+        llm_btns = ttk.Frame(lc)
+        llm_btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            llm_btns, text="Check Availability", command=self._check_llm_avail
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            llm_btns, text="Run LLM Checks", command=self._run_llm_checks
+        ).pack(side="left", padx=2)
 
     def _check_llm_avail(self) -> None:
-        """Check if LLM provider is available."""
-        self.log_panel.clear()
+        self._log.clear()
         provider = self._llm_provider_var.get()
         try:
             from plancheck.checks.llm_checks import is_llm_available
 
             avail = is_llm_available(provider)
             if avail:
-                self.log_panel.write(
-                    f"LLM provider '{provider}' is available.", "SUCCESS"
-                )
+                self._log.write(f"LLM provider '{provider}' is available.", "SUCCESS")
             else:
-                self.log_panel.write(
+                self._log.write(
                     f"LLM provider '{provider}' NOT available. "
                     f"Install with: pip install 'plancheck[llm]'",
                     "WARNING",
                 )
         except Exception as exc:
-            self.log_panel.write(f"Error checking availability: {exc}", "ERROR")
+            self._log.write(f"Error checking availability: {exc}", "ERROR")
 
     def _run_llm_checks(self) -> None:
-        """Run LLM semantic checks on the current page."""
-        pdf, _, _ = self._get_pdf_and_pages()
+        pdf = self._state.pdf_path
         if pdf is None:
+            messagebox.showwarning("No PDF", "Select a PDF in the Pipeline tab first.")
             return
 
         provider = self._llm_provider_var.get()
@@ -917,8 +843,8 @@ class DiagnosticsTab:
             messagebox.showwarning("No Model", "Enter an LLM model name.")
             return
 
-        self.log_panel.clear()
-        self._worker = PipelineWorker(self.root, self.log_panel)
+        self._log.clear()
+        self._worker = PipelineWorker(self._root, self._log)
 
         def target():
             from plancheck import GroupingConfig
@@ -949,34 +875,154 @@ class DiagnosticsTab:
         def on_done(result, error, elapsed):
             if not error:
                 n = len(result) if result else 0
-                self.log_panel.write(
-                    f"LLM checks complete: {n} findings ({elapsed:.1f}s).",
-                    "SUCCESS",
+                self._log.write(
+                    f"LLM checks complete: {n} findings ({elapsed:.1f}s).", "SUCCESS"
                 )
 
         self._worker.run(target, on_done=on_done)
 
-    # ------------------------------------------------------------------
-    # Cross-Page GNN
-    # ------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Section 8 – Cross-Page GNN
+# ---------------------------------------------------------------------------
+
+
+class CrossPageGNNSection(CollapsibleFrame):
+    """Collapsible section for cross-page GNN inconsistency detection."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, "Cross-Page GNN", **kwargs)
+        self._log = log_panel
+        self._state = state
+        self._root = root
+        self._build()
+
+    def _build(self) -> None:
+        gn = self.content
+        gn.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            gn,
+            text="Graph neural network for cross-page inconsistency detection.",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
+
+        ttk.Label(gn, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
+        self._gnn_model_var = tk.StringVar(value="data/document_gnn.pt")
+        ttk.Entry(gn, textvariable=self._gnn_model_var, width=50).grid(
+            row=1, column=1, sticky="ew", padx=4
+        )
+
+        gnn_btns = ttk.Frame(gn)
+        gnn_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            gnn_btns, text="Check Availability", command=self._check_gnn_avail
+        ).pack(side="left", padx=2)
 
     def _check_gnn_avail(self) -> None:
-        """Check if PyTorch Geometric is available."""
-        self.log_panel.clear()
+        self._log.clear()
         try:
             from plancheck.analysis.gnn_model import is_gnn_available
 
             avail = is_gnn_available()
             if avail:
-                self.log_panel.write(
+                self._log.write(
                     "PyTorch Geometric is available (torch + torch_geometric).",
                     "SUCCESS",
                 )
             else:
-                self.log_panel.write(
+                self._log.write(
                     "PyTorch Geometric NOT available. Install with: "
                     "pip install 'plancheck[gnn]'",
                     "WARNING",
                 )
         except Exception as exc:
-            self.log_panel.write(f"Error checking availability: {exc}", "ERROR")
+            self._log.write(f"Error checking availability: {exc}", "ERROR")
+
+
+# ---------------------------------------------------------------------------
+# DiagnosticsTab – thin composer
+# ---------------------------------------------------------------------------
+
+
+class DiagnosticsTab:
+    """Tab 4: Diagnostics tools."""
+
+    def __init__(self, notebook: ttk.Notebook, gui_state: Any) -> None:
+        self.notebook = notebook
+        self.state = gui_state
+        self.root = notebook.winfo_toplevel()
+
+        self.frame = ttk.Frame(notebook)
+        self.frame.columnconfigure(0, weight=1)
+        self.frame.rowconfigure(0, weight=3)
+        self.frame.rowconfigure(1, weight=1)
+        notebook.add(self.frame, text="Diagnostics")
+
+        # Mousewheel scroll state (avoid unbind_all, which breaks other tabs)
+        self._wheel_active: bool = False
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        pad = {"padx": 10, "pady": 4}
+
+        # ── Scrollable top ───────────────────────────────────────────
+        self._canvas = tk.Canvas(self.frame, highlightthickness=0)
+        sb = ttk.Scrollbar(self.frame, orient="vertical", command=self._canvas.yview)
+        self._inner = ttk.Frame(self._canvas)
+        self._inner.columnconfigure(0, weight=1)
+        self._inner.bind(
+            "<Configure>",
+            lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")),
+        )
+        cw = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
+        self._canvas.configure(yscrollcommand=sb.set)
+        self._canvas.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+
+        def _resize(event):
+            self._canvas.itemconfig(cw, width=event.width)
+
+        self._canvas.bind("<Configure>", _resize)
+        self._canvas.bind("<Enter>", lambda e: setattr(self, "_wheel_active", True))
+        self._canvas.bind("<Leave>", lambda e: setattr(self, "_wheel_active", False))
+
+        # Bind once globally; handler is gated by _wheel_active
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+
+        # ── Log panel ────────────────────────────────────────────────
+        self.log_panel = LogPanel(self.frame, height=8)
+        self.log_panel.grid(
+            row=1, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 6)
+        )
+
+        # ── Instantiate section widgets ──────────────────────────────
+        section_kwargs = dict(
+            log_panel=self.log_panel, state=self.state, root=self.root
+        )
+
+        sections = [
+            FontDiagnosticsSection(self._inner, **section_kwargs),
+            BenchmarkSection(self._inner, **section_kwargs),
+            MLCalibrationSection(self._inner, **section_kwargs),
+            ModelComparisonSection(self._inner, **section_kwargs),
+            LayoutModelSection(self._inner, **section_kwargs),
+            TextEmbeddingsSection(self._inner, **section_kwargs),
+            LLMSemanticChecksSection(self._inner, **section_kwargs),
+            CrossPageGNNSection(self._inner, **section_kwargs),
+        ]
+
+        for row, section in enumerate(sections):
+            section.grid(row=row, column=0, sticky="ew", **pad)
+
+    def _on_mousewheel(self, event) -> None:
+        if not self._wheel_active or not self._canvas.winfo_ismapped():
+            return
+        self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")

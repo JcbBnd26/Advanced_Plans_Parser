@@ -1,0 +1,513 @@
+"""Symbol injection pass for OCR reconciliation.
+
+Public API
+----------
+_inject_symbols   – decide which OCR findings to inject as new GlyphBox tokens
+"""
+
+from __future__ import annotations
+
+import re
+from statistics import median
+from typing import List, Tuple
+
+from ..config import GroupingConfig
+from ..models import GlyphBox
+from ..vocr.extract import iou
+from .confidence_scoring import _overlap_ratio, _overlaps_existing
+from .helpers import (
+    MatchRecord,
+    SymbolCandidate,
+    _DEFAULT_ACCEPT_PROXIMITY,
+    _DEFAULT_COVERAGE_THRESHOLD,
+    _DEFAULT_IOU_THRESHOLD,
+    _estimate_char_width,
+    _extra_symbols,
+    _find_line_neighbours,
+    _has_digit_neighbour_left,
+    _is_digit_group,
+    has_allowed_symbol,
+    has_numeric_symbol_context,
+)
+
+
+def _generate_symbol_candidates(
+    ocr_box: GlyphBox,
+    pdf_tokens: List[GlyphBox],
+    cfg: GroupingConfig,
+) -> List[SymbolCandidate]:
+    """Create placement candidates for symbols in a composite OCR token.
+
+    Uses digit anchors on the same line + line-height-derived widths.
+    Does NOT infer symbol position from the OCR string — uses anchor
+    adjacency instead.
+    """
+    allowed = cfg.ocr_reconcile_allowed_symbols
+    ocr_text = ocr_box.text
+
+    # Find digit-bearing neighbours (tightened to digit-group tokens)
+    neighbours = _find_line_neighbours(
+        ocr_box, pdf_tokens, cfg.ocr_reconcile_anchor_margin, cfg
+    )
+    digit_anchors = [t for t in neighbours if _is_digit_group(t.text, cfg)]
+    if not digit_anchors:
+        return []
+
+    # Line-height reference = median digit anchor height
+    heights = [a.height() for a in digit_anchors if a.height() > 0]
+    h = median(heights) if heights else 8.0
+
+    # Y-band from anchors
+    band_y0 = min(a.y0 for a in digit_anchors)
+    band_y1 = max(a.y1 for a in digit_anchors)
+
+    candidates: List[SymbolCandidate] = []
+
+    # ── Slash (/) — between_digits slots (one per gap, up to slash count) ──
+    n_slashes = ocr_text.count("/")
+    if n_slashes > 0 and len(digit_anchors) >= 2:
+        # Rank all consecutive digit-anchor gaps by width (ascending)
+        gaps = []
+        for i in range(len(digit_anchors) - 1):
+            a_l = digit_anchors[i]
+            a_r = digit_anchors[i + 1]
+            gap = a_r.x0 - a_l.x1
+            gaps.append((gap, a_l, a_r))
+        gaps.sort(key=lambda g: g[0])  # smallest gap first
+        for gap_w, a_l, a_r in gaps[:n_slashes]:
+            mid_x = (a_l.x1 + a_r.x0) / 2.0
+            slash_w = max(0.5, cfg.ocr_reconcile_slash_width_mult * h)
+            # Clamp to available gap if positive
+            if gap_w > 0:
+                slash_w = min(slash_w, gap_w)
+            candidates.append(
+                SymbolCandidate(
+                    symbol="/",
+                    slot_type="between_digits",
+                    x0=mid_x - slash_w / 2.0,
+                    y0=band_y0,
+                    x1=mid_x + slash_w / 2.0,
+                    y1=band_y1,
+                    ocr_source=ocr_box,
+                    anchor_left=a_l,
+                    anchor_right=a_r,
+                )
+            )
+
+    # ── Percent, degree, plus-minus — after_digit slot ──
+    after_symbols = [ch for ch in ocr_text if ch in allowed and ch != "/"]
+    # Deduplicate while preserving order
+    seen: set = set()
+    unique_after: List[str] = []
+    for ch in after_symbols:
+        if ch not in seen:
+            seen.add(ch)
+            unique_after.append(ch)
+
+    if unique_after:
+        rightmost = digit_anchors[-1]  # already sorted by x0
+        pad = cfg.ocr_reconcile_symbol_pad
+        cursor_x = rightmost.x1 + pad
+
+        # Per-character width from the OCR token for positional placement
+        ocr_cw = ocr_box.width() / max(1, len(ocr_text)) if ocr_text else 0.0
+
+        for sym in unique_after:
+            # Prefer OCR-relative placement: use the symbol's position
+            # inside the OCR token so the injected box aligns with the
+            # printed glyph (even if it overlaps the PDF glyph).
+            sym_idx = ocr_text.find(sym)
+            if sym_idx >= 0 and ocr_cw > 0:
+                sym_x0 = ocr_box.x0 + sym_idx * ocr_cw
+                sym_w = max(ocr_cw, 0.5 * h)  # at least half line-height
+            else:
+                # Fallback: anchor-based cursor placement
+                sym_x0 = cursor_x
+                if sym == "%":
+                    sym_w = cfg.ocr_reconcile_pct_width_mult * h
+                else:  # ° ±
+                    sym_w = cfg.ocr_reconcile_degree_width_mult * h
+
+            candidates.append(
+                SymbolCandidate(
+                    symbol=sym,
+                    slot_type="after_digit",
+                    x0=sym_x0,
+                    y0=band_y0,
+                    x1=sym_x0 + sym_w,
+                    y1=band_y1,
+                    ocr_source=ocr_box,
+                    anchor_left=None,
+                    anchor_right=rightmost,
+                )
+            )
+            cursor_x = max(cursor_x, sym_x0 + sym_w + pad)  # advance for next symbol
+
+    return candidates
+
+
+def _accept_candidates(
+    candidates: List[SymbolCandidate],
+    pdf_tokens: List[GlyphBox],
+    page_width: float,
+    cfg: GroupingConfig | None = None,
+) -> List[SymbolCandidate]:
+    """Run acceptance checks on symbol candidates.
+
+    Overlap rules:
+    - between_digits: ignore overlap with anchor_left/anchor_right, reject
+      overlap with any other token.
+    - after_digit: ignore overlap with anchor_right, reject overlap with
+      the next token to the right.
+    Checks both origin="text" and origin="ocr" for "already in PDF" guard.
+    """
+    _proximity = (
+        cfg.ocr_reconcile_accept_proximity if cfg else _DEFAULT_ACCEPT_PROXIMITY
+    )
+    _iou_thr = cfg.ocr_reconcile_accept_iou if cfg else _DEFAULT_IOU_THRESHOLD
+    _cov_thr = cfg.ocr_reconcile_accept_coverage if cfg else _DEFAULT_COVERAGE_THRESHOLD
+
+    # Build a combined token set for overlap checking
+    all_tokens = list(pdf_tokens)
+
+    for cand in candidates:
+        # Bounds check
+        if cand.x0 < 0 or cand.x1 > page_width:
+            cand.status = "rejected"
+            cand.reject_reason = "out_of_bounds"
+            continue
+
+        # Already-in-PDF check: any token with the same symbol text near
+        # the candidate's x-center on the same y-band?
+        cand_cx = (cand.x0 + cand.x1) / 2.0
+        cand_cy = (cand.y0 + cand.y1) / 2.0
+        already = False
+        for t in all_tokens:
+            if cand.symbol not in t.text:
+                continue
+            t_cx = (t.x0 + t.x1) / 2.0
+            t_cy = (t.y0 + t.y1) / 2.0
+            if abs(t_cx - cand_cx) < _proximity and abs(t_cy - cand_cy) < _proximity:
+                already = True
+                break
+        if already:
+            cand.status = "rejected"
+            cand.reject_reason = "already_in_pdf"
+            continue
+
+        # Build exclusion set (anchor IDs to ignore during overlap check)
+        exclude_ids: set = set()
+        if cand.anchor_left is not None:
+            exclude_ids.add(id(cand.anchor_left))
+        if cand.anchor_right is not None:
+            exclude_ids.add(id(cand.anchor_right))
+
+        # Make a temporary GlyphBox for overlap checking
+        cand_box = GlyphBox(
+            page=cand.ocr_source.page,
+            x0=cand.x0,
+            y0=cand.y0,
+            x1=cand.x1,
+            y1=cand.y1,
+            text=cand.symbol,
+            origin="ocr",
+        )
+
+        # Overlap check against non-excluded tokens
+        overlap_hit = False
+        for t in all_tokens:
+            if id(t) in exclude_ids:
+                continue
+            if iou(cand_box, t) > _iou_thr or _overlap_ratio(cand_box, t) > _cov_thr:
+                overlap_hit = True
+                break
+
+        if overlap_hit:
+            if cand.slot_type == "between_digits":
+                cand.status = "rejected"
+                cand.reject_reason = "overlap_non_anchor"
+            else:
+                cand.status = "rejected"
+                cand.reject_reason = "overlap_next_token"
+            continue
+
+        cand.status = "accepted"
+
+    return candidates
+
+
+def _collect_candidate_results(candidates, entry, page) -> List[GlyphBox]:
+    """Record candidate anchors/details in *entry* and return accepted GlyphBoxes."""
+    accepted: List[GlyphBox] = []
+    anchor_ids_seen: set = set()
+    for c in candidates:
+        for a in (c.anchor_left, c.anchor_right):
+            if a is not None and id(a) not in anchor_ids_seen:
+                anchor_ids_seen.add(id(a))
+                entry["anchors"].append(
+                    {"text": a.text, "bbox": [a.x0, a.y0, a.x1, a.y1]}
+                )
+        entry["candidates"].append(
+            {
+                "symbol": c.symbol,
+                "slot": c.slot_type,
+                "bbox": [c.x0, c.y0, c.x1, c.y1],
+                "status": c.status,
+                "reason": c.reject_reason,
+            }
+        )
+        if c.status == "accepted":
+            accepted.append(
+                GlyphBox(
+                    page=page,
+                    x0=c.x0,
+                    y0=c.y0,
+                    x1=c.x1,
+                    y1=c.y1,
+                    text=c.symbol,
+                    origin="ocr",
+                )
+            )
+    return accepted
+
+
+def _try_inject_case_c(m, entry, pdf_tokens, page_width, cfg):
+    """Case C: composite match — digit anchors + slot-based placement.
+
+    Returns a list of accepted GlyphBoxes, or ``None`` if Case C does not apply.
+    """
+    candidates = _generate_symbol_candidates(m.ocr_box, pdf_tokens, cfg)
+    if not candidates:
+        return None
+    _accept_candidates(candidates, pdf_tokens, page_width, cfg)
+    entry["path"] = "case_c"
+    return _collect_candidate_results(candidates, entry, m.ocr_box.page)
+
+
+def _try_inject_case_a(m, entry, pdf_tokens, page_width, cfg, char_w, re_composite):
+    """Case A: matched OCR token with extra symbols not present in the PDF token.
+
+    Returns a list of accepted GlyphBoxes, or ``None`` if Case A does not apply.
+    """
+    if m.match_type not in ("iou", "center") or m.pdf_box is None:
+        return None
+
+    allowed = cfg.ocr_reconcile_allowed_symbols
+    ocr_text = m.ocr_box.text
+
+    extra = _extra_symbols(ocr_text, m.pdf_box.text, allowed)
+    if not extra:
+        entry["path"] = "case_a_no_extra"
+        return []
+
+    # Composite detection — defer to Case C if OCR text has digit-symbol-digit pattern
+    if re_composite.search(ocr_text):
+        c_candidates = _generate_symbol_candidates(m.ocr_box, pdf_tokens, cfg)
+        if c_candidates:
+            _accept_candidates(c_candidates, pdf_tokens, page_width, cfg)
+            entry["path"] = "case_a_deferred_to_c"
+            return _collect_candidate_results(c_candidates, entry, m.ocr_box.page)
+        # If no candidates generated, fall through to suffix logic
+
+    sym_candidate = GlyphBox(
+        page=m.ocr_box.page,
+        x0=m.pdf_box.x1,
+        y0=m.pdf_box.y0,
+        x1=m.pdf_box.x1 + char_w * len(extra),
+        y1=m.pdf_box.y1,
+        text=extra,
+        origin="ocr",
+    )
+    entry["path"] = "case_a"
+    if _overlaps_existing(sym_candidate, pdf_tokens):
+        entry["candidates"].append(
+            {
+                "symbol": extra,
+                "slot": "suffix",
+                "bbox": [
+                    sym_candidate.x0,
+                    sym_candidate.y0,
+                    sym_candidate.x1,
+                    sym_candidate.y1,
+                ],
+                "status": "rejected",
+                "reason": "overlap_existing",
+            }
+        )
+        return []
+    entry["candidates"].append(
+        {
+            "symbol": extra,
+            "slot": "suffix",
+            "bbox": [
+                sym_candidate.x0,
+                sym_candidate.y0,
+                sym_candidate.x1,
+                sym_candidate.y1,
+            ],
+            "status": "accepted",
+            "reason": "",
+        }
+    )
+    return [sym_candidate]
+
+
+def _try_inject_case_b(m, entry, pdf_tokens, cfg):
+    """Case B: unmatched OCR token with an allowed symbol near a digit.
+
+    Returns a list of accepted GlyphBoxes, or ``None`` if Case B does not apply.
+    """
+    if m.match_type != "unmatched":
+        return None
+
+    allowed = cfg.ocr_reconcile_allowed_symbols
+    symbol_text = "".join(ch for ch in m.ocr_box.text if ch in allowed)
+    if not symbol_text:
+        entry["path"] = "case_b_no_symbol"
+        return []
+
+    if not _has_digit_neighbour_left(
+        m.ocr_box, pdf_tokens, cfg.ocr_reconcile_proximity_pts, cfg
+    ):
+        entry["path"] = "case_b"
+        entry["candidates"].append(
+            {
+                "symbol": symbol_text,
+                "slot": "standalone",
+                "bbox": [
+                    m.ocr_box.x0,
+                    m.ocr_box.y0,
+                    m.ocr_box.x1,
+                    m.ocr_box.y1,
+                ],
+                "status": "rejected",
+                "reason": "no_digit_neighbour",
+            }
+        )
+        return []
+
+    sym_candidate = GlyphBox(
+        page=m.ocr_box.page,
+        x0=m.ocr_box.x0,
+        y0=m.ocr_box.y0,
+        x1=m.ocr_box.x1,
+        y1=m.ocr_box.y1,
+        text=symbol_text,
+        origin="ocr",
+    )
+    entry["path"] = "case_b"
+    if _overlaps_existing(sym_candidate, pdf_tokens):
+        entry["candidates"].append(
+            {
+                "symbol": symbol_text,
+                "slot": "standalone",
+                "bbox": [
+                    m.ocr_box.x0,
+                    m.ocr_box.y0,
+                    m.ocr_box.x1,
+                    m.ocr_box.y1,
+                ],
+                "status": "rejected",
+                "reason": "overlap_existing",
+            }
+        )
+        return []
+    entry["candidates"].append(
+        {
+            "symbol": symbol_text,
+            "slot": "standalone",
+            "bbox": [m.ocr_box.x0, m.ocr_box.y0, m.ocr_box.x1, m.ocr_box.y1],
+            "status": "accepted",
+            "reason": "",
+        }
+    )
+    return [sym_candidate]
+
+
+def _inject_symbols(
+    matches: List[MatchRecord],
+    pdf_tokens: List[GlyphBox],
+    cfg: GroupingConfig,
+    page_width: float = 0.0,
+) -> Tuple[List[GlyphBox], List[dict], int]:
+    """Decide which OCR findings to inject as new GlyphBox tokens.
+
+    Delegates to :func:`_try_inject_case_c`, :func:`_try_inject_case_a`,
+    and :func:`_try_inject_case_b` for the three injection strategies.
+
+    Returns
+    -------
+    added : list[GlyphBox]
+        Tokens to inject.
+    debug_log : list[dict]
+        Per-OCR-token trace (only for symbol-bearing tokens, capped at 200).
+    """
+    allowed = cfg.ocr_reconcile_allowed_symbols
+    added: List[GlyphBox] = []
+    debug_log: List[dict] = []
+    char_w = _estimate_char_width(pdf_tokens, cfg)
+    n_filtered_non_numeric = 0
+    _MAX_DEBUG = cfg.ocr_reconcile_max_debug
+
+    _RE_COMPOSITE = re.compile(r"\d+\s*[%/°±Ø×'\"#@⌀]\s*\d+")
+
+    for m in matches:
+        # Confidence gate: skip OCR tokens below reconcile confidence threshold
+        if m.ocr_confidence < cfg.ocr_reconcile_confidence:
+            continue
+
+        ocr_text = m.ocr_box.text
+
+        # Pre-filter: must contain at least one allowed symbol
+        if not has_allowed_symbol(ocr_text, allowed):
+            continue
+
+        # Phase 0: numeric-context gate (skip headings / random slashes)
+        is_symbol_only = all(ch in allowed or ch.isspace() for ch in ocr_text)
+        if not has_numeric_symbol_context(ocr_text, allowed):
+            if not (m.match_type == "unmatched" and is_symbol_only):
+                if len(debug_log) < _MAX_DEBUG:
+                    debug_log.append(
+                        {
+                            "ocr_text": ocr_text,
+                            "ocr_bbox": [
+                                m.ocr_box.x0,
+                                m.ocr_box.y0,
+                                m.ocr_box.x1,
+                                m.ocr_box.y1,
+                            ],
+                            "match_type": m.match_type,
+                            "anchors": [],
+                            "candidates": [],
+                            "path": "early_reject",
+                            "reason": "non_numeric_symbol_context",
+                        }
+                    )
+                n_filtered_non_numeric += 1
+                continue
+
+        entry: dict = {
+            "ocr_text": ocr_text,
+            "ocr_bbox": [m.ocr_box.x0, m.ocr_box.y0, m.ocr_box.x1, m.ocr_box.y1],
+            "match_type": m.match_type,
+            "anchors": [],
+            "candidates": [],
+            "path": "",
+        }
+
+        for try_fn, extra_args in (
+            (_try_inject_case_c, (m, entry, pdf_tokens, page_width, cfg)),
+            (
+                _try_inject_case_a,
+                (m, entry, pdf_tokens, page_width, cfg, char_w, _RE_COMPOSITE),
+            ),
+            (_try_inject_case_b, (m, entry, pdf_tokens, cfg)),
+        ):
+            result = try_fn(*extra_args)
+            if result is not None:
+                added.extend(result)
+                if len(debug_log) < _MAX_DEBUG:
+                    debug_log.append(entry)
+                break
+
+    return added, debug_log, n_filtered_non_numeric

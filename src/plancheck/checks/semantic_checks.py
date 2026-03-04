@@ -16,7 +16,21 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+# ── Check registry ────────────────────────────────────────────────────
+
+_CHECK_REGISTRY: list[Callable] = []
+
+
+def register_check(fn: Callable) -> Callable:
+    """Decorator: register a check function for use in :func:`run_all_checks`.
+
+    Registered functions must accept the full set of keyword arguments that
+    ``run_all_checks`` passes (they should use ``**_`` to ignore unknown ones).
+    """
+    _CHECK_REGISTRY.append(fn)
+    return fn
 
 # ── CheckResult data class ───────────────────────────────────────────
 
@@ -976,6 +990,116 @@ def check_revision_missing_number(
     return findings
 
 
+# ── Private registered wrappers ──────────────────────────────────────
+
+
+@register_check
+def _reg_check_notes_numbering(*, notes_columns=None, blocks=None, page=0, **_):
+    if not notes_columns:
+        return []
+    return check_notes_numbering(notes_columns, blocks or [], page=page)
+
+
+@register_check
+def _reg_check_abbreviation_duplicates(*, abbreviation_regions=None, page=0, **_):
+    if not abbreviation_regions:
+        return []
+    return check_abbreviation_duplicates(abbreviation_regions, page=page)
+
+
+@register_check
+def _reg_check_revision_date_order(*, revision_regions=None, page=0, **_):
+    if not revision_regions:
+        return []
+    return check_revision_date_order(revision_regions, page=page)
+
+
+@register_check
+def _reg_check_abbreviations_undefined(
+    *, abbreviation_regions=None, notes_columns=None, blocks=None, page=0, **_
+):
+    if not abbreviation_regions or not notes_columns:
+        return []
+    return check_abbreviations_undefined(
+        abbreviation_regions, notes_columns, blocks or [], page=page
+    )
+
+
+@register_check
+def _reg_check_standard_detail_duplicates(*, standard_detail_regions=None, page=0, **_):
+    if not standard_detail_regions:
+        return []
+    return check_standard_detail_duplicates(standard_detail_regions, page=page)
+
+
+@register_check
+def _reg_check_legend_empty(*, legend_regions=None, page=0, **_):
+    if not legend_regions:
+        return []
+    return check_legend_empty(legend_regions, page=page)
+
+
+@register_check
+def _reg_check_legend_no_header(*, legend_regions=None, page=0, **_):
+    if not legend_regions:
+        return []
+    return check_legend_no_header(legend_regions, page=page)
+
+
+@register_check
+def _reg_check_notes_no_header(*, notes_columns=None, page=0, **_):
+    if not notes_columns:
+        return []
+    return check_notes_no_header(notes_columns, page=page)
+
+
+@register_check
+def _reg_check_revision_empty(*, revision_regions=None, page=0, **_):
+    if not revision_regions:
+        return []
+    return check_revision_empty(revision_regions, page=page)
+
+
+@register_check
+def _reg_check_abbreviation_empty(*, abbreviation_regions=None, page=0, **_):
+    if not abbreviation_regions:
+        return []
+    return check_abbreviation_empty(abbreviation_regions, page=page)
+
+
+@register_check
+def _reg_check_standard_detail_missing_desc(*, standard_detail_regions=None, page=0, **_):
+    if not standard_detail_regions:
+        return []
+    return check_standard_detail_missing_desc(standard_detail_regions, page=page)
+
+
+@register_check
+def _reg_check_title_block_missing(*, structural_boxes=None, page=0, **_):
+    return check_title_block_missing(structural_boxes or [], page=page)
+
+
+@register_check
+def _reg_check_title_block_fields(*, title_blocks=None, page=0, **_):
+    if not title_blocks:
+        return []
+    return check_title_block_fields(title_blocks, page=page)
+
+
+@register_check
+def _reg_check_notes_cross_references(*, notes_columns=None, blocks=None, page=0, **_):
+    if not notes_columns or not blocks:
+        return []
+    return check_notes_cross_references(notes_columns, blocks, page=page)
+
+
+@register_check
+def _reg_check_revision_missing_number(*, revision_regions=None, page=0, **_):
+    if not revision_regions:
+        return []
+    return check_revision_missing_number(revision_regions, page=page)
+
+
 # ── Orchestrator ─────────────────────────────────────────────────────
 
 
@@ -1002,90 +1126,22 @@ def run_all_checks(
     finding severities are automatically downgraded (error→warning,
     warning→info) to reflect reduced trust in OCR-derived data.
     """
-    notes_columns = notes_columns or []
-    abbreviation_regions = abbreviation_regions or []
-    revision_regions = revision_regions or []
-    standard_detail_regions = standard_detail_regions or []
-    legend_regions = legend_regions or []
-    misc_title_regions = misc_title_regions or []
-    structural_boxes = structural_boxes or []
-    title_blocks = title_blocks or []
-    blocks = blocks or []
-
+    kwargs = dict(
+        notes_columns=notes_columns or [],
+        abbreviation_regions=abbreviation_regions or [],
+        revision_regions=revision_regions or [],
+        standard_detail_regions=standard_detail_regions or [],
+        legend_regions=legend_regions or [],
+        misc_title_regions=misc_title_regions or [],
+        structural_boxes=structural_boxes or [],
+        title_blocks=title_blocks or [],
+        blocks=blocks or [],
+        page=page,
+        mean_ocr_confidence=mean_ocr_confidence,
+    )
     findings: List[CheckResult] = []
-
-    # 1. Notes numbering
-    if notes_columns:
-        findings.extend(check_notes_numbering(notes_columns, blocks, page=page))
-
-    # 2. Abbreviation duplicates
-    if abbreviation_regions:
-        findings.extend(check_abbreviation_duplicates(abbreviation_regions, page=page))
-
-    # 3. Revision date ordering
-    if revision_regions:
-        findings.extend(check_revision_date_order(revision_regions, page=page))
-
-    # 4. Abbreviation used-but-undefined
-    if abbreviation_regions and notes_columns:
-        findings.extend(
-            check_abbreviations_undefined(
-                abbreviation_regions,
-                notes_columns,
-                blocks,
-                page=page,
-            )
-        )
-
-    # 5. Standard detail duplicates
-    if standard_detail_regions:
-        findings.extend(
-            check_standard_detail_duplicates(
-                standard_detail_regions,
-                page=page,
-            )
-        )
-
-    # 6. Legend empty
-    if legend_regions:
-        findings.extend(check_legend_empty(legend_regions, page=page))
-
-    # 7. Legend no header
-    if legend_regions:
-        findings.extend(check_legend_no_header(legend_regions, page=page))
-
-    # 8. Notes column missing header
-    if notes_columns:
-        findings.extend(check_notes_no_header(notes_columns, page=page))
-
-    # 9. Revision region empty
-    if revision_regions:
-        findings.extend(check_revision_empty(revision_regions, page=page))
-
-    # 10. Abbreviation empty
-    if abbreviation_regions:
-        findings.extend(check_abbreviation_empty(abbreviation_regions, page=page))
-
-    # 11. Standard detail missing description
-    if standard_detail_regions:
-        findings.extend(
-            check_standard_detail_missing_desc(standard_detail_regions, page=page)
-        )
-
-    # 12. Title block missing
-    findings.extend(check_title_block_missing(structural_boxes, page=page))
-
-    # 13. Title block field completeness
-    if title_blocks:
-        findings.extend(check_title_block_fields(title_blocks, page=page))
-
-    # 14. Notes cross-references
-    if notes_columns and blocks:
-        findings.extend(check_notes_cross_references(notes_columns, blocks, page=page))
-
-    # 15. Revision missing number
-    if revision_regions:
-        findings.extend(check_revision_missing_number(revision_regions, page=page))
+    for check_fn in _CHECK_REGISTRY:
+        findings.extend(check_fn(**kwargs))
 
     # ── Post-process: attenuate severity on low OCR confidence ──────
     if mean_ocr_confidence < 1.0:
