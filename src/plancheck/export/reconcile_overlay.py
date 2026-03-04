@@ -15,12 +15,12 @@ from typing import Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
 from ..models import GlyphBox
-from ..reconcile.reconcile import (
-    ReconcileResult,
-    _center,
-    _has_allowed_symbol,
-    _has_numeric_symbol_context,
+from ..reconcile.helpers import (
+    center as _center,
+    has_allowed_symbol as _has_allowed_symbol,
+    has_numeric_symbol_context as _has_numeric_symbol_context,
 )
+from ..reconcile.reconcile import ReconcileResult
 
 log = logging.getLogger(__name__)
 
