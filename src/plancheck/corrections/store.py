@@ -1368,15 +1368,16 @@ class CorrectionStore:
             ``total_entries``, ``distinct_detections``,
             ``distinct_versions``.
         """
-        total = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM feature_cache"
-        ).fetchone()["n"]
-        det_count = self._conn.execute(
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM feature_cache").fetchone()
+        total = row["n"] if row else 0
+        row = self._conn.execute(
             "SELECT COUNT(DISTINCT detection_id) AS n FROM feature_cache"
-        ).fetchone()["n"]
-        ver_count = self._conn.execute(
+        ).fetchone()
+        det_count = row["n"] if row else 0
+        row = self._conn.execute(
             "SELECT COUNT(DISTINCT feature_version) AS n FROM feature_cache"
-        ).fetchone()["n"]
+        ).fetchone()
+        ver_count = row["n"] if row else 0
         return {
             "total_entries": total,
             "distinct_detections": det_count,
@@ -1586,25 +1587,24 @@ class CorrectionStore:
 
     def get_db_overview(self) -> dict[str, Any]:
         """Aggregate overview stats for the whole database."""
-        docs = self._conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"]
-        dets = self._conn.execute("SELECT COUNT(*) AS n FROM detections").fetchone()[
-            "n"
-        ]
-        corrs = self._conn.execute("SELECT COUNT(*) AS n FROM corrections").fetchone()[
-            "n"
-        ]
-        groups = self._conn.execute("SELECT COUNT(*) AS n FROM box_groups").fetchone()[
-            "n"
-        ]
-        trains = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM training_runs"
-        ).fetchone()["n"]
-        last_det = self._conn.execute(
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()
+        docs = row["n"] if row else 0
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM detections").fetchone()
+        dets = row["n"] if row else 0
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM corrections").fetchone()
+        corrs = row["n"] if row else 0
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM box_groups").fetchone()
+        groups = row["n"] if row else 0
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM training_runs").fetchone()
+        trains = row["n"] if row else 0
+        row = self._conn.execute(
             "SELECT MAX(created_at) AS ts FROM detections"
-        ).fetchone()["ts"]
-        last_corr = self._conn.execute(
+        ).fetchone()
+        last_det = row["ts"] if row else None
+        row = self._conn.execute(
             "SELECT MAX(corrected_at) AS ts FROM corrections"
-        ).fetchone()["ts"]
+        ).fetchone()
+        last_corr = row["ts"] if row else None
         db_size = self._db_path.stat().st_size if self._db_path.exists() else 0
         return {
             "db_path": str(self._db_path.resolve()),
@@ -1625,27 +1625,31 @@ class CorrectionStore:
         ).fetchone()
         if not doc:
             return {}
-        det_count = self._conn.execute(
+        row = self._conn.execute(
             "SELECT COUNT(*) AS n FROM detections WHERE doc_id = ?",
             (doc_id,),
-        ).fetchone()["n"]
-        corr_count = self._conn.execute(
+        ).fetchone()
+        det_count = row["n"] if row else 0
+        row = self._conn.execute(
             "SELECT COUNT(*) AS n FROM corrections WHERE doc_id = ?",
             (doc_id,),
-        ).fetchone()["n"]
-        group_count = self._conn.execute(
+        ).fetchone()
+        corr_count = row["n"] if row else 0
+        row = self._conn.execute(
             "SELECT COUNT(*) AS n FROM box_groups WHERE doc_id = ?",
             (doc_id,),
-        ).fetchone()["n"]
+        ).fetchone()
+        group_count = row["n"] if row else 0
         runs = self.get_run_ids_for_doc(doc_id)
-        last_activity = self._conn.execute(
+        row = self._conn.execute(
             "SELECT MAX(ts) AS ts FROM ("
             "  SELECT MAX(created_at) AS ts FROM detections WHERE doc_id = ? "
             "  UNION ALL "
             "  SELECT MAX(corrected_at) FROM corrections WHERE doc_id = ?"
             ")",
             (doc_id, doc_id),
-        ).fetchone()["ts"]
+        ).fetchone()
+        last_activity = row["ts"] if row else None
         return {
             **dict(doc),
             "detection_count": det_count,

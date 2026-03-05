@@ -88,18 +88,20 @@ def suggest_next_page(
 
     for doc_id, page, _unc in ranked:
         # Count detections vs corrections
-        det_count = store._conn.execute(
+        row = store._conn.execute(
             "SELECT COUNT(*) FROM detections WHERE doc_id = ? AND page = ?",
             (doc_id, page),
-        ).fetchone()[0]
+        ).fetchone()
+        det_count = row[0] if row else 0
 
-        cor_count = store._conn.execute(
+        row = store._conn.execute(
             "SELECT COUNT(DISTINCT d.detection_id) "
             "FROM detections d "
             "JOIN corrections c ON d.detection_id = c.detection_id "
             "WHERE d.doc_id = ? AND d.page = ?",
             (doc_id, page),
-        ).fetchone()[0]
+        ).fetchone()
+        cor_count = row[0] if row else 0
 
         if cor_count < det_count:
             return (doc_id, page)
