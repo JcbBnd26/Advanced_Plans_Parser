@@ -23,7 +23,7 @@ from typing import Any
 
 from plancheck.config import GroupingConfig
 
-from .widgets import LogPanel, StageProgressBar
+from .widgets import ErrorPanel, LogPanel, StageProgressBar
 from .worker import PipelineWorker
 
 # ---------------------------------------------------------------------------
@@ -279,6 +279,12 @@ class PipelineTab:
 
         row += 1
 
+        # ── Error Panel (hidden by default) ──────────────────────────
+        self.error_panel = ErrorPanel(self._inner)
+        self.error_panel.grid(row=row, column=0, sticky="ew", **pad)
+
+        row += 1
+
         # ── Stage Progress Bar ───────────────────────────────────────
         self.stage_bar = StageProgressBar(self.frame)
         self.stage_bar.grid(
@@ -399,11 +405,14 @@ class PipelineTab:
         runs_root = Path("runs")
 
         self.log_panel.clear()
+        self.error_panel.clear()
         self.stage_bar.reset()
         self.run_button.config(state="disabled")
         self.cancel_button.config(state="normal")
 
-        self._worker = PipelineWorker(self.root, self.log_panel, self.stage_bar)
+        self._worker = PipelineWorker(
+            self.root, self.log_panel, self.stage_bar, self.error_panel
+        )
         worker = self._worker
 
         def target():
@@ -432,6 +441,8 @@ class PipelineTab:
         def on_done(result, error, elapsed):
             self.run_button.config(state="normal")
             self.cancel_button.config(state="disabled")
+            if error:
+                self.error_panel.add_error(str(error), "ERROR")
             if result and not error:
                 self.state.last_run_dir = (
                     result[-1] if isinstance(result, list) else result

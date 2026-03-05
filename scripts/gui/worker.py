@@ -65,12 +65,13 @@ class PipelineWorker:
 
     Usage::
 
-        worker = PipelineWorker(root, log_panel, stage_bar)
+        worker = PipelineWorker(root, log_panel, stage_bar, error_panel)
         worker.run(callable, args, kwargs, on_done=callback)
 
     The *callable* runs in a daemon thread.  ``print()`` and ``logging``
     output is redirected to *log_panel*.  *stage_bar* is updated when
     ``("stage", name, status)`` messages are posted to the internal queue.
+    ERROR-level log messages are also forwarded to *error_panel*.
     """
 
     def __init__(
@@ -78,10 +79,12 @@ class PipelineWorker:
         root: Any,
         log_panel: Any | None = None,
         stage_bar: Any | None = None,
+        error_panel: Any | None = None,
     ) -> None:
         self.root = root
         self.log_panel = log_panel
         self.stage_bar = stage_bar
+        self.error_panel = error_panel
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
         self._cancel_event = threading.Event()
@@ -203,6 +206,12 @@ class PipelineWorker:
             if self.log_panel:
                 try:
                     self.log_panel.write(text, level)
+                except Exception:
+                    pass
+            # Forward ERROR-level messages to error panel
+            if self.error_panel and level in ("ERROR", "CRITICAL"):
+                try:
+                    self.error_panel.add_error(text, level)
                 except Exception:
                     pass
         elif kind == "stage":

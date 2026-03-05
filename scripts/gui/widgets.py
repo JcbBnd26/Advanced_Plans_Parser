@@ -384,3 +384,192 @@ class StatusBar(ttk.Frame):
 
     def set_pdf(self, name: str) -> None:
         self._right_var.set(f"PDF: {name}")
+
+
+# ---------------------------------------------------------------------------
+# ErrorPanel  –  collapsible error display with navigation
+# ---------------------------------------------------------------------------
+
+
+class ErrorPanel(ttk.Frame):
+    """Inline error panel with navigation for displaying pipeline errors.
+
+    Errors are sorted by severity (CRITICAL > ERROR > WARNING) and displayed
+    one at a time with prev/next navigation buttons.
+
+    Parameters
+    ----------
+    parent : tk widget
+    """
+
+    # Severity ordering (lower = more severe)
+    SEVERITY = {"CRITICAL": 1, "ERROR": 2, "WARNING": 3, "INFO": 4}
+
+    def __init__(self, parent: tk.Widget, **kwargs: Any) -> None:
+        super().__init__(parent, **kwargs)
+        self.columnconfigure(0, weight=1)
+
+        self._errors: list[tuple[str, str]] = []  # [(message, level), ...]
+        self._current_index: int = 0
+
+        # Main container (hidden by default)
+        self._container = ttk.LabelFrame(self, text="⚠ Errors", padding=8)
+        self._container.columnconfigure(0, weight=1)
+
+        # Navigation row
+        nav_frame = ttk.Frame(self._container)
+        nav_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        nav_frame.columnconfigure(1, weight=1)
+
+        self._prev_btn = ttk.Button(
+            nav_frame, text="◄ Prev", width=8, command=self._prev_error
+        )
+        self._prev_btn.grid(row=0, column=0, padx=(0, 4))
+
+        self._counter_var = tk.StringVar(value="")
+        ttk.Label(
+            nav_frame,
+            textvariable=self._counter_var,
+            font=("TkDefaultFont", 9, "bold"),
+            anchor="center",
+        ).grid(row=0, column=1)
+
+        self._next_btn = ttk.Button(
+            nav_frame, text="Next ►", width=8, command=self._next_error
+        )
+        self._next_btn.grid(row=0, column=2, padx=(4, 0))
+
+        self._copy_btn = ttk.Button(
+            nav_frame, text="📋 Copy", width=8, command=self._copy_error
+        )
+        self._copy_btn.grid(row=0, column=3, padx=(8, 0))
+
+        self._dismiss_btn = ttk.Button(
+            nav_frame, text="✕ Dismiss", width=10, command=self.hide
+        )
+        self._dismiss_btn.grid(row=0, column=4, padx=(4, 0))
+
+        # Error text display (read-only, selectable)
+        self._text = tk.Text(
+            self._container,
+            height=4,
+            wrap="word",
+            font=("Consolas", 9),
+            state="disabled",
+            bg="#2d2d2d",
+            fg="#e06c75",
+            relief="sunken",
+            borderwidth=1,
+            padx=6,
+            pady=4,
+        )
+        self._text.grid(row=1, column=0, sticky="nsew")
+
+        # Scrollbar for text
+        scrollbar = ttk.Scrollbar(
+            self._container, orient="vertical", command=self._text.yview
+        )
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        self._text.configure(yscrollcommand=scrollbar.set)
+
+        # Severity-colored tags
+        self._text.tag_configure("CRITICAL", foreground="#ff6b6b")
+        self._text.tag_configure("ERROR", foreground="#e06c75")
+        self._text.tag_configure("WARNING", foreground="#e5c07b")
+
+        # Copy binding
+        self._text.bind("<Control-c>", self._copy_selection)
+
+    def add_error(self, message: str, level: str = "ERROR") -> None:
+        """Add an error message and show the panel."""
+        level = level.upper()
+        if level not in self.SEVERITY:
+            level = "ERROR"
+
+        self._errors.append((message, level))
+        # Sort by severity (most severe first)
+        self._errors.sort(key=lambda e: self.SEVERITY.get(e[1], 99))
+        self._current_index = 0  # Reset to show most severe
+        self._update_display()
+        self.show()
+
+    def clear(self) -> None:
+        """Clear all errors and hide the panel."""
+        self._errors.clear()
+        self._current_index = 0
+        self._update_display()
+        self.hide()
+
+    def show(self) -> None:
+        """Show the error panel."""
+        if self._errors:
+            self._container.grid(row=0, column=0, sticky="ew", pady=(4, 0))
+
+    def hide(self) -> None:
+        """Hide the error panel."""
+        self._container.grid_remove()
+
+    def _prev_error(self) -> None:
+        """Navigate to previous error."""
+        if self._current_index > 0:
+            self._current_index -= 1
+            self._update_display()
+
+    def _next_error(self) -> None:
+        """Navigate to next error."""
+        if self._current_index < len(self._errors) - 1:
+            self._current_index += 1
+            self._update_display()
+
+    def _update_display(self) -> None:
+        """Update the text display and navigation state."""
+        total = len(self._errors)
+
+        if total == 0:
+            self._counter_var.set("")
+            self._text.config(state="normal")
+            self._text.delete("1.0", "end")
+            self._text.config(state="disabled")
+            self._prev_btn.config(state="disabled")
+            self._next_btn.config(state="disabled")
+            return
+
+        # Update counter
+        self._counter_var.set(f"Error {self._current_index + 1} of {total}")
+
+        # Update navigation buttons
+        self._prev_btn.config(state="normal" if self._current_index > 0 else "disabled")
+        self._next_btn.config(
+            state="normal" if self._current_index < total - 1 else "disabled"
+        )
+
+        # Update text
+        message, level = self._errors[self._current_index]
+        self._text.config(state="normal")
+        self._text.delete("1.0", "end")
+        self._text.insert("1.0", f"[{level}] {message}", level)
+        self._text.config(state="disabled")
+
+    def _copy_selection(self, event: tk.Event | None = None) -> str:
+        """Copy selected text to clipboard."""
+        try:
+            selection = self._text.get("sel.first", "sel.last")
+            self._text.clipboard_clear()
+            self._text.clipboard_append(selection)
+        except tk.TclError:
+            pass  # No selection
+        return "break"
+
+    def _copy_error(self) -> None:
+        """Copy the current error message to clipboard."""
+        if not self._errors:
+            return
+        message, level = self._errors[self._current_index]
+        full_text = f"[{level}] {message}"
+        self._text.clipboard_clear()
+        self._text.clipboard_append(full_text)
+
+    @property
+    def error_count(self) -> int:
+        """Return the number of errors."""
+        return len(self._errors)
