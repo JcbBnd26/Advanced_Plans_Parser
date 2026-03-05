@@ -10,6 +10,12 @@ Provides two public surfaces:
 2. ``OverlayViewerTab(notebook)`` – a ``ttk.Frame`` that plugs into the
    existing tkinter GUI as a new tab, exposing PDF / page / DPI pickers,
    layer toggles, and live ``GroupingConfig`` knob editors.
+
+.. note:: Future Consolidation (Item 23)
+   This module manually orchestrates pipeline stages for fine-grained layer
+   control.  Consider refactoring to use ``run_pipeline()`` from
+   ``plancheck.pipeline`` with cached ``PageResult``, extracting layer
+   rendering into reusable functions.  See REFACTORING_PLAN_PHASES_3-5.md.
 """
 
 from __future__ import annotations

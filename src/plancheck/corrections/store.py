@@ -1,8 +1,8 @@
 """SQLite-backed store for detections, corrections, and training examples.
 
 Persists pipeline detections and human corrections to
-``data/corrections.db`` (by default).  Provides helpers to build
-training sets for downstream classifiers.
+the corrections database (by default ``data/corrections.db``).
+Provides helpers to build training sets for downstream classifiers.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from plancheck.config import DEFAULT_CORRECTIONS_DB
 
 
 def _utcnow_iso() -> str:
@@ -174,8 +176,8 @@ class CorrectionStore:
         automatically on first use.
     """
 
-    def __init__(self, db_path: Path = Path("data/corrections.db")) -> None:
-        db_path = Path(db_path)
+    def __init__(self, db_path: Path | None = None) -> None:
+        db_path = Path(db_path) if db_path else DEFAULT_CORRECTIONS_DB
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
         self._lock_path = db_path.with_suffix(db_path.suffix + ".lock")
@@ -362,9 +364,7 @@ class CorrectionStore:
             self._conn.commit()
         return detection_id
 
-    def purge_old_detections_for_doc(
-        self, doc_id: str, keep_run_id: str
-    ) -> int:
+    def purge_old_detections_for_doc(self, doc_id: str, keep_run_id: str) -> int:
         """Delete old pipeline detections for *doc_id*, keeping only *keep_run_id*.
 
         Manual annotations (``run_id`` starting with ``'manual'``) are

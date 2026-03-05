@@ -1,6 +1,20 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
+
+# ══════════════════════════════════════════════════════════════════════
+# Global data directory - can be overridden via PLANCHECK_DATA_DIR env var
+# ══════════════════════════════════════════════════════════════════════
+DATA_DIR = Path(os.environ.get("PLANCHECK_DATA_DIR", "data"))
+
+# Default paths derived from DATA_DIR
+DEFAULT_CORRECTIONS_DB = DATA_DIR / "corrections.db"
+DEFAULT_ML_MODEL = DATA_DIR / "element_classifier.pkl"
+DEFAULT_GNN_MODEL = DATA_DIR / "document_gnn.pt"
+DEFAULT_DRIFT_STATS = DATA_DIR / "drift_stats.json"
+DEFAULT_LABEL_REGISTRY = DATA_DIR / "label_registry.json"
 
 
 class ConfigValidationError(ValueError):
@@ -48,6 +62,7 @@ def _check_odd(name: str, value: int, floor: int = 3) -> None:
 # future call-site migration).  PipelineConfig keeps ALL flat fields
 # so that existing code (cfg.some_field) is never broken.
 # ══════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class TOCRConfig:
@@ -248,7 +263,7 @@ class ExportConfig:
 class MLConfig:
     """ML classifier, LLM, GNN, drift, and retraining settings."""
 
-    ml_model_path: str = "data/element_classifier.pkl"
+    ml_model_path: str = str(DEFAULT_ML_MODEL)
     ml_relabel_confidence: float = 0.8
     ml_enabled: bool = True
     ml_min_training_examples: int = 10
@@ -267,10 +282,10 @@ class MLConfig:
     llm_temperature: float = 0.1
     llm_policy: str = "local_only"
     ml_gnn_enabled: bool = False
-    ml_gnn_model_path: str = "data/document_gnn.pt"
+    ml_gnn_model_path: str = str(DEFAULT_GNN_MODEL)
     ml_gnn_hidden_dim: int = 64
     ml_drift_enabled: bool = False
-    ml_drift_stats_path: str = "data/drift_stats.json"
+    ml_drift_stats_path: str = str(DEFAULT_DRIFT_STATS)
     ml_drift_threshold: float = 0.3
     ml_retrain_threshold: int = 50
     ml_retrain_on_startup: bool = False
@@ -671,7 +686,7 @@ class PipelineConfig:
 
     # ── ML classifier ─────────────────────────────────────────────────
     # Path to the trained element classifier model file.
-    ml_model_path: str = "data/element_classifier.pkl"
+    ml_model_path: str = str(DEFAULT_ML_MODEL)
     # Minimum confidence to relabel a detection using ML predictions.
     ml_relabel_confidence: float = 0.8
     # Enable/disable the ML feedback loop in the pipeline.
@@ -711,7 +726,7 @@ class PipelineConfig:
     # Enable cross-page GNN model (requires torch + torch-geometric).
     ml_gnn_enabled: bool = False
     # Path to trained GNN model checkpoint.
-    ml_gnn_model_path: str = "data/document_gnn.pt"
+    ml_gnn_model_path: str = str(DEFAULT_GNN_MODEL)
     # Hidden dimension for GNN layers.
     ml_gnn_hidden_dim: int = 64
 
@@ -719,7 +734,7 @@ class PipelineConfig:
     # Enable data-drift detection during pipeline runs.
     ml_drift_enabled: bool = False
     # Path to the drift reference statistics file.
-    ml_drift_stats_path: str = "data/drift_stats.json"
+    ml_drift_stats_path: str = str(DEFAULT_DRIFT_STATS)
     # Fraction of flagged features to consider a vector drifted [0,1].
     ml_drift_threshold: float = 0.3
     # Number of new corrections to trigger an automatic retrain.
@@ -896,6 +911,7 @@ class PipelineConfig:
     def tocr(self) -> TOCRConfig:
         """View of TOCR-related settings."""
         import dataclasses
+
         names = {f.name for f in dataclasses.fields(TOCRConfig)}
         return TOCRConfig(**{n: getattr(self, n) for n in names})
 
@@ -903,6 +919,7 @@ class PipelineConfig:
     def vocr(self) -> VOCRConfig:
         """View of VOCR and image-preprocessing settings."""
         import dataclasses
+
         names = {f.name for f in dataclasses.fields(VOCRConfig)}
         return VOCRConfig(**{n: getattr(self, n) for n in names})
 
@@ -910,6 +927,7 @@ class PipelineConfig:
     def reconcile(self) -> ReconcileConfig:
         """View of OCR reconciliation settings."""
         import dataclasses
+
         names = {f.name for f in dataclasses.fields(ReconcileConfig)}
         return ReconcileConfig(**{n: getattr(self, n) for n in names})
 
@@ -917,6 +935,7 @@ class PipelineConfig:
     def grouping(self) -> GroupingStageConfig:
         """View of core geometry and clustering settings."""
         import dataclasses
+
         names = {f.name for f in dataclasses.fields(GroupingStageConfig)}
         return GroupingStageConfig(**{n: getattr(self, n) for n in names})
 
@@ -924,6 +943,7 @@ class PipelineConfig:
     def analysis(self) -> AnalysisConfig:
         """View of semantic analysis settings."""
         import dataclasses
+
         names = {f.name for f in dataclasses.fields(AnalysisConfig)}
         return AnalysisConfig(**{n: getattr(self, n) for n in names})
 
@@ -931,6 +951,7 @@ class PipelineConfig:
     def export(self) -> ExportConfig:
         """View of overlay / export settings."""
         import dataclasses
+
         names = {f.name for f in dataclasses.fields(ExportConfig)}
         return ExportConfig(**{n: getattr(self, n) for n in names})
 
@@ -938,6 +959,7 @@ class PipelineConfig:
     def ml(self) -> MLConfig:
         """View of ML / LLM / drift settings."""
         import dataclasses
+
         names = {f.name for f in dataclasses.fields(MLConfig)}
         return MLConfig(**{n: getattr(self, n) for n in names})
 
@@ -1079,6 +1101,7 @@ GroupingConfig = PipelineConfig
 # ══════════════════════════════════════════════════════════════════════
 # Config migration helper
 # ══════════════════════════════════════════════════════════════════════
+
 
 def migrate_config(old_dict: dict) -> dict:
     """Migrate a flat config dict from an older version to the current schema.

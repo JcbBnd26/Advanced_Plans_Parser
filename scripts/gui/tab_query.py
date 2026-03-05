@@ -12,12 +12,15 @@ Features:
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 
 class QueryTab:
@@ -58,8 +61,8 @@ class QueryTab:
             self.root.bind(
                 "<Destroy>", lambda e: setattr(self, "_closing", True), add="+"
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            log.debug("Failed to bind Destroy event", exc_info=True)
 
         # React to run completions
         self.state.subscribe("run_completed", self._on_run_completed)
@@ -383,14 +386,14 @@ class QueryTab:
         try:
             if hasattr(self.root, "winfo_exists") and not self.root.winfo_exists():
                 return
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            log.debug("winfo_exists check failed", exc_info=True)
         if callback is None:
             return
         try:
             self.root.after(delay_ms, callback)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            log.debug("root.after scheduling failed", exc_info=True)
 
     def _on_search(self) -> None:
         """Semantic search without LLM."""

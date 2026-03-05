@@ -253,9 +253,11 @@ class TestBuildDocumentGraph:
 
 class TestGNNConfig:
     def test_defaults(self):
+        from pathlib import Path
+
         cfg = GroupingConfig()
         assert cfg.ml_gnn_enabled is False
-        assert cfg.ml_gnn_model_path == "data/document_gnn.pt"
+        assert Path(cfg.ml_gnn_model_path) == Path("data/document_gnn.pt")
         assert cfg.ml_gnn_hidden_dim == 64
 
     def test_hidden_dim_validation(self):

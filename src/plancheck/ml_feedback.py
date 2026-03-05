@@ -204,8 +204,8 @@ def _apply_ml_feedback(
                     raw = store.get_cached_features(did, feat_version)
                     if raw is not None:
                         cached_vec = raw
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001
+                    log.debug("Feature cache read failed for %s", did, exc_info=True)
 
             if cached_vec is not None:
                 # Use cached vector for prediction directly
@@ -250,8 +250,10 @@ def _apply_ml_feedback(
                             text_embedding=text_emb,
                         )
                         store.cache_features(did, vec.tolist(), feat_version)
-                    except Exception:
-                        pass
+                    except Exception:  # noqa: BLE001
+                        log.debug(
+                            "Feature cache write failed for %s", did, exc_info=True
+                        )
 
             # Always write confidence — unless already set by prior
             # delete correction (pass 1 sets it to 0.0).

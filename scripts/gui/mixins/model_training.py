@@ -6,11 +6,14 @@ feature importance, and active learning suggestions.
 
 from __future__ import annotations
 
+import logging
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox
 from typing import TYPE_CHECKING
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from tkinter import ttk
@@ -43,12 +46,12 @@ class ModelTrainingMixin:
         try:
             if hasattr(self.root, "winfo_exists") and not self.root.winfo_exists():
                 return
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            log.debug("winfo_exists check failed", exc_info=True)
         try:
             self.root.after(delay_ms, callback)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            log.debug("root.after scheduling failed", exc_info=True)
 
     # ── Training ─────────────────────────────────────────────────
 
@@ -114,8 +117,8 @@ class ModelTrainingMixin:
                     store.save_training_run(
                         metrics, model_path=str(clf.model_path), notes="GUI train"
                     )
-                except Exception:
-                    pass  # non-critical
+                except Exception:  # noqa: BLE001
+                    log.debug("Training run save failed", exc_info=True)
 
                 acc = metrics.get("accuracy", 0)
                 f1m = metrics.get("f1_macro", 0)
@@ -168,7 +171,8 @@ class ModelTrainingMixin:
         """Show a popup with all past training runs."""
         try:
             history = self._store.get_training_history()
-        except Exception:
+        except Exception:  # noqa: BLE001
+            log.debug("Failed to get training history", exc_info=True)
             history = []
 
         if not history:

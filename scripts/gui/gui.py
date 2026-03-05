@@ -108,8 +108,8 @@ class PlanParserGUI:
         # Shutdown safety: cancel background workers before destroying the root.
         try:
             self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to set WM_DELETE_WINDOW protocol", exc_info=True)
 
     def _on_close(self) -> None:
         """Best-effort shutdown: cancel workers, then close the window."""
@@ -127,19 +127,19 @@ class PlanParserGUI:
             if callable(request_cancel):
                 try:
                     request_cancel()
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001
+                    logger.debug("Tab cancel request failed", exc_info=True)
 
             worker = getattr(tab, "_worker", None)
             if worker and hasattr(worker, "cancel"):
                 try:
                     worker.cancel()
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001
+                    logger.debug("Worker cancel failed", exc_info=True)
         try:
             self.root.destroy()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("Root destroy failed", exc_info=True)
 
     def _build_ui(self) -> None:
         # ── Tab container ─────────────────────────────────────────────

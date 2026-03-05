@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from plancheck.config import DEFAULT_CORRECTIONS_DB, DEFAULT_ML_MODEL
+
 log = logging.getLogger(__name__)
 
 
@@ -236,7 +238,7 @@ def startup_check(
     if not getattr(cfg, "ml_retrain_on_startup", False):
         return None
 
-    db = db_path or Path("data/corrections.db")
+    db = Path(db_path) if db_path else DEFAULT_CORRECTIONS_DB
     if not db.exists():
         return None
 
@@ -245,7 +247,7 @@ def startup_check(
     store = CorrectionStore(db)
     try:
         threshold = getattr(cfg, "ml_retrain_threshold", 50)
-        model_path = getattr(cfg, "ml_model_path", "data/element_classifier.pkl")
+        model_path = getattr(cfg, "ml_model_path", str(DEFAULT_ML_MODEL))
         ensemble = getattr(cfg, "ml_ensemble_enabled", False)
 
         if not check_retrain_needed(store, threshold=threshold):
@@ -269,7 +271,7 @@ def startup_check(
 
 def auto_retrain_candidate_classifier(
     *,
-    db_path: Path | str = "data/corrections.db",
+    db_path: Path | str | None = None,
     model_path: Path | str = "data/candidate_classifier.pkl",
     min_rows: int = 100,
 ) -> dict[str, Any]:
@@ -277,8 +279,8 @@ def auto_retrain_candidate_classifier(
 
     Parameters
     ----------
-    db_path : Path or str
-        Corrections database path.
+    db_path : Path or str or None
+        Corrections database path. Defaults to config.DEFAULT_CORRECTIONS_DB.
     model_path : Path or str
         Where to save the trained model.
     min_rows : int
@@ -292,13 +294,13 @@ def auto_retrain_candidate_classifier(
     from .candidate_classifier import train_candidate_classifier
     from .store import CorrectionStore
 
-    db_path = Path(db_path)
+    db_path_resolved = Path(db_path) if db_path else DEFAULT_CORRECTIONS_DB
     model_path = Path(model_path)
 
-    if not db_path.exists():
+    if not db_path_resolved.exists():
         return {"skipped": True, "reason": "no_db"}
 
-    store = CorrectionStore(db_path)
+    store = CorrectionStore(db_path_resolved)
     try:
         rows = store.get_candidate_outcomes(min_rows=min_rows)
         if not rows:

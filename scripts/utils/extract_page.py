@@ -18,12 +18,9 @@ import argparse
 import json
 from pathlib import Path
 
-import pdfplumber
-
-from plancheck import GroupingConfig, build_clusters_v2, nms_prune
+from plancheck import GroupingConfig
 from plancheck.export.page_data import serialize_page
-from plancheck.grouping import group_notes_columns, link_continued_columns
-from plancheck.tocr.extract import extract_tocr_from_page
+from plancheck.pipeline import run_pipeline
 
 from .run_utils import latest_overlays_dir
 
@@ -43,36 +40,26 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Minimal config: TOCR + grouping only
     cfg = GroupingConfig()
 
-    # ── Extract tokens from PDF ────────────────────────────────────────────
-    with pdfplumber.open(args.pdf) as pdf:
-        page = pdf.pages[args.page]
-        result = extract_tocr_from_page(page, args.page, cfg, mode="minimal")
-        tokens = result.tokens
-        page_w = result.page_width
-        page_h = result.page_height
-
-    # ── Run grouping pipeline ─────────────────────────────────────────────
-    tokens = nms_prune(tokens, cfg.iou_prune)
-    blocks = build_clusters_v2(tokens, page_h, cfg)
-    notes_columns = group_notes_columns(blocks, cfg=cfg)
-    link_continued_columns(notes_columns, blocks=blocks, cfg=cfg)
+    # ── Run pipeline ─────────────────────────────────────────────────────
+    result = run_pipeline(args.pdf, args.page, cfg)
 
     print(
-        f"Page {args.page}: {len(tokens)} tokens, "
-        f"{len(blocks)} blocks, "
-        f"{len(notes_columns)} notes column(s)"
+        f"Page {args.page}: {len(result.tokens)} tokens, "
+        f"{len(result.blocks)} blocks, "
+        f"{len(result.notes_columns)} notes column(s)"
     )
 
     # ── Serialize ────────────────────────────────────────────────────────
     data = serialize_page(
         page=args.page,
-        page_width=page_w,
-        page_height=page_h,
-        tokens=tokens,
-        blocks=blocks,
-        notes_columns=notes_columns,
+        page_width=result.page_width,
+        page_height=result.page_height,
+        tokens=result.tokens,
+        blocks=result.blocks,
+        notes_columns=result.notes_columns,
     )
 
     out_path = args.out
