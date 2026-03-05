@@ -7,15 +7,14 @@ on baseline y-position.
 
 from __future__ import annotations
 
-import io
 import logging
 import re
-from contextlib import contextmanager
 from statistics import mean, median
-from typing import IO, Iterable, List, Tuple
+from typing import Iterable, List, Tuple
 
 from ..config import GroupingConfig
 from ..models import GlyphBox, Line, Span
+from ._utils import _open_debug
 
 log = logging.getLogger(__name__)
 
@@ -28,23 +27,6 @@ __all__ = [
 
 
 # ── Shared utilities ───────────────────────────────────────────────────
-
-
-@contextmanager
-def _open_debug(path: str | None) -> IO[str]:  # type: ignore[type-arg]
-    """Yield a writable text stream for debug output.
-
-    When *path* is ``None``, yields an in-memory no-op sink so callers
-    can unconditionally call ``dbg.write()`` without touching the filesystem.
-    """
-    if path is None:
-        yield io.StringIO()
-    else:
-        f = open(path, "a", encoding="utf-8")
-        try:
-            yield f
-        finally:
-            f.close()
 
 
 def _median_size(boxes: Iterable[GlyphBox]) -> Tuple[float, float]:

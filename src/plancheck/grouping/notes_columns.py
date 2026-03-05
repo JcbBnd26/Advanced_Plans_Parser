@@ -6,14 +6,13 @@ and detecting continuation relationships between columns.
 
 from __future__ import annotations
 
-import io
 import logging
 import re
-from contextlib import contextmanager
-from typing import IO, List
+from typing import List
 
 from ..config import GroupingConfig
 from ..models import BlockCluster, NotesColumn
+from ._utils import NOTE_SIMPLE_RE, _open_debug
 
 log = logging.getLogger(__name__)
 
@@ -23,25 +22,10 @@ __all__ = [
 ]
 
 # ── Pre-compiled patterns ──────────────────────────────────────────────
-_NOTE_SIMPLE_RE = re.compile(r"^\d+\.")
-_NOTE_BROAD_RE = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
 _NOTE_CAPTURE_RE = re.compile(r"^(\d+)\.")
 
 
 # ── Shared utilities ───────────────────────────────────────────────────
-
-
-@contextmanager
-def _open_debug(path: str | None) -> IO[str]:  # type: ignore[type-arg]
-    """Yield a writable text stream for debug output."""
-    if path is None:
-        yield io.StringIO()
-    else:
-        f = open(path, "a", encoding="utf-8")
-        try:
-            yield f
-        finally:
-            f.close()
 
 
 def _block_first_row_text(blk: BlockCluster) -> str:
@@ -307,7 +291,7 @@ def _text_starts_as_continuation(text: str) -> bool:
     if not text:
         return False
     text = text.strip().upper()
-    note_re = _NOTE_SIMPLE_RE
+    note_re = NOTE_SIMPLE_RE
     # If it starts with a note number, it's not a continuation
     if note_re.match(text):
         return False

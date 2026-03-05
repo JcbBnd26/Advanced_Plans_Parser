@@ -9,15 +9,14 @@ This module handles block property detection:
 
 from __future__ import annotations
 
-import io
 import logging
 import re
-from contextlib import contextmanager
 from statistics import mean, pstdev
-from typing import IO, List
+from typing import List
 
 from ..config import GroupingConfig
 from ..models import BlockCluster
+from ._utils import NOTE_BROAD_RE, _open_debug
 
 log = logging.getLogger(__name__)
 
@@ -29,8 +28,6 @@ __all__ = [
 ]
 
 # ── Pre-compiled patterns ──────────────────────────────────────────────
-_NOTE_SIMPLE_RE = re.compile(r"^\d+\.")
-_NOTE_BROAD_RE = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
 _HEADER_COLON_RE = re.compile(r"^[A-Z0-9\s\-\(\)\'\.\/]+: *$", re.ASCII)
 _HEADER_CAPS_RE = re.compile(r"^[A-Z][A-Z0-9\s\-\(\)\'\.\/]{4,}$", re.ASCII)
 _TITLE_BLOCK_RE = re.compile(
@@ -39,19 +36,6 @@ _TITLE_BLOCK_RE = re.compile(
 
 
 # ── Shared utilities ───────────────────────────────────────────────────
-
-
-@contextmanager
-def _open_debug(path: str | None) -> IO[str]:  # type: ignore[type-arg]
-    """Yield a writable text stream for debug output."""
-    if path is None:
-        yield io.StringIO()
-    else:
-        f = open(path, "a", encoding="utf-8")
-        try:
-            yield f
-        finally:
-            f.close()
 
 
 def _block_first_row_text(blk: BlockCluster) -> str:
@@ -259,7 +243,7 @@ def mark_notes(blocks: List[BlockCluster], debug_path: str = None) -> None:
       - ``A.``, ``B.``   — lettered notes
       - ``(1)``, ``(A)`` — parenthesised numbered/lettered notes
     """
-    note_re = _NOTE_BROAD_RE
+    note_re = NOTE_BROAD_RE
     with _open_debug(debug_path) as dbg:
         for i, blk in enumerate(blocks):
             blk.is_notes = False

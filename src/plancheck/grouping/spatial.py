@@ -15,6 +15,7 @@ from typing import List
 
 from ..config import GroupingConfig
 from ..models import BlockCluster, GlyphBox, Line, RowBand, Span
+from ._utils import NOTE_BROAD_RE, NOTE_SIMPLE_RE
 from .lines import _median_size
 
 log = logging.getLogger(__name__)
@@ -26,9 +27,7 @@ __all__ = [
 ]
 
 # ── Pre-compiled patterns ──────────────────────────────────────────────
-_NOTE_NUMBER_RE = re.compile(r"^[\(\[]?[0-9A-Za-z]{1,3}[\.)\]]?$")
-_NOTE_SIMPLE_RE = re.compile(r"^\d+\.")
-_NOTE_BROAD_RE = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
+_NOTE_NUMBER_RE = re.compile(r"^[\(\[]?[0-9A-Za-z]{1,3}[\.\)\]]?$")
 
 
 # ── Column partitioning ────────────────────────────────────────────────
@@ -316,7 +315,7 @@ def group_blocks(rows: List[RowBand], settings: GroupingConfig) -> List[BlockClu
     median_row_w = float(median(row_widths)) if row_widths else 1.0
     block_gap = median_row_h * settings.block_gap_mult
     max_block_height = median_row_h * settings.max_block_height_mult
-    note_re = _NOTE_SIMPLE_RE
+    note_re = NOTE_SIMPLE_RE
 
     if any(r.column_id is not None for r in rows):
         col_index = [r.column_id if r.column_id is not None else 0 for r in rows]
@@ -456,7 +455,7 @@ def group_blocks_from_lines(
     )
     # Match the same note-start patterns recognised by mark_notes():
     #   1.  12.  A.  a.  (1)  (A)  (a)
-    note_re = _NOTE_BROAD_RE
+    note_re = NOTE_BROAD_RE
 
     # Column gap: the same threshold that separated spans within a line.
     col_gap = (

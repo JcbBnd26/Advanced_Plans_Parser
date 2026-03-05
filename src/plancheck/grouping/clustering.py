@@ -14,12 +14,12 @@ Submodules:
 from __future__ import annotations
 
 import logging
-import re
 from statistics import median
 from typing import List
 
 from ..config import GroupingConfig
 from ..models import BlockCluster, GlyphBox, Line, Span
+from ._utils import NOTE_BROAD_RE
 from .labeling import flag_suspect_header_words, mark_headers, mark_notes, mark_tables
 
 # Import from submodules
@@ -58,10 +58,6 @@ __all__ = [
 ]
 
 
-# ── Pre-compiled patterns (used by _split_wide_blocks) ─────────────────
-_NOTE_BROAD_RE = re.compile(r"^(?:\d+\.|[A-Z]\.|[a-z]\.|\(\d+\)|\([A-Za-z]\))")
-
-
 # ── Wide-block splitting ───────────────────────────────────────────────
 
 
@@ -93,7 +89,7 @@ def _split_wide_blocks(
     gap_thresh = max(median_space_gap * 6.0, 20.0)
 
     # For re-grouping split lines into blocks
-    note_re = _NOTE_BROAD_RE
+    note_re = NOTE_BROAD_RE
     line_heights = []
     for blk in blocks:
         for ln in blk.lines:
