@@ -95,8 +95,8 @@ def main() -> None:
         )
         sys.exit(1)
 
-    from plancheck.analysis.document_graph import GraphNodeType, build_document_graph
-    from plancheck.analysis.gnn_model import DocumentGNN, save_gnn, train_gnn
+    from plancheck.analysis.gnn.graph import GraphNodeType, build_document_graph
+    from plancheck.analysis.gnn.model import DocumentGNN, save_gnn, train_gnn
 
     # ── Load page results ─────────────────────────────────────────
     # For the pilot, we create a synthetic graph from run manifests

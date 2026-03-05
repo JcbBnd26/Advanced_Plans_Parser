@@ -29,12 +29,8 @@ from .document_checks import _run_document_checks  # noqa: F401 — re-export
 from .ml_feedback import _apply_ml_feedback, _bbox_iou  # noqa: F401 — re-export
 
 # ── Backward-compatible re-exports (moved to dedicated modules) ────────
-from .page_result import (
-    DocumentResult,
-    PageResult,  # noqa: F401 — re-export
-    SkipReason,
-    StageResult,
-)
+from .page_result import PageResult  # noqa: F401 — re-export
+from .page_result import DocumentResult, SkipReason, StageResult
 
 if TYPE_CHECKING:
     from .corrections.store import CorrectionStore
@@ -632,8 +628,11 @@ def run_document(
     graph = None
     if cfg.ml_gnn_enabled:
         try:
-            from .analysis.document_graph import build_document_graph
-            from .analysis.gnn_model import is_gnn_available, predict_with_gnn
+            from .analysis.gnn import (
+                build_document_graph,
+                is_gnn_available,
+                predict_with_gnn,
+            )
 
             if is_gnn_available():
                 graph = build_document_graph(
@@ -656,7 +655,7 @@ def run_document(
     # ── Level 4: GNN candidate prior confidence adjustment ───────
     if cfg.vocr_cand_gnn_prior_enabled and graph is not None:
         try:
-            from .analysis.gnn_model import is_gnn_available, load_gnn
+            from .analysis.gnn.model import is_gnn_available, load_gnn
             from .vocr.gnn_candidate_prior import (
                 apply_gnn_prior,
                 load_gnn_candidate_prior,

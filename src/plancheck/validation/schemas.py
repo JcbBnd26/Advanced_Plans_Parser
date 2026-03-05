@@ -1,10 +1,20 @@
-"""Pydantic schemas for validating serialized plancheck model dicts.
+"""Pydantic schemas for VOCR-related serialization.
 
-These schemas intentionally use ``extra='ignore'`` so older/newer payloads can
-round-trip without breaking.
+These schemas cover the VOCR serialization path (glyph boxes, spans, lines,
+candidates) which is the most error-prone.  Other types (PageResult,
+GroupingConfig) use native Pydantic methods on their dataclass definitions.
+
+All schemas use ``extra='ignore'`` so older/newer payloads round-trip cleanly.
 """
 
 from __future__ import annotations
+
+__all__ = [
+    "GlyphBoxSchema",
+    "SpanSchema",
+    "LineSchema",
+    "VocrCandidateSchema",
+]
 
 from typing import Any, Dict, List, Optional
 

@@ -9,7 +9,7 @@ File format (JSON)::
     {
         "version": 1,
         "producers": {
-            "AutoCAD": {
+            "autocad": {
                 "total_runs": 12,
                 "methods": {
                     "char_encoding_failures": {"flagged": 80, "hits": 72, "misses": 8},
@@ -27,15 +27,14 @@ hit-rate overrides the global adaptive confidence from Level 1.
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime, timezone
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-log = logging.getLogger(__name__)
+from .adaptive_stats_base import AdaptiveStatsBase
 
-_STATS_VERSION = 1
+log = logging.getLogger(__name__)
 
 
 def _normalise_producer(producer: str) -> str:
@@ -47,30 +46,74 @@ def _normalise_producer(producer: str) -> str:
     """
     if not producer:
         return ""
-    import re
-
     # Strip version / build info after the name
     clean = re.sub(r"\s*[\d.]+.*$", "", producer.strip())
     return clean.lower()
 
 
-# ── Public helpers ──────────────────────────────────────────────────────
+# ── ProducerStats class using common base ───────────────────────────────
+
+
+class ProducerStats(AdaptiveStatsBase):
+    """Producer-level adaptive statistics (Level 3)."""
+
+    VERSION = 1
+    ROOT_KEY = "producers"
+
+    @classmethod
+    def _empty_skeleton(cls) -> Dict[str, Any]:
+        return {
+            "version": cls.VERSION,
+            "producers": {},
+            "updated_at": "",
+        }
+
+    @classmethod
+    def _normalize_key(cls, key: str) -> str:
+        """Override to normalize producer strings."""
+        return _normalise_producer(key)
+
+    @classmethod
+    def update(
+        cls,
+        path: str | Path,
+        producer: str,
+        candidate_stats: Dict[str, Any],
+        *,
+        stats: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Merge one run's candidate stats under the given producer."""
+        path = Path(path)
+        key = cls._normalize_key(producer)
+        if not key:
+            log.debug("Empty producer — skipping producer stats update")
+            return stats or cls.load(path)
+
+        if stats is None:
+            stats = cls.load(path)
+
+        producers = stats.setdefault("producers", {})
+        entry = producers.setdefault(key, {"total_runs": 0, "methods": {}})
+        entry["total_runs"] = entry.get("total_runs", 0) + 1
+
+        by_method = candidate_stats.get("by_method", {})
+        methods = entry.setdefault("methods", {})
+        for method_name, run_entry in by_method.items():
+            acc = methods.setdefault(
+                method_name, {"flagged": 0, "hits": 0, "misses": 0}
+            )
+            cls.merge_counters(acc, run_entry)
+
+        cls.save(path, stats)
+        return stats
+
+
+# ── Backward-compatible public API ──────────────────────────────────────
 
 
 def load_producer_stats(path: str | Path) -> Dict[str, Any]:
     """Load per-producer stats from *path*, or return empty skeleton."""
-    path = Path(path)
-    if not path.exists():
-        return _empty_stats()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or data.get("version") != _STATS_VERSION:
-            return _empty_stats()
-        data.setdefault("producers", {})
-        return data
-    except (json.JSONDecodeError, OSError) as exc:
-        log.warning("Could not load producer stats from %s: %s", path, exc)
-        return _empty_stats()
+    return ProducerStats.load(path)
 
 
 def update_producer_stats(
@@ -98,33 +141,7 @@ def update_producer_stats(
     dict
         Updated stats.
     """
-    path = Path(path)
-    key = _normalise_producer(producer)
-    if not key:
-        log.debug("Empty producer — skipping producer stats update")
-        return stats or load_producer_stats(path)
-
-    if stats is None:
-        stats = load_producer_stats(path)
-
-    producers = stats.setdefault("producers", {})
-    entry = producers.setdefault(key, {"total_runs": 0, "methods": {}})
-    entry["total_runs"] = entry.get("total_runs", 0) + 1
-
-    by_method = candidate_stats.get("by_method", {})
-    methods = entry.setdefault("methods", {})
-    for method_name, run_entry in by_method.items():
-        acc = methods.setdefault(method_name, {"flagged": 0, "hits": 0, "misses": 0})
-        acc["flagged"] += run_entry.get("flagged", 0)
-        acc["hits"] += run_entry.get("hits", 0)
-        acc["misses"] += run_entry.get("misses", 0)
-
-    stats["updated_at"] = datetime.now(timezone.utc).isoformat()
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(stats, fh, indent=2)
-    return stats
+    return ProducerStats.update(path, producer, candidate_stats, stats=stats)
 
 
 def get_producer_confidence(
@@ -158,30 +175,12 @@ def get_producer_confidence(
     if stats is None or not producer:
         return fallback
 
-    key = _normalise_producer(producer)
+    key = ProducerStats._normalize_key(producer)
     prod_entry = stats.get("producers", {}).get(key)
     if prod_entry is None:
         return fallback
 
     m_entry = prod_entry.get("methods", {}).get(method)
-    if m_entry is None:
-        return fallback
-
-    flagged = m_entry.get("flagged", 0)
-    if flagged < min_runs:
-        return fallback
-
-    hits = m_entry.get("hits", 0)
-    hit_rate = (hits + 1) / (flagged + 2)  # Laplace smoothing
-    return max(floor, min(ceiling, round(hit_rate, 4)))
-
-
-# ── Internals ───────────────────────────────────────────────────────────
-
-
-def _empty_stats() -> Dict[str, Any]:
-    return {
-        "version": _STATS_VERSION,
-        "producers": {},
-        "updated_at": "",
-    }
+    return ProducerStats.get_confidence(
+        m_entry, fallback, min_runs=min_runs, floor=floor, ceiling=ceiling
+    )

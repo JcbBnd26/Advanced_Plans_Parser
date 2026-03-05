@@ -8,11 +8,14 @@ from pathlib import Path
 import pytest
 
 from plancheck.vocr.method_stats import (
-    _STATS_VERSION,
+    MethodStats,
     get_adaptive_confidence,
     load_method_stats,
     update_method_stats,
 )
+
+# Use class constant for version
+_STATS_VERSION = MethodStats.VERSION
 
 # ── load_method_stats ───────────────────────────────────────────────────
 

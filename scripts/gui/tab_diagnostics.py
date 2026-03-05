@@ -17,7 +17,6 @@ from typing import Any
 from .widgets import CollapsibleFrame, LogPanel
 from .worker import PipelineWorker
 
-
 # ---------------------------------------------------------------------------
 # Section 1 – Font Diagnostics
 # ---------------------------------------------------------------------------
@@ -424,9 +423,9 @@ class ModelComparisonSection(CollapsibleFrame):
         ttk.Button(
             cmp_btns, text="Refresh Runs", command=self._refresh_training_runs
         ).pack(side="left", padx=2)
-        ttk.Button(
-            cmp_btns, text="Compare", command=self._compare_runs
-        ).pack(side="left", padx=2)
+        ttk.Button(cmp_btns, text="Compare", command=self._compare_runs).pack(
+            side="left", padx=2
+        )
 
     def _refresh_training_runs(self) -> None:
         db_path = Path("data") / "corrections.db"
@@ -688,9 +687,9 @@ class TextEmbeddingsSection(CollapsibleFrame):
         ttk.Button(
             emb_btns, text="Check Availability", command=self._check_embeddings_avail
         ).pack(side="left", padx=2)
-        ttk.Button(
-            emb_btns, text="Test Embedding", command=self._test_embedding
-        ).pack(side="left", padx=2)
+        ttk.Button(emb_btns, text="Test Embedding", command=self._test_embedding).pack(
+            side="left", padx=2
+        )
 
     def _check_embeddings_avail(self) -> None:
         self._log.clear()
@@ -748,9 +747,7 @@ class TextEmbeddingsSection(CollapsibleFrame):
 
         def on_done(result, error, elapsed):
             if not error:
-                self._log.write(
-                    f"Embedding test complete ({elapsed:.1f}s).", "SUCCESS"
-                )
+                self._log.write(f"Embedding test complete ({elapsed:.1f}s).", "SUCCESS")
 
         self._worker.run(target, on_done=on_done)
 
@@ -809,9 +806,9 @@ class LLMSemanticChecksSection(CollapsibleFrame):
         ttk.Button(
             llm_btns, text="Check Availability", command=self._check_llm_avail
         ).pack(side="left", padx=2)
-        ttk.Button(
-            llm_btns, text="Run LLM Checks", command=self._run_llm_checks
-        ).pack(side="left", padx=2)
+        ttk.Button(llm_btns, text="Run LLM Checks", command=self._run_llm_checks).pack(
+            side="left", padx=2
+        )
 
     def _check_llm_avail(self) -> None:
         self._log.clear()
@@ -929,7 +926,7 @@ class CrossPageGNNSection(CollapsibleFrame):
     def _check_gnn_avail(self) -> None:
         self._log.clear()
         try:
-            from plancheck.analysis.gnn_model import is_gnn_available
+            from plancheck.analysis.gnn import is_gnn_available
 
             avail = is_gnn_available()
             if avail:

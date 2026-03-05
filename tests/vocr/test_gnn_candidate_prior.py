@@ -21,7 +21,7 @@ from typing import List, Tuple
 import numpy as np
 import pytest
 
-from plancheck.analysis.document_graph import GraphNode, GraphNodeType
+from plancheck.analysis.gnn.graph import GraphNode, GraphNodeType
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -373,7 +373,7 @@ class TestApplyGnnPrior:
         }
 
         # Create a minimal GNN model
-        from plancheck.analysis.gnn_model import DocumentGNN
+        from plancheck.analysis.gnn import DocumentGNN
 
         gnn_model = DocumentGNN(
             in_channels=14, hidden_channels=embed_dim // 4, num_classes=9, heads=4

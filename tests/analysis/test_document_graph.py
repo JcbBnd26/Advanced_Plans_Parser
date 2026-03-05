@@ -19,14 +19,15 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from plancheck.analysis.document_graph import (
+from plancheck.analysis.gnn import is_gnn_available
+from plancheck.analysis.gnn.graph import (
     EdgeType,
     GraphNode,
     GraphNodeType,
     _extract_entities,
     build_document_graph,
 )
-from plancheck.analysis.gnn_model import is_gnn_available, predict_with_gnn
+from plancheck.analysis.gnn.model import predict_with_gnn
 from plancheck.config import GroupingConfig
 
 # ── Helpers ────────────────────────────────────────────────────────────

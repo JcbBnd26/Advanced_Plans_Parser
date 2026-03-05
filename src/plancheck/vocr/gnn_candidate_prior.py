@@ -40,7 +40,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ..analysis.document_graph import GraphNode
+from ..analysis.gnn.graph import GraphNode
 
 log = logging.getLogger(__name__)
 
