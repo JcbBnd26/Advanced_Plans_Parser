@@ -781,6 +781,8 @@ class RowBand:
 
     def bbox(self) -> Tuple[float, float, float, float]:
         """Bounding box enclosing all boxes in this row."""
+        if not self.boxes:
+            return (0, 0, 0, 0)
         xs0 = [b.x0 for b in self.boxes]
         ys0 = [b.y0 for b in self.boxes]
         xs1 = [b.x1 for b in self.boxes]
@@ -1030,7 +1032,12 @@ class NotesColumn(HeaderTextMixin):
 
     def to_dict(self, blocks: List[BlockCluster]) -> dict:
         """Serialize to JSON-friendly dict using block indices."""
-        header_idx = blocks.index(self.header) if self.header in blocks else None
+        header_idx = None
+        if blocks is not None and self.header is not None:
+            try:
+                header_idx = blocks.index(self.header)
+            except ValueError:
+                pass
         notes_indices = []
         for nb in self.notes_blocks:
             try:

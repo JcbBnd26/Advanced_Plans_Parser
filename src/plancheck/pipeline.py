@@ -212,7 +212,7 @@ def run_stage(
             return
         try:
             on_stage(stage, status)
-        except Exception:
+        except Exception:  # noqa: BLE001 — callbacks must not break pipeline
             # Progress reporting must never break the pipeline.
             log.debug("Stage callback failed: %s %s", stage, status, exc_info=True)
 
@@ -501,7 +501,9 @@ def run_pipeline(
                 )
                 try:
                     text_content = region.header_text()
-                except Exception:
+                except (
+                    Exception
+                ):  # noqa: BLE001 — fallback for missing/broken header_text
                     text_content = getattr(region, "text", "")
                 correction_store.save_detection(
                     doc_id=doc_id,
@@ -649,7 +651,7 @@ def run_document(
                     # downstream consumers (export, GUI, etc.)
                     dr.gnn_predictions = gnn_labels
                     dr.gnn_graph_nodes = graph.get("nodes", [])
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — optional GNN stage
             log.warning("GNN refinement failed: %s", exc)
 
     # ── Level 4: GNN candidate prior confidence adjustment ───────
@@ -683,7 +685,7 @@ def run_document(
                         blend_weight=cfg.vocr_cand_gnn_prior_blend,
                     )
                     log.info("GNN candidate prior adjusted %d candidates", adjusted)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — optional GNN prior stage
             log.warning("GNN candidate prior failed: %s", exc)
 
     log.info(

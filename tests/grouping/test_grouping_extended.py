@@ -17,7 +17,7 @@ from plancheck.grouping import (
     split_line_spans,
     split_wide_lines,
 )
-from plancheck.grouping.clustering import _merge_note_number_columns, _partition_columns
+from plancheck.grouping.spatial import _merge_note_number_columns, _partition_columns
 from plancheck.models import BlockCluster, Line, NotesColumn, RowBand, Span
 
 # ─── split_wide_lines ─────────────────────────────────────────────────

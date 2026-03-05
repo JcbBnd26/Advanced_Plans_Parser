@@ -9,13 +9,12 @@ import pytest
 from conftest import make_block, make_box
 
 from plancheck.config import GroupingConfig
-from plancheck.grouping.clustering import (
-    _block_first_row_text,
+from plancheck.grouping.clustering import _split_wide_blocks
+from plancheck.grouping.labeling import _block_first_row_text, flag_suspect_header_words
+from plancheck.grouping.notes_columns import (
     _extract_note_numbers,
     _get_first_block_text,
     _get_last_block_text,
-    _split_wide_blocks,
-    flag_suspect_header_words,
 )
 from plancheck.models import BlockCluster, GlyphBox, Line, RowBand
 

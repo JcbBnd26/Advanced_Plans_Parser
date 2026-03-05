@@ -52,12 +52,11 @@ def _run_tocr_vocrpp_stages(
     """Stages 2+3: TOCR then VOCRPP (sequential).  Returns (boxes, page_w, page_h, preprocess_img)."""
     from .tocr.extract import extract_tocr_from_words
 
-    boxes: list = []
-    page_w = page_h = 0.0
-    preprocess_img = None
-
     def _do_tocr():
-        """Execute the text-layer OCR extraction stage."""
+        """Execute the text-layer OCR extraction stage.
+
+        Returns (sr, page_w, page_h, boxes) — all outputs explicit for clarity.
+        """
         with run_stage("tocr", cfg) as sr_t:
             result = extract_tocr_from_words(
                 ctx.words,
@@ -68,23 +67,21 @@ def _run_tocr_vocrpp_stages(
                 mode="full",
             )
             b, pw, ph, diag = result.to_legacy_tuple()
-            boxes[:] = b
-            page_w_h = (pw, ph)
             sr_t.counts = {"tokens_total": diag.get("tokens_total", 0)}
             sr_t.status = "success" if not diag.get("error") else "failed"
-            return sr_t, page_w_h
+            return sr_t, pw, ph, b
 
-    def _do_vocrpp():
-        """Execute the visual-OCR preprocessing stage."""
-        nonlocal preprocess_img
+    def _do_vocrpp(raw_img):
+        """Execute the visual-OCR preprocessing stage.
+
+        Returns (sr, preprocess_img) — all outputs explicit for clarity.
+        """
         with run_stage("vocrpp", cfg) as sr_v:
+            pp_img = None
             if sr_v.ran:
                 from .vocrpp.preprocess import OcrPreprocessConfig
                 from .vocrpp.preprocess import preprocess_image_for_ocr as _pp
 
-                raw_img = (
-                    ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
-                )
                 pp_cfg = OcrPreprocessConfig(
                     enabled=True,
                     grayscale=cfg.vocrpp_grayscale,
@@ -103,14 +100,15 @@ def _run_tocr_vocrpp_stages(
                     save_intermediate=False,
                 )
                 pp_result = _pp(raw_img, cfg=pp_cfg)
-                preprocess_img = pp_result.image
+                pp_img = pp_result.image
                 sr_v.counts = {"applied_steps": pp_result.applied_steps}
                 sr_v.status = "success"
-            return sr_v
+            return sr_v, pp_img
 
     # Sequential execution — no thread pool overhead on CPU
-    sr_tocr, (page_w, page_h) = _do_tocr()
-    sr_vocrpp = _do_vocrpp()
+    sr_tocr, page_w, page_h, boxes = _do_tocr()
+    raw_img = ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
+    sr_vocrpp, preprocess_img = _do_vocrpp(raw_img)
 
     pr.stages["tocr"] = sr_tocr
     pr.stages["vocrpp"] = sr_vocrpp
@@ -370,7 +368,7 @@ def _run_reconcile_stage(
                         )
                         sr_recon.counts["outcomes_saved"] = n_saved
                         store.close()
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 — non-critical outcome save
                         log.warning("Failed to save candidate outcomes: %s", exc)
             sr_recon.status = "success"
     pr.stages["reconcile"] = sr_recon
@@ -555,7 +553,7 @@ def _run_analysis_stage(
             )
             pr.layout_predictions = layout_preds
             log.info("Layout model: %d predictions", len(layout_preds))
-        except Exception:
+        except Exception:  # noqa: BLE001 — optional layout model
             log.debug("Layout model prediction failed", exc_info=True)
 
 
@@ -604,7 +602,7 @@ def _run_checks_stage(
                     policy=cfg.llm_policy,
                 )
                 findings.extend(llm_findings)
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:  # noqa: BLE001 — optional LLM checks
                 log.warning("LLM checks failed: %s", exc)
 
         sr_chk.counts = {"findings": len(findings)}

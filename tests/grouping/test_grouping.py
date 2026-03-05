@@ -16,14 +16,16 @@ from plancheck.grouping import (
     mark_tables,
     split_line_spans,
 )
-from plancheck.grouping.clustering import (
-    _is_note_number,
-    _is_note_number_column,
-    _median_size,
-    _split_row_by_width,
-    _split_row_on_gaps,
+from plancheck.grouping.lines import _median_size
+from plancheck.grouping.notes_columns import (
     _text_ends_incomplete,
     _text_starts_as_continuation,
+)
+from plancheck.grouping.spatial import (
+    _is_note_number,
+    _is_note_number_column,
+    _split_row_by_width,
+    _split_row_on_gaps,
 )
 from plancheck.models import RowBand
 
