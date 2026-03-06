@@ -60,6 +60,11 @@ def _char(text, x0, y0, x1, y1, fontname="Arial"):
     }
 
 
+def _lines(tokens):
+    """Shorthand for baseline grouping."""
+    return _group_by_baseline(tokens)
+
+
 # ── Geometry helpers ───────────────────────────────────────────────────
 
 
@@ -207,7 +212,9 @@ class TestIntralineGaps:
             _box(50, 10, 70, 20, "C"),
             _box(225, 10, 245, 20, "D"),  # gap = 155 >> median 5
         ]
-        cands = _detect_intraline_gaps(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0)
+        cands = _detect_intraline_gaps(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0
+        )
         assert len(cands) >= 1
         assert cands[0].trigger_methods == ["intraline_gap"]
         assert cands[0].confidence == 0.6
@@ -218,12 +225,16 @@ class TestIntralineGaps:
             _box(25, 10, 45, 20, "B"),
             _box(50, 10, 70, 20, "C"),
         ]
-        cands = _detect_intraline_gaps(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0)
+        cands = _detect_intraline_gaps(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0
+        )
         assert cands == []
 
     def test_single_token_no_candidates(self):
         tokens = [_box(0, 10, 20, 20, "A")]
-        cands = _detect_intraline_gaps(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0)
+        cands = _detect_intraline_gaps(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0
+        )
         assert cands == []
 
 
@@ -278,7 +289,7 @@ class TestBaselineStyleGaps:
             _box(145, 10, 165, 20, "89", fontname="Helvetica", font_size=12),
         ]
         cands = _detect_baseline_style_gaps(
-            tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0
         )
         assert len(cands) >= 1
         assert cands[0].trigger_methods == ["baseline_style_gap"]
@@ -293,7 +304,7 @@ class TestBaselineStyleGaps:
             _box(145, 10, 165, 20, "89", fontname="Arial", font_size=14),
         ]
         cands = _detect_baseline_style_gaps(
-            tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN, 2.0
         )
         assert cands == []
 
@@ -307,7 +318,9 @@ class TestTemplateAdjacency:
             _box(0, 10, 20, 20, "90"),
             _box(40, 10, 60, 20, "TYP"),
         ]
-        cands = _detect_template_adjacency(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_template_adjacency(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].predicted_symbol == "°"
         assert cands[0].trigger_methods == ["template_adjacency"]
@@ -317,7 +330,9 @@ class TestTemplateAdjacency:
             _box(0, 10, 20, 20, "12"),
             _box(40, 10, 70, 20, "DIAM"),
         ]
-        cands = _detect_template_adjacency(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_template_adjacency(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert any(c.predicted_symbol == "Ø" for c in cands)
 
     def test_DIA_before_digit(self):
@@ -325,7 +340,9 @@ class TestTemplateAdjacency:
             _box(0, 10, 25, 20, "DIA"),
             _box(40, 10, 60, 20, "24"),
         ]
-        cands = _detect_template_adjacency(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_template_adjacency(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert any(c.predicted_symbol == "Ø" for c in cands)
 
     def test_no_gap_no_candidate(self):
@@ -334,7 +351,9 @@ class TestTemplateAdjacency:
             _box(0, 10, 20, 20, "90"),
             _box(20.2, 10, 40, 20, "TYP"),
         ]
-        cands = _detect_template_adjacency(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_template_adjacency(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
 
@@ -347,7 +366,9 @@ class TestRegexDigitPatterns:
             _box(0, 10, 20, 20, "3.5"),
             _box(40, 10, 60, 20, "0.5"),
         ]
-        cands = _detect_regex_digit_patterns(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_regex_digit_patterns(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].predicted_symbol == "±"
 
@@ -356,7 +377,9 @@ class TestRegexDigitPatterns:
             _box(0, 10, 20, 20, "12"),
             _box(40, 10, 60, 20, "24"),
         ]
-        cands = _detect_regex_digit_patterns(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_regex_digit_patterns(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].predicted_symbol == "×"
 
@@ -366,7 +389,9 @@ class TestRegexDigitPatterns:
             _box(0, 10, 20, 20, "12"),
             _box(40, 10, 60, 20, "3/4"),
         ]
-        cands = _detect_regex_digit_patterns(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_regex_digit_patterns(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert any(c.predicted_symbol == '"' for c in cands)
 
     def test_non_numeric_no_candidate(self):
@@ -374,7 +399,9 @@ class TestRegexDigitPatterns:
             _box(0, 10, 20, 20, "ABC"),
             _box(40, 10, 60, 20, "DEF"),
         ]
-        cands = _detect_regex_digit_patterns(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_regex_digit_patterns(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
 
@@ -387,7 +414,9 @@ class TestImpossibleSequences:
             _box(0, 10, 20, 20, "45"),
             _box(22, 10, 42, 20, "67"),  # gap = 2
         ]
-        cands = _detect_impossible_sequences(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_impossible_sequences(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].trigger_methods == ["impossible_sequence"]
 
@@ -396,7 +425,9 @@ class TestImpossibleSequences:
             _box(0, 10, 20, 20, "45"),
             _box(100, 10, 120, 20, "67"),  # gap = 80 > 20
         ]
-        cands = _detect_impossible_sequences(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_impossible_sequences(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
     def test_non_numeric_skipped(self):
@@ -404,7 +435,9 @@ class TestImpossibleSequences:
             _box(0, 10, 20, 20, "ABC"),
             _box(22, 10, 42, 20, "DEF"),
         ]
-        cands = _detect_impossible_sequences(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_impossible_sequences(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
 
@@ -417,7 +450,9 @@ class TestVocabTriggers:
             _box(0, 10, 20, 20, "90"),
             _box(40, 10, 70, 20, "ANGLE"),
         ]
-        cands = _detect_vocab_triggers(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_vocab_triggers(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].predicted_symbol == "°"
 
@@ -426,7 +461,9 @@ class TestVocabTriggers:
             _box(0, 10, 30, 20, "ELEV"),
             _box(50, 10, 70, 20, "100"),
         ]
-        cands = _detect_vocab_triggers(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_vocab_triggers(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].predicted_symbol == "±"
 
@@ -435,7 +472,9 @@ class TestVocabTriggers:
             _box(0, 10, 40, 20, "DIAMETER"),
             _box(60, 10, 80, 20, "16"),
         ]
-        cands = _detect_vocab_triggers(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_vocab_triggers(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].predicted_symbol == "Ø"
 
@@ -444,7 +483,9 @@ class TestVocabTriggers:
             _box(0, 10, 30, 20, "ANGLE"),
             _box(40, 10, 80, 20, "VALUE"),
         ]
-        cands = _detect_vocab_triggers(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_vocab_triggers(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
 
@@ -457,7 +498,9 @@ class TestKeywordCooccurrence:
             _box(0, 10, 20, 20, "12"),
             _box(30, 10, 60, 20, "O.C."),
         ]
-        cands = _detect_keyword_cooccurrence(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_keyword_cooccurrence(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].predicted_symbol == "@"
 
@@ -466,7 +509,9 @@ class TestKeywordCooccurrence:
             _box(0, 10, 30, 20, "BAR"),
             _box(40, 10, 60, 20, "5"),
         ]
-        cands = _detect_keyword_cooccurrence(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_keyword_cooccurrence(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].predicted_symbol == "#"
 
@@ -477,7 +522,9 @@ class TestKeywordCooccurrence:
             _box(25, 10, 30, 20, "@"),
             _box(35, 10, 65, 20, "O.C."),
         ]
-        cands = _detect_keyword_cooccurrence(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_keyword_cooccurrence(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
 
@@ -497,13 +544,17 @@ class TestCrossRefPhrases:
             _box(0, 50, 15, 60, "10"),
             _box(25, 50, 40, 60, "20"),
         ]
-        cands = _detect_cross_ref_phrases(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_cross_ref_phrases(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].trigger_methods == ["cross_ref_phrase"]
 
     def test_single_occurrence_no_candidate(self):
         tokens = [_box(0, 10, 15, 20, "10"), _box(25, 10, 40, 20, "20")]
-        cands = _detect_cross_ref_phrases(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_cross_ref_phrases(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
 
@@ -523,7 +574,9 @@ class TestNearDuplicateLines:
             _box(20, 50, 35, 60, "BOLT"),
             _box(60, 50, 75, 60, "20"),  # bigger gap after BOLT
         ]
-        cands = _detect_near_duplicate_lines(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_near_duplicate_lines(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         # May or may not detect depending on fingerprint matching
         # At minimum, should not crash
         assert isinstance(cands, list)
@@ -548,7 +601,7 @@ class TestFontSubsetCorrelation:
             _box(15, 10, 30, 20, "42"),
         ]
         cands = _detect_font_subset_correlation(
-            tokens, chars, PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+            tokens, _lines(tokens), chars, PAGE_NUM, PAGE_W, PAGE_H, MARGIN
         )
         assert len(cands) >= 1
         assert cands[0].trigger_methods == ["font_subset_correlation"]
@@ -560,7 +613,7 @@ class TestFontSubsetCorrelation:
             _box(15, 10, 30, 20, "42"),
         ]
         cands = _detect_font_subset_correlation(
-            tokens, chars, PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+            tokens, _lines(tokens), chars, PAGE_NUM, PAGE_W, PAGE_H, MARGIN
         )
         assert cands == []
 
@@ -634,7 +687,9 @@ class TestSemanticNoUnits:
             _box(25, 10, 40, 20, "24"),
             _box(50, 10, 65, 20, "36"),
         ]
-        cands = _detect_semantic_no_units(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_semantic_no_units(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert len(cands) >= 1
         assert cands[0].predicted_symbol == '"'
 
@@ -644,12 +699,16 @@ class TestSemanticNoUnits:
             _box(20, 10, 35, 20, "FT"),
             _box(45, 10, 60, 20, "24"),
         ]
-        cands = _detect_semantic_no_units(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_semantic_no_units(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
     def test_single_number_no_candidate(self):
         tokens = [_box(0, 10, 15, 20, "12")]
-        cands = _detect_semantic_no_units(tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_semantic_no_units(
+            tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
 
@@ -664,14 +723,16 @@ class TestDimensionGeometry:
         ]
         page_lines = [{"x0": 20, "top": 15, "x1": 50, "bottom": 15}]
         cands = _detect_dimension_geometry(
-            page_lines, tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+            page_lines, tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
         )
         assert len(cands) >= 1
         assert cands[0].trigger_methods == ["dimension_geometry_proximity"]
 
     def test_no_lines_no_candidate(self):
         tokens = [_box(0, 10, 20, 20, "12"), _box(50, 10, 70, 20, "24")]
-        cands = _detect_dimension_geometry([], tokens, PAGE_NUM, PAGE_W, PAGE_H, MARGIN)
+        cands = _detect_dimension_geometry(
+            [], tokens, _lines(tokens), PAGE_NUM, PAGE_W, PAGE_H, MARGIN
+        )
         assert cands == []
 
 
