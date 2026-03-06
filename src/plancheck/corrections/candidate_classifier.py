@@ -14,17 +14,15 @@ Workflow
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .candidate_features import (
     CANDIDATE_FEATURE_DIM,
     CANDIDATE_FEATURE_VERSION,
-    featurize_candidate,
     featurize_candidates_batch,
     featurize_outcome_row,
 )

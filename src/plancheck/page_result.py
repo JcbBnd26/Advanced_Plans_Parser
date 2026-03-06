@@ -199,11 +199,6 @@ class PageResult:
         ``PageResult``.  The ``background_image`` field is excluded
         (not JSON-serializable; regenerate from the PDF if needed).
         """
-        from .analysis.structural_boxes import SemanticRegion, StructuralBox
-        from .analysis.title_block import TitleBlockInfo
-        from .analysis.zoning import PageZone
-        from .checks.semantic_checks import CheckResult
-        from .reconcile.reconcile import ReconcileResult
 
         blocks = self.blocks  # used for index-based references
 

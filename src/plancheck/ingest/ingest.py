@@ -19,13 +19,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import pdfplumber
 from PIL import Image
 
 if TYPE_CHECKING:
-    from ..config import GroupingConfig
+    pass
 
 log = logging.getLogger(__name__)
 

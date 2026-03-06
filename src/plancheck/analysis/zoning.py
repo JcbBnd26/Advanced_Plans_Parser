@@ -30,7 +30,7 @@ from enum import Enum
 from typing import List, Optional, Tuple
 
 from ..config import GroupingConfig
-from ..models import BlockCluster, GlyphBox, NotesColumn
+from ..models import BlockCluster, NotesColumn
 
 # ── Zone tags ──────────────────────────────────────────────────────────
 

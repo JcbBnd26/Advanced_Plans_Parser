@@ -47,7 +47,6 @@ def rank_pages_by_uncertainty(
     ).fetchall()
 
     # Group by (doc_id, page)
-    from itertools import groupby
 
     page_groups: dict[tuple[str, int], list[dict]] = {}
     for row in rows:

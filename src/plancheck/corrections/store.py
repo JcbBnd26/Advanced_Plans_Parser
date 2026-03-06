@@ -3,31 +3,35 @@
 Persists pipeline detections and human corrections to
 the corrections database (by default ``data/corrections.db``).
 Provides helpers to build training sets for downstream classifiers.
+
+This module uses mixin composition — see:
+- :mod:`.feature_cache` — feature vector caching
+- :mod:`.candidate_outcomes` — VOCR candidate outcome tracking
+- :mod:`.snapshots` — database backup/restore
+- :mod:`.box_groups` — detection grouping
+- :mod:`.training_data` — training set generation
+- :mod:`.training_runs` — training experiment metadata
+- :mod:`.db_helpers` — database overview and summary queries
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from plancheck.config import DEFAULT_CORRECTIONS_DB
 
-
-def _utcnow_iso() -> str:
-    """Return current UTC time as ISO-8601 string with 'Z' suffix."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
-
-
-def _gen_id(prefix: str) -> str:
-    """Generate a short prefixed ID — e.g. ``det_a1b2c3d4``."""
-    return f"{prefix}{uuid4().hex[:8]}"
-
+from .box_groups import BoxGroupMixin
+from .candidate_outcomes import CandidateOutcomesMixin
+from .db_helpers import DbHelpersMixin
+from .feature_cache import FeatureCacheMixin
+from .snapshots import SnapshotMixin
+from .store_utils import _gen_id, _utcnow_iso
+from .training_data import TrainingDataMixin
+from .training_runs import TrainingRunsMixin
 
 # ── Schema DDL ─────────────────────────────────────────────────────────
 
@@ -173,8 +177,25 @@ CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_doc_page ON candidate_outcomes
 """
 
 
-class CorrectionStore:
-    """Thin wrapper around an SQLite database for annotation persistence.
+class CorrectionStore(
+    FeatureCacheMixin,
+    CandidateOutcomesMixin,
+    SnapshotMixin,
+    BoxGroupMixin,
+    TrainingDataMixin,
+    TrainingRunsMixin,
+    DbHelpersMixin,
+):
+    """SQLite database for annotation persistence.
+
+    Composed of mixins providing:
+    - Feature caching (FeatureCacheMixin)
+    - Candidate outcome tracking (CandidateOutcomesMixin)
+    - Database snapshots (SnapshotMixin)
+    - Box grouping (BoxGroupMixin)
+    - Training data generation (TrainingDataMixin)
+    - Training run metadata (TrainingRunsMixin)
+    - Database overview queries (DbHelpersMixin)
 
     Parameters
     ----------
@@ -473,6 +494,74 @@ class CorrectionStore:
                 )
             self._conn.commit()
 
+    def update_detection_confidence(
+        self,
+        detection_id: str,
+        confidence: float,
+    ) -> None:
+        """Update the confidence score of an existing detection.
+
+        Parameters
+        ----------
+        detection_id : str
+            The ID of the detection to update.
+        confidence : float
+            The new confidence score (0.0-1.0).
+        """
+        with self._write_lock():
+            self._conn.execute(
+                "UPDATE detections SET confidence = ? WHERE detection_id = ?",
+                (confidence, detection_id),
+            )
+            self._conn.commit()
+
+    def update_detection_label(
+        self,
+        detection_id: str,
+        element_type: str,
+    ) -> None:
+        """Update the element type (label) of an existing detection.
+
+        Parameters
+        ----------
+        detection_id : str
+            The ID of the detection to update.
+        element_type : str
+            The new element type label.
+        """
+        with self._write_lock():
+            self._conn.execute(
+                "UPDATE detections SET element_type = ? WHERE detection_id = ?",
+                (element_type, detection_id),
+            )
+            self._conn.commit()
+
+    def update_detection_label_and_bbox(
+        self,
+        detection_id: str,
+        element_type: str,
+        bbox: tuple[float, float, float, float],
+    ) -> None:
+        """Update both label and bounding box of an existing detection.
+
+        Parameters
+        ----------
+        detection_id : str
+            The ID of the detection to update.
+        element_type : str
+            The new element type label.
+        bbox : tuple[float, float, float, float]
+            The new bounding box (x0, y0, x1, y1).
+        """
+        with self._write_lock():
+            self._conn.execute(
+                "UPDATE detections SET element_type = ?, "
+                "bbox_x0 = ?, bbox_y0 = ?, bbox_x1 = ?, bbox_y1 = ? "
+                "WHERE detection_id = ?",
+                (element_type, *bbox, detection_id),
+            )
+            self._conn.commit()
+
     # ── corrections ────────────────────────────────────────────────────
 
     def save_correction(
@@ -665,128 +754,8 @@ class CorrectionStore:
             results.append(d)
         return results
 
-    # ── box groups ─────────────────────────────────────────────────────
-
-    def create_group(
-        self,
-        doc_id: str,
-        page: int,
-        group_label: str,
-        root_detection_id: str,
-    ) -> str:
-        """Create a box group with *root_detection_id* as the parent.
-
-        The root detection is also added as the first member (sort_order 0).
-        Returns the ``grp_…`` group ID.
-        """
-        group_id = _gen_id("grp_")
-        with self._write_lock():
-            self._conn.execute(
-                "INSERT INTO box_groups "
-                "(group_id, doc_id, page, group_label, root_detection_id, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (group_id, doc_id, page, group_label, root_detection_id, _utcnow_iso()),
-            )
-            # Root is always member 0
-            self._conn.execute(
-                "INSERT OR IGNORE INTO box_group_members "
-                "(group_id, detection_id, sort_order) VALUES (?, ?, 0)",
-                (group_id, root_detection_id),
-            )
-            self._conn.commit()
-        return group_id
-
-    def add_to_group(
-        self, group_id: str, detection_id: str, sort_order: int = 0
-    ) -> None:
-        """Add a detection as a child member of a group."""
-        with self._write_lock():
-            self._conn.execute(
-                "INSERT OR IGNORE INTO box_group_members "
-                "(group_id, detection_id, sort_order) VALUES (?, ?, ?)",
-                (group_id, detection_id, sort_order),
-            )
-            self._conn.commit()
-
-    def remove_from_group(self, group_id: str, detection_id: str) -> None:
-        """Remove a detection from a group.
-
-        If the removed detection is the group root, the entire group
-        is deleted (all members removed).
-        """
-        # Check if this is the root
-        row = self._conn.execute(
-            "SELECT root_detection_id FROM box_groups WHERE group_id = ?",
-            (group_id,),
-        ).fetchone()
-        if row and row["root_detection_id"] == detection_id:
-            self.delete_group(group_id)
-            return
-        with self._write_lock():
-            self._conn.execute(
-                "DELETE FROM box_group_members "
-                "WHERE group_id = ? AND detection_id = ?",
-                (group_id, detection_id),
-            )
-            self._conn.commit()
-
-    def delete_group(self, group_id: str) -> None:
-        """Delete a group and all its member associations."""
-        with self._write_lock():
-            self._conn.execute(
-                "DELETE FROM box_group_members WHERE group_id = ?", (group_id,)
-            )
-            self._conn.execute("DELETE FROM box_groups WHERE group_id = ?", (group_id,))
-            self._conn.commit()
-
-    def get_groups_for_page(self, doc_id: str, page: int) -> list[dict[str, Any]]:
-        """Return all groups on a page with their members."""
-        groups = self._conn.execute(
-            "SELECT * FROM box_groups WHERE doc_id = ? AND page = ? "
-            "ORDER BY created_at",
-            (doc_id, page),
-        ).fetchall()
-        results: list[dict[str, Any]] = []
-        for g in groups:
-            members = self._conn.execute(
-                "SELECT detection_id, sort_order FROM box_group_members "
-                "WHERE group_id = ? ORDER BY sort_order",
-                (g["group_id"],),
-            ).fetchall()
-            results.append(
-                {
-                    "group_id": g["group_id"],
-                    "group_label": g["group_label"],
-                    "root_detection_id": g["root_detection_id"],
-                    "members": [
-                        {
-                            "detection_id": m["detection_id"],
-                            "sort_order": m["sort_order"],
-                        }
-                        for m in members
-                    ],
-                }
-            )
-        return results
-
-    def get_group_for_detection(self, detection_id: str) -> dict[str, Any] | None:
-        """Return the group a detection belongs to, or *None*."""
-        row = self._conn.execute(
-            "SELECT g.group_id, g.group_label, g.root_detection_id "
-            "FROM box_group_members m "
-            "JOIN box_groups g ON m.group_id = g.group_id "
-            "WHERE m.detection_id = ?",
-            (detection_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return {
-            "group_id": row["group_id"],
-            "group_label": row["group_label"],
-            "root_detection_id": row["root_detection_id"],
-        }
-
     # ── feedback helpers ─────────────────────────────────────────────────
+    # Box group methods are provided by BoxGroupMixin
 
     def get_prior_corrections_by_bbox(
         self,
@@ -864,988 +833,6 @@ class CorrectionStore:
             )
         return results
 
-    # ── training set ───────────────────────────────────────────────────
-
-    @staticmethod
-    def _deterministic_sort_key(detection_id: str) -> str:
-        """Return a deterministic sort key for a detection_id.
-
-        Uses ``hashlib.md5`` to produce a stable hex digest that is
-        consistent across ``PYTHONHASHSEED`` values, Python versions,
-        and machines.
-        """
-        return hashlib.md5(detection_id.encode()).hexdigest()
-
-    def generate_pseudo_labels(
-        self,
-        confidence_threshold: float = 0.95,
-        max_per_label: int = 500,
-    ) -> int:
-        """Generate pseudo-labels from high-confidence rule-based detections.
-
-        Bootstraps training data by treating detections with very high
-        pipeline confidence as ground truth. This is useful for cold-start
-        scenarios before human corrections are available.
-
-        Parameters
-        ----------
-        confidence_threshold : float
-            Minimum confidence score required for a detection to be
-            considered as a pseudo-label. Default 0.95.
-        max_per_label : int
-            Maximum number of pseudo-labels per element type to avoid
-            class imbalance. Default 500.
-
-        Returns
-        -------
-        int
-            Number of pseudo-label examples inserted into training_examples.
-        """
-        with self._write_lock():
-            # Remove existing pseudo-labels before regenerating
-            self._conn.execute("DELETE FROM training_examples WHERE source = 'pseudo'")
-
-            # Select high-confidence detections, grouped by label
-            rows = self._conn.execute(
-                """
-                SELECT d.detection_id, d.element_type, d.features_json, d.confidence
-                FROM detections d
-                WHERE d.confidence >= ?
-                  AND d.element_type IS NOT NULL
-                  AND d.features_json IS NOT NULL
-                  AND d.detection_id NOT IN (
-                      SELECT detection_id FROM corrections WHERE detection_id IS NOT NULL
-                  )
-                ORDER BY d.element_type, d.confidence DESC
-                """,
-                (confidence_threshold,),
-            ).fetchall()
-
-            # Group by label and cap at max_per_label
-            from collections import defaultdict
-
-            by_label: dict[str, list] = defaultdict(list)
-            for r in rows:
-                label = r["element_type"]
-                if len(by_label[label]) < max_per_label:
-                    by_label[label].append(r)
-
-            now = _utcnow_iso()
-            count = 0
-            for label, group in sorted(by_label.items()):
-                # Sort deterministically within class for reproducible splits
-                group.sort(
-                    key=lambda r: self._deterministic_sort_key(r["detection_id"])
-                )
-                n = len(group)
-                train_end = max(1, int(n * 0.7))
-                val_end = max(train_end + 1, int(n * 0.9)) if n >= 2 else train_end
-                for i, r in enumerate(group):
-                    if i < train_end:
-                        split = "train"
-                    elif i < val_end:
-                        split = "val"
-                    else:
-                        split = "test"
-                    self._conn.execute(
-                        "INSERT INTO training_examples "
-                        "(example_id, source, correction_id, detection_id, "
-                        " label, features_json, split, created_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            _gen_id("ex_"),
-                            "pseudo",
-                            None,
-                            r["detection_id"],
-                            label,
-                            r["features_json"],
-                            split,
-                            now,
-                        ),
-                    )
-                    count += 1
-
-            self._conn.commit()
-            return count
-
-    def build_training_set(self, include_pseudo_labels: bool = False) -> int:
-        """Rebuild the ``training_examples`` table from corrections.
-
-        For each non-delete correction, creates a training example
-        whose label is the *corrected* element type.  Delete
-        corrections are included as negative examples with label
-        ``__negative__`` so the classifier learns to recognise
-        false-positive regions.
-
-        The split is **truly stratified**: within each label group,
-        examples are sorted by a deterministic MD5 hash of
-        ``detection_id`` then the first 70 % are assigned to
-        ``train``, the next 20 % to ``val``, and the remaining
-        10 % to ``test``.
-
-        This guarantees every class with ≥2 examples has
-        representation in at least two splits.
-
-        Parameters
-        ----------
-        include_pseudo_labels : bool
-            If True, also generate pseudo-labels from high-confidence
-            detections to bootstrap training data. Default False.
-
-        Returns the number of examples inserted.
-        """
-        from collections import defaultdict
-
-        with self._write_lock():
-            self._conn.execute("DELETE FROM training_examples")
-
-            # ── Positive examples (relabel / accept / reshape) ──────────
-            rows = self._conn.execute(
-                "SELECT c.correction_id, c.detection_id, c.corrected_element_type, "
-                "       c.corrected_features_json, d.features_json "
-                "FROM corrections c "
-                "JOIN detections d ON c.detection_id = d.detection_id "
-                "WHERE c.correction_type != 'delete' "
-                "  AND c.detection_id IS NOT NULL"
-            ).fetchall()
-
-            # ── Negative examples (deletions → false positives) ─────────
-            delete_rows = self._conn.execute(
-                "SELECT c.correction_id, c.detection_id, "
-                "       c.corrected_features_json, d.features_json "
-                "FROM corrections c "
-                "JOIN detections d ON c.detection_id = d.detection_id "
-                "WHERE c.correction_type = 'delete' "
-                "  AND c.detection_id IS NOT NULL"
-            ).fetchall()
-
-            # ── Stratified split: group by label, force distribution ────
-            by_label: dict[str, list] = defaultdict(list)
-            for r in rows:
-                by_label[r["corrected_element_type"]].append(r)
-            for r in delete_rows:
-                by_label["__negative__"].append(r)
-
-            now = _utcnow_iso()
-            count = 0
-            for _label, group in sorted(by_label.items()):
-                # Sort deterministically within this class using MD5
-                group.sort(
-                    key=lambda r: self._deterministic_sort_key(r["detection_id"])
-                )
-                n = len(group)
-                train_end = max(1, int(n * 0.7))  # at least 1 in train
-                val_end = max(train_end + 1, int(n * 0.9)) if n >= 2 else train_end
-                for i, r in enumerate(group):
-                    features_json = r["corrected_features_json"] or r["features_json"]
-                    if i < train_end:
-                        split = "train"
-                    elif i < val_end:
-                        split = "val"
-                    else:
-                        split = "test"
-                    self._conn.execute(
-                        "INSERT INTO training_examples "
-                        "(example_id, source, correction_id, detection_id, "
-                        " label, features_json, split, created_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            _gen_id("ex_"),
-                            "correction",
-                            r["correction_id"],
-                            r["detection_id"],
-                            _label,
-                            features_json,
-                            split,
-                            now,
-                        ),
-                    )
-                    count += 1
-
-            self._conn.commit()
-
-        # Optionally add pseudo-labels from high-confidence detections
-        if include_pseudo_labels:
-            count += self.generate_pseudo_labels()
-
-        return count
-
-    def export_training_jsonl(self, output_path: Path) -> int:
-        """Write training examples as JSON-Lines to *output_path*.
-
-        Each line: ``{"example_id": …, "label": …, "features": {…}, "split": …}``
-
-        Returns the number of lines written.
-        """
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        rows = self._conn.execute(
-            "SELECT example_id, label, features_json, split " "FROM training_examples"
-        ).fetchall()
-
-        count = 0
-        with open(output_path, "w", encoding="utf-8") as fh:
-            for r in rows:
-                obj = {
-                    "example_id": r["example_id"],
-                    "label": r["label"],
-                    "features": json.loads(r["features_json"]),
-                    "split": r["split"],
-                }
-                fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
-                count += 1
-        return count
-
-    # ── snapshots ──────────────────────────────────────────────────────
-
-    def snapshot(self, tag: str = "") -> Path:
-        """Create a timestamped copy of the database.
-
-        Parameters
-        ----------
-        tag : str
-            Optional human-readable suffix for the snapshot filename.
-
-        Returns
-        -------
-        Path
-            Path to the snapshot file.
-        """
-        snap_dir = self._db_path.parent / "snapshots"
-        snap_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        suffix = f"_{tag}" if tag else ""
-        dest = snap_dir / f"corrections_{ts}{suffix}.db"
-
-        with self._write_lock():
-            # Flush WAL to disk before copying
-            self._conn.execute("PRAGMA wal_checkpoint(FULL)")
-            shutil.copy2(str(self._db_path), str(dest))
-        return dest
-
-    def list_snapshots(self) -> list[dict[str, Any]]:
-        """List all database snapshots.
-
-        Returns
-        -------
-        list[dict]
-            Each dict has ``path``, ``timestamp``, ``tag``, ``size_kb``.
-        """
-        snap_dir = self._db_path.parent / "snapshots"
-        if not snap_dir.is_dir():
-            return []
-
-        results: list[dict[str, Any]] = []
-        for p in sorted(snap_dir.glob("corrections_*.db")):
-            name = p.stem  # corrections_YYYYMMDD_HHMMSS[_tag]
-            parts = name.split("_", 3)  # ['corrections', date, time, ?tag]
-            ts = f"{parts[1]}_{parts[2]}" if len(parts) >= 3 else ""
-            tag = parts[3] if len(parts) >= 4 else ""
-            results.append(
-                {
-                    "path": p,
-                    "timestamp": ts,
-                    "tag": tag,
-                    "size_kb": round(p.stat().st_size / 1024, 1),
-                }
-            )
-        return results
-
-    def restore_snapshot(self, snapshot_path: Path) -> None:
-        """Replace the current database with a snapshot.
-
-        Parameters
-        ----------
-        snapshot_path : Path
-            Path to the snapshot ``.db`` file.
-
-        Raises
-        ------
-        FileNotFoundError
-            If *snapshot_path* does not exist.
-        """
-        snapshot_path = Path(snapshot_path)
-        if not snapshot_path.is_file():
-            raise FileNotFoundError(f"Snapshot not found: {snapshot_path}")
-
-        with self._write_lock():
-            # Close current connection
-            self._conn.close()
-
-            # Replace
-            shutil.copy2(str(snapshot_path), str(self._db_path))
-
-            # Reconnect
-            self._conn = sqlite3.connect(str(self._db_path), timeout=10.0)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA busy_timeout=10000")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-
-    # ── training runs ──────────────────────────────────────────────────
-
-    def save_training_run(
-        self,
-        metrics: dict,
-        model_path: str = "",
-        notes: str = "",
-        holdout_predictions: list[dict] | None = None,
-        hyperparams: dict | None = None,
-        feature_set: dict | None = None,
-        training_curves: dict | None = None,
-        feature_version: int = 0,
-    ) -> str:
-        """Persist a training-run record and return its ``run_…`` ID.
-
-        Parameters
-        ----------
-        metrics : dict
-            Output of :func:`~plancheck.corrections.metrics.compute_metrics`,
-            augmented with ``n_train`` and ``n_val``.
-        model_path : str
-            Path to the saved model file (informational).
-        notes : str
-            Free-text annotation for this run.
-        holdout_predictions : list[dict] | None
-            Optional list of ``{"label_true", "label_pred", "confidence"}``
-            dicts from the validation set evaluation.
-        hyperparams : dict | None
-            Hyperparameters used for training (Phase 4.4).
-        feature_set : dict | None
-            Feature schema description (Phase 4.4).
-        training_curves : dict | None
-            Epoch-level training/validation loss curves (Phase 4.4).
-        feature_version : int
-            Feature schema version (Phase 4.3).
-        """
-        run_id = _gen_id("run_")
-        hp_json = json.dumps(holdout_predictions) if holdout_predictions else ""
-        hyper_json = json.dumps(hyperparams) if hyperparams else ""
-        fs_json = json.dumps(feature_set) if feature_set else ""
-        tc_json = json.dumps(training_curves) if training_curves else ""
-        with self._write_lock():
-            self._conn.execute(
-                "INSERT INTO training_runs "
-                "(run_id, trained_at, n_train, n_val, accuracy, f1_macro, f1_weighted, "
-                " labels_json, per_class_json, model_path, notes, holdout_preds_json, "
-                " hyperparams_json, feature_set_json, training_curves_json, "
-                " feature_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    run_id,
-                    _utcnow_iso(),
-                    metrics.get("n_train", 0),
-                    metrics.get("n_val", 0),
-                    metrics.get("accuracy", 0.0),
-                    metrics.get("f1_macro", 0.0),
-                    metrics.get("f1_weighted", 0.0),
-                    json.dumps(metrics.get("labels", [])),
-                    json.dumps(metrics.get("per_class", {})),
-                    model_path,
-                    notes,
-                    hp_json,
-                    hyper_json,
-                    fs_json,
-                    tc_json,
-                    feature_version,
-                ),
-            )
-            self._conn.commit()
-        return run_id
-
-    def get_training_history(self) -> list[dict[str, Any]]:
-        """Return all training runs ordered newest-first.
-
-        Returns
-        -------
-        list[dict]
-            Each dict has: ``run_id``, ``trained_at``, ``n_train``,
-            ``n_val``, ``accuracy``, ``f1_macro``, ``f1_weighted``,
-            ``labels``, ``per_class``, ``model_path``, ``notes``,
-            ``holdout_predictions``, ``hyperparams``, ``feature_set``,
-            ``training_curves``, ``feature_version``.
-        """
-        rows = self._conn.execute(
-            "SELECT * FROM training_runs ORDER BY trained_at DESC, rowid DESC"
-        ).fetchall()
-        results: list[dict[str, Any]] = []
-        for r in rows:
-            keys = r.keys()
-            hp_raw = r["holdout_preds_json"] if "holdout_preds_json" in keys else ""
-            hyper_raw = r["hyperparams_json"] if "hyperparams_json" in keys else ""
-            fs_raw = r["feature_set_json"] if "feature_set_json" in keys else ""
-            tc_raw = r["training_curves_json"] if "training_curves_json" in keys else ""
-            fv = r["feature_version"] if "feature_version" in keys else 0
-            results.append(
-                {
-                    "run_id": r["run_id"],
-                    "trained_at": r["trained_at"],
-                    "n_train": r["n_train"],
-                    "n_val": r["n_val"],
-                    "accuracy": r["accuracy"],
-                    "f1_macro": r["f1_macro"],
-                    "f1_weighted": r["f1_weighted"],
-                    "labels": json.loads(r["labels_json"]),
-                    "per_class": json.loads(r["per_class_json"]),
-                    "model_path": r["model_path"],
-                    "notes": r["notes"],
-                    "holdout_predictions": json.loads(hp_raw) if hp_raw else [],
-                    "hyperparams": json.loads(hyper_raw) if hyper_raw else {},
-                    "feature_set": json.loads(fs_raw) if fs_raw else {},
-                    "training_curves": json.loads(tc_raw) if tc_raw else {},
-                    "feature_version": fv,
-                }
-            )
-        return results
-
-    def compare_runs(self, run_id_a: str, run_id_b: str) -> dict[str, Any]:
-        """Compare two training runs and return metric deltas.
-
-        Parameters
-        ----------
-        run_id_a, run_id_b : str
-            Run IDs to compare.  Convention: *a* is the baseline (older),
-            *b* is the candidate (newer).
-
-        Returns
-        -------
-        dict
-            ``f1_weighted_delta``, ``accuracy_delta``,
-            ``improved_classes``, ``regressed_classes``,
-            ``per_class_deltas``.
-
-        Raises
-        ------
-        ValueError
-            If either *run_id* is not found.
-        """
-        history = {r["run_id"]: r for r in self.get_training_history()}
-        if run_id_a not in history:
-            raise ValueError(f"Run not found: {run_id_a}")
-        if run_id_b not in history:
-            raise ValueError(f"Run not found: {run_id_b}")
-
-        a = history[run_id_a]
-        b = history[run_id_b]
-
-        f1_delta = b["f1_weighted"] - a["f1_weighted"]
-        acc_delta = b["accuracy"] - a["accuracy"]
-
-        # Per-class F1 deltas
-        all_classes = sorted(set(a["per_class"]) | set(b["per_class"]))
-        per_class_deltas: dict[str, float] = {}
-        improved: list[str] = []
-        regressed: list[str] = []
-        for cls in all_classes:
-            f1_a = a["per_class"].get(cls, {}).get("f1", 0.0)
-            f1_b = b["per_class"].get(cls, {}).get("f1", 0.0)
-            delta = f1_b - f1_a
-            per_class_deltas[cls] = round(delta, 6)
-            if delta > 0.005:
-                improved.append(cls)
-            elif delta < -0.005:
-                regressed.append(cls)
-
-        return {
-            "f1_weighted_delta": round(f1_delta, 6),
-            "accuracy_delta": round(acc_delta, 6),
-            "improved_classes": improved,
-            "regressed_classes": regressed,
-            "per_class_deltas": per_class_deltas,
-        }
-
-    # ── retrain helpers (Phase 4.2) ────────────────────────────────
-
-    def last_train_date(self) -> str | None:
-        """Return ISO-8601 timestamp of the most recent training run.
-
-        Returns *None* when no runs have been recorded.
-        """
-        row = self._conn.execute(
-            "SELECT trained_at FROM training_runs ORDER BY trained_at DESC LIMIT 1"
-        ).fetchone()
-        return row["trained_at"] if row else None
-
-    def count_corrections_since(self, since_iso: str | None = None) -> int:
-        """Count corrections added after *since_iso*.
-
-        Parameters
-        ----------
-        since_iso : str | None
-            ISO-8601 timestamp.  When *None*, returns the total count.
-        """
-        if since_iso is None:
-            row = self._conn.execute("SELECT COUNT(*) AS n FROM corrections").fetchone()
-        else:
-            row = self._conn.execute(
-                "SELECT COUNT(*) AS n FROM corrections WHERE corrected_at > ?",
-                (since_iso,),
-            ).fetchone()
-        return row["n"] if row else 0
-
-    def count_corrections_since_last_train(self) -> int:
-        """Return number of new corrections since the last training run."""
-        return self.count_corrections_since(self.last_train_date())
-
-    def should_retrain(self, threshold: int = 50) -> bool:
-        """Return *True* when enough new corrections have accumulated.
-
-        Parameters
-        ----------
-        threshold : int
-            Minimum number of new corrections needed (default 50).
-        """
-        return self.count_corrections_since_last_train() >= threshold
-
-    # ── feature cache (Phase 4.3) ─────────────────────────────────
-
-    def cache_features(
-        self,
-        detection_id: str,
-        vector: list[float],
-        feature_version: int,
-    ) -> None:
-        """Store a computed feature vector in the cache.
-
-        Parameters
-        ----------
-        detection_id : str
-            Detection this vector belongs to.
-        vector : list[float]
-            The dense feature vector (encoded by :func:`encode_features`).
-        feature_version : int
-            Schema version (from :data:`FEATURE_VERSION`).
-        """
-        cache_key = f"{detection_id}:v{feature_version}"
-        with self._write_lock():
-            self._conn.execute(
-                "INSERT OR REPLACE INTO feature_cache "
-                "(cache_key, detection_id, feature_version, vector_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    cache_key,
-                    detection_id,
-                    feature_version,
-                    json.dumps(vector),
-                    _utcnow_iso(),
-                ),
-            )
-            self._conn.commit()
-
-    def get_cached_features(
-        self,
-        detection_id: str,
-        feature_version: int,
-    ) -> list[float] | None:
-        """Retrieve a cached feature vector, or *None* on miss.
-
-        Parameters
-        ----------
-        detection_id : str
-            Detection to look up.
-        feature_version : int
-            Required schema version — stale versions are not returned.
-        """
-        cache_key = f"{detection_id}:v{feature_version}"
-        row = self._conn.execute(
-            "SELECT vector_json FROM feature_cache WHERE cache_key = ?",
-            (cache_key,),
-        ).fetchone()
-        if row is None:
-            return None
-        return json.loads(row["vector_json"])
-
-    def invalidate_cache(self, *, feature_version: int | None = None) -> int:
-        """Delete cached feature vectors.
-
-        Parameters
-        ----------
-        feature_version : int, optional
-            When given, only delete entries with a *different* version.
-            When *None*, delete **all** cached entries.
-
-        Returns
-        -------
-        int
-            Number of rows deleted.
-        """
-        with self._write_lock():
-            if feature_version is None:
-                cur = self._conn.execute("DELETE FROM feature_cache")
-            else:
-                cur = self._conn.execute(
-                    "DELETE FROM feature_cache WHERE feature_version != ?",
-                    (feature_version,),
-                )
-            self._conn.commit()
-            return cur.rowcount
-
-    def cache_stats(self) -> dict[str, int]:
-        """Return summary stats about the feature cache.
-
-        Returns
-        -------
-        dict
-            ``total_entries``, ``distinct_detections``,
-            ``distinct_versions``.
-        """
-        row = self._conn.execute("SELECT COUNT(*) AS n FROM feature_cache").fetchone()
-        total = row["n"] if row else 0
-        row = self._conn.execute(
-            "SELECT COUNT(DISTINCT detection_id) AS n FROM feature_cache"
-        ).fetchone()
-        det_count = row["n"] if row else 0
-        row = self._conn.execute(
-            "SELECT COUNT(DISTINCT feature_version) AS n FROM feature_cache"
-        ).fetchone()
-        ver_count = row["n"] if row else 0
-        return {
-            "total_entries": total,
-            "distinct_detections": det_count,
-            "distinct_versions": ver_count,
-        }
-
-    # ── candidate outcomes (Level 2 learning) ──────────────────────
-
-    def save_candidate_outcome(
-        self,
-        page: int,
-        trigger_methods: list[str],
-        outcome: str,
-        confidence: float,
-        bbox: tuple[float, float, float, float],
-        *,
-        doc_id: str = "",
-        run_id: str = "",
-        predicted_symbol: str = "",
-        found_symbol: str = "",
-        page_width: float = 0.0,
-        page_height: float = 0.0,
-        features: dict | None = None,
-    ) -> str:
-        """Persist one VOCR candidate outcome and return its ``co_…`` ID.
-
-        Parameters
-        ----------
-        page : int
-            Zero-based page index.
-        trigger_methods : list[str]
-            Detection methods that flagged this candidate.
-        outcome : str
-            ``"hit"`` or ``"miss"``.
-        confidence : float
-            Candidate confidence at decision time.
-        bbox : tuple
-            ``(x0, y0, x1, y1)`` in PDF points.
-        doc_id, run_id : str
-            Optional document / run identifiers.
-        predicted_symbol, found_symbol : str
-            The symbol the candidate predicted and what VOCR actually found.
-        page_width, page_height : float
-            Page dimensions (for normalisation later).
-        features : dict | None
-            Pre-computed feature vector for the classifier.
-        """
-        outcome_id = _gen_id("co_")
-        with self._write_lock():
-            self._conn.execute(
-                "INSERT INTO candidate_outcomes "
-                "(outcome_id, doc_id, page, run_id, trigger_methods, "
-                " predicted_symbol, found_symbol, outcome, confidence, "
-                " bbox_x0, bbox_y0, bbox_x1, bbox_y1, "
-                " page_width, page_height, features_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    outcome_id,
-                    doc_id,
-                    page,
-                    run_id,
-                    ",".join(trigger_methods),
-                    predicted_symbol,
-                    found_symbol,
-                    outcome,
-                    confidence,
-                    *bbox,
-                    page_width,
-                    page_height,
-                    json.dumps(features or {}),
-                    _utcnow_iso(),
-                ),
-            )
-            self._conn.commit()
-        return outcome_id
-
-    def save_candidate_outcomes_batch(
-        self,
-        candidates: list,
-        *,
-        doc_id: str = "",
-        run_id: str = "",
-        page_width: float = 0.0,
-        page_height: float = 0.0,
-    ) -> int:
-        """Persist a batch of :class:`VocrCandidate` objects.
-
-        Parameters
-        ----------
-        candidates : list[VocrCandidate]
-            Candidates with ``outcome`` set to ``"hit"`` or ``"miss"``.
-        doc_id, run_id : str
-            Optional context identifiers.
-        page_width, page_height : float
-            Page dimensions.
-
-        Returns
-        -------
-        int
-            Number of rows inserted.
-        """
-        with self._write_lock():
-            now = _utcnow_iso()
-            count = 0
-            for c in candidates:
-                if c.outcome not in ("hit", "miss"):
-                    continue
-                outcome_id = _gen_id("co_")
-                self._conn.execute(
-                    "INSERT INTO candidate_outcomes "
-                    "(outcome_id, doc_id, page, run_id, trigger_methods, "
-                    " predicted_symbol, found_symbol, outcome, confidence, "
-                    " bbox_x0, bbox_y0, bbox_x1, bbox_y1, "
-                    " page_width, page_height, features_json, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        outcome_id,
-                        doc_id,
-                        c.page,
-                        run_id,
-                        ",".join(c.trigger_methods),
-                        c.predicted_symbol or "",
-                        c.found_symbol or "",
-                        c.outcome,
-                        c.confidence,
-                        c.x0,
-                        c.y0,
-                        c.x1,
-                        c.y1,
-                        page_width,
-                        page_height,
-                        json.dumps({}),
-                        now,
-                    ),
-                )
-                count += 1
-            if count:
-                self._conn.commit()
-            return count
-
-    def get_candidate_outcomes(
-        self,
-        *,
-        min_rows: int = 0,
-        outcome: str | None = None,
-    ) -> list[dict]:
-        """Retrieve candidate outcome rows for classifier training.
-
-        Parameters
-        ----------
-        min_rows : int
-            If the table has fewer than this many rows, return an empty
-            list (avoids training on tiny datasets).
-        outcome : str | None
-            Filter to ``"hit"`` or ``"miss"`` only.  ``None`` = all.
-
-        Returns
-        -------
-        list[dict]
-            Each dict has keys matching the ``candidate_outcomes`` schema.
-        """
-        total = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM candidate_outcomes"
-        ).fetchone()["n"]
-        if total < min_rows:
-            return []
-
-        query = "SELECT * FROM candidate_outcomes"
-        params: list = []
-        if outcome:
-            query += " WHERE outcome = ?"
-            params.append(outcome)
-        query += " ORDER BY created_at"
-
-        return [dict(r) for r in self._conn.execute(query, params).fetchall()]
-
-    def count_candidate_outcomes(self) -> dict[str, int]:
-        """Return ``{total, hits, misses}`` counts."""
-        rows = self._conn.execute(
-            "SELECT outcome, COUNT(*) AS n FROM candidate_outcomes GROUP BY outcome"
-        ).fetchall()
-        counts = {r["outcome"]: r["n"] for r in rows}
-        return {
-            "total": sum(counts.values()),
-            "hits": counts.get("hit", 0),
-            "misses": counts.get("miss", 0),
-        }
-
     # ── Database-tab helpers ───────────────────────────────────────────
-
-    def get_all_documents(self) -> list[dict[str, Any]]:
-        """Return every registered document."""
-        rows = self._conn.execute(
-            "SELECT * FROM documents ORDER BY ingested_at DESC"
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-    def get_run_ids_for_doc(self, doc_id: str) -> list[str]:
-        """Return distinct pipeline run_ids for *doc_id*, newest first."""
-        rows = self._conn.execute(
-            "SELECT DISTINCT run_id FROM detections "
-            "WHERE doc_id = ? AND run_id NOT LIKE 'manual%' "
-            "ORDER BY created_at DESC",
-            (doc_id,),
-        ).fetchall()
-        return [r["run_id"] for r in rows]
-
-    def get_db_overview(self) -> dict[str, Any]:
-        """Aggregate overview stats for the whole database."""
-        row = self._conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()
-        docs = row["n"] if row else 0
-        row = self._conn.execute("SELECT COUNT(*) AS n FROM detections").fetchone()
-        dets = row["n"] if row else 0
-        row = self._conn.execute("SELECT COUNT(*) AS n FROM corrections").fetchone()
-        corrs = row["n"] if row else 0
-        row = self._conn.execute("SELECT COUNT(*) AS n FROM box_groups").fetchone()
-        groups = row["n"] if row else 0
-        row = self._conn.execute("SELECT COUNT(*) AS n FROM training_runs").fetchone()
-        trains = row["n"] if row else 0
-        row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM training_examples"
-        ).fetchone()
-        examples = row["n"] if row else 0
-        row = self._conn.execute(
-            "SELECT MAX(created_at) AS ts FROM detections"
-        ).fetchone()
-        last_det = row["ts"] if row else None
-        row = self._conn.execute(
-            "SELECT MAX(corrected_at) AS ts FROM corrections"
-        ).fetchone()
-        last_corr = row["ts"] if row else None
-        db_size = self._db_path.stat().st_size if self._db_path.exists() else 0
-        return {
-            "db_path": str(self._db_path.resolve()),
-            "db_size_bytes": db_size,
-            "total_documents": docs,
-            "total_detections": dets,
-            "total_corrections": corrs,
-            "total_groups": groups,
-            "total_training_runs": trains,
-            "total_training_examples": examples,
-            "last_detection_at": last_det,
-            "last_correction_at": last_corr,
-        }
-
-    def get_detection_type_breakdown(self) -> dict[str, int]:
-        """Detection counts grouped by element_type across all documents."""
-        rows = self._conn.execute(
-            "SELECT element_type, COUNT(*) AS n FROM detections GROUP BY element_type"
-        ).fetchall()
-        return {r["element_type"]: r["n"] for r in rows}
-
-    def get_doc_summary(self, doc_id: str) -> dict[str, Any]:
-        """Summary stats for a single document."""
-        doc = self._conn.execute(
-            "SELECT * FROM documents WHERE doc_id = ?", (doc_id,)
-        ).fetchone()
-        if not doc:
-            return {}
-        row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM detections WHERE doc_id = ?",
-            (doc_id,),
-        ).fetchone()
-        det_count = row["n"] if row else 0
-        row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM corrections WHERE doc_id = ?",
-            (doc_id,),
-        ).fetchone()
-        corr_count = row["n"] if row else 0
-        row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM box_groups WHERE doc_id = ?",
-            (doc_id,),
-        ).fetchone()
-        group_count = row["n"] if row else 0
-        runs = self.get_run_ids_for_doc(doc_id)
-        row = self._conn.execute(
-            "SELECT MAX(ts) AS ts FROM ("
-            "  SELECT MAX(created_at) AS ts FROM detections WHERE doc_id = ? "
-            "  UNION ALL "
-            "  SELECT MAX(corrected_at) FROM corrections WHERE doc_id = ?"
-            ")",
-            (doc_id, doc_id),
-        ).fetchone()
-        last_activity = row["ts"] if row else None
-        return {
-            **dict(doc),
-            "detection_count": det_count,
-            "correction_count": corr_count,
-            "group_count": group_count,
-            "run_ids": runs,
-            "last_activity": last_activity,
-        }
-
-    def get_detection_counts_by_page(
-        self, doc_id: str, run_id: str | None = None
-    ) -> list[dict[str, Any]]:
-        """Per-page element_type breakdown for a document.
-
-        Returns a list of ``{page, element_type, count}`` dicts.
-        """
-        if run_id:
-            rows = self._conn.execute(
-                "SELECT page, element_type, COUNT(*) AS count "
-                "FROM detections WHERE doc_id = ? AND run_id = ? "
-                "GROUP BY page, element_type ORDER BY page, element_type",
-                (doc_id, run_id),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT page, element_type, COUNT(*) AS count "
-                "FROM detections WHERE doc_id = ? "
-                "GROUP BY page, element_type ORDER BY page, element_type",
-                (doc_id,),
-            ).fetchall()
-        return [dict(r) for r in rows]
-
-    def get_correction_type_breakdown(
-        self, doc_id: str | None = None
-    ) -> dict[str, int]:
-        """Correction counts grouped by correction_type."""
-        if doc_id:
-            rows = self._conn.execute(
-                "SELECT correction_type, COUNT(*) AS n FROM corrections "
-                "WHERE doc_id = ? GROUP BY correction_type",
-                (doc_id,),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT correction_type, COUNT(*) AS n FROM corrections "
-                "GROUP BY correction_type"
-            ).fetchall()
-        return {r["correction_type"]: r["n"] for r in rows}
-
-    def get_recent_corrections(
-        self, doc_id: str | None = None, limit: int = 25
-    ) -> list[dict[str, Any]]:
-        """Most recent corrections, optionally scoped to a document."""
-        if doc_id:
-            rows = self._conn.execute(
-                "SELECT * FROM corrections WHERE doc_id = ? "
-                "ORDER BY corrected_at DESC LIMIT ?",
-                (doc_id, limit),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT * FROM corrections " "ORDER BY corrected_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [dict(r) for r in rows]
+    # Database overview and summary methods are provided by DbHelpersMixin
+    # (see module docstring for full list of mixins)

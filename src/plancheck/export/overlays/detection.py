@@ -20,7 +20,6 @@ from ...models import (
     StandardDetailRegion,
 )
 from .colors import (
-    LABEL_PREFIXES,
     _draw_label,
     _get_color,
     _header_to_prefix,

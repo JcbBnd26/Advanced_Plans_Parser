@@ -6,7 +6,9 @@ objects by their geometric properties and enclosed text content.
 
 from __future__ import annotations
 
+import bisect
 import logging
+import math
 from typing import List
 
 from ..models import BlockCluster
@@ -78,20 +80,43 @@ def classify_structural_boxes(
     if page_area <= 0:
         return boxes
 
+    # Pre-compute block centers sorted by y for efficient containment check
+    # This reduces O(n_boxes × n_blocks) to O(n_boxes × log(n_blocks) + k)
+    block_data = []  # (cy, idx, cx, blk, text_parts)
+    for idx, blk in enumerate(blocks):
+        bx0, by0, bx1, by1 = blk.bbox()
+        cx = (bx0 + bx1) / 2
+        cy = (by0 + by1) / 2
+        # Pre-extract text to avoid repeated iteration
+        text_parts = []
+        for row in blk.rows:
+            for b in row.boxes:
+                if b.text:
+                    text_parts.append(b.text)
+        block_data.append((cy, idx, cx, blk, text_parts))
+
+    # Sort by y-center for binary search
+    block_data.sort(key=lambda t: t[0])
+    y_centers = [t[0] for t in block_data]
+
     for box in boxes:
-        # Collect text from blocks whose centre falls inside the box
+        # Use binary search to find blocks within y-range
         contained_indices = []
         text_parts = []
-        for idx, blk in enumerate(blocks):
-            bx0, by0, bx1, by1 = blk.bbox()
-            cx = (bx0 + bx1) / 2
-            cy = (by0 + by1) / 2
-            if box.contains_point(cx, cy, pad=4.0):
-                contained_indices.append(idx)
-                for row in blk.rows:
-                    for b in row.boxes:
-                        if b.text:
-                            text_parts.append(b.text)
+
+        # Find blocks whose y-center is within box's y-range (with padding)
+        pad = 4.0
+        y_lo = box.y0 - pad
+        y_hi = box.y1 + pad
+        lo_idx = bisect.bisect_left(y_centers, y_lo)
+        hi_idx = bisect.bisect_right(y_centers, y_hi)
+
+        for i in range(lo_idx, hi_idx):
+            cy, orig_idx, cx, blk, blk_text = block_data[i]
+            # Also check x containment
+            if box.x0 - pad <= cx <= box.x1 + pad:
+                contained_indices.append(orig_idx)
+                text_parts.extend(blk_text)
 
         box.contained_block_indices = contained_indices
         box.contained_text = " ".join(text_parts)
@@ -100,7 +125,9 @@ def classify_structural_boxes(
         area_frac = box.area() / page_area
         right_frac = box.x1 / page_width if page_width > 0 else 0
         height_frac = box.height() / page_height if page_height > 0 else 0
-        aspect = box.width() / box.height() if box.height() > 0 else 999
+        # Use math.inf for degenerate boxes (0 height) to ensure they fail
+        # aspect ratio checks cleanly rather than using a magic number
+        aspect = box.width() / box.height() if box.height() > 0 else math.inf
 
         # 1. Page border
         if area_frac >= PAGE_BORDER_AREA_FRAC:

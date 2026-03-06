@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .config import GroupingConfig
 from .page_result import PageResult, StageResult
@@ -32,7 +32,6 @@ def _run_ingest_stage(
     resolution: int,
 ) -> None:
     """Stage 1: render background image (from PageContext)."""
-    from .ingest import PageContext  # noqa: F811 (TYPE_CHECKING guard)
 
     with run_stage("ingest", cfg) as sr:
         pr.background_image = ctx.background_image

@@ -10,7 +10,7 @@ has_numeric_symbol_context – True if symbol appears in a numeric context
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from statistics import median
 from typing import List, Optional, Tuple
 

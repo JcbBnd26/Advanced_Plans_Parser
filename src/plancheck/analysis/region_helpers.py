@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Sequence, Tuple
 
-from ..models import BlockCluster, GlyphBox, GraphicElement, RowBand
+from ..models import BlockCluster, GraphicElement
 
 logger = logging.getLogger("plancheck.region_helpers")
 

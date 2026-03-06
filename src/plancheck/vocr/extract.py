@@ -81,6 +81,17 @@ def _ocr_one_tile(
         if polys is None or texts is None or scores is None:
             continue
 
+        # Validate equal length to prevent silent data truncation from zip()
+        if not (len(polys) == len(texts) == len(scores)):
+            log.warning(
+                "OCR result length mismatch on page %d: polys=%d, texts=%d, scores=%d",
+                page_num,
+                len(polys),
+                len(texts),
+                len(scores),
+            )
+            continue
+
         for poly, text, conf in zip(polys, texts, scores):
             if not text or conf < min_conf:
                 continue
@@ -240,17 +251,19 @@ def extract_ocr_tokens(
     def _run_ocr_with_heartbeat(func, *args, label="OCR"):
         """Run a blocking OCR call in a thread, printing heartbeat dots
         every 15 s so terminals / CI don't consider the process idle."""
+        import sys
         import threading
 
         result_box: list = []
-        exc_box: list = []
+        exc_box: list = []  # Stores (type, value, traceback) tuples
 
         def _worker():
             """Thread target that executes the OCR function."""
             try:
                 result_box.append(func(*args))
-            except Exception as e:
-                exc_box.append(e)
+            except Exception:
+                # Capture full exception info including traceback
+                exc_box.append(sys.exc_info())
 
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
@@ -262,7 +275,9 @@ def extract_ocr_tokens(
                 elapsed = time.perf_counter() - t0
                 log.info("    %s ... %.0fs", label, elapsed)
         if exc_box:
-            raise exc_box[0]
+            # Re-raise with original traceback preserved
+            exc_type, exc_value, exc_tb = exc_box[0]
+            raise exc_value.with_traceback(exc_tb)
         return result_box[0]
 
     try:
@@ -288,6 +303,9 @@ def extract_ocr_tokens(
             for y0, y1 in tiles_y:
                 for x0, x1 in tiles_x:
                     tile_idx += 1
+                    # Copy is required: PaddleOCR may modify the input array
+                    # in-place during preprocessing, which would corrupt
+                    # overlapping regions in subsequent tiles.
                     tile = img_array[y0:y1, x0:x1].copy()
                     t_tokens, t_confs = _run_ocr_with_heartbeat(
                         _ocr_one_tile,

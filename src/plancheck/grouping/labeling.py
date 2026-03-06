@@ -12,10 +12,14 @@ from __future__ import annotations
 import logging
 import re
 from statistics import mean, pstdev
-from typing import List
+from typing import TYPE_CHECKING, List
 
 from ..config import GroupingConfig
 from ..models import BlockCluster
+
+if TYPE_CHECKING:
+    from ..models import SuspectRegion
+
 from ._utils import NOTE_BROAD_RE, _open_debug
 
 log = logging.getLogger(__name__)

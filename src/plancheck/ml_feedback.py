@@ -79,63 +79,67 @@ def _apply_ml_feedback(
         prior = store.get_prior_corrections_by_bbox(doc_id, page_num)
         corrected_det_ids: set[str] = set()
 
-        for corr in prior:
-            orig_bbox = corr["original_bbox"]
-            if orig_bbox is None:
-                continue
-
-            # Find best matching new detection by IoU.
-            # Prefer a *different* detection than the one the correction
-            # was originally linked to (so we match against new re-run
-            # detections).  Fall back to the original if nothing else
-            # matches (single-detection or no-re-run scenario).
-            orig_det_id = corr["detection_id"]
-            best_iou = 0.0
-            best_det: dict | None = None
-            fallback_det: dict | None = None
-            for det in dets:
-                iou = _bbox_iou(orig_bbox, det["bbox"])
-                if det["detection_id"] == orig_det_id:
-                    if iou >= 0.5:
-                        fallback_det = det
-                    continue
-                if iou > best_iou:
-                    best_iou = iou
-                    best_det = det
-
-            if best_iou < 0.5 or best_det is None:
-                # No new detection matched — fall back to original
-                if fallback_det is not None:
-                    best_det = fallback_det
-                else:
+        # Wrap all Pass 1 updates in a write lock for transaction safety
+        with store._write_lock():
+            for corr in prior:
+                orig_bbox = corr["original_bbox"]
+                if orig_bbox is None:
                     continue
 
-            did = best_det["detection_id"]
-            corrected_det_ids.add(did)
+                # Find best matching new detection by IoU.
+                # Prefer a *different* detection than the one the correction
+                # was originally linked to (so we match against new re-run
+                # detections).  Fall back to the original if nothing else
+                # matches (single-detection or no-re-run scenario).
+                orig_det_id = corr["detection_id"]
+                best_iou = 0.0
+                best_det: dict | None = None
+                fallback_det: dict | None = None
+                for det in dets:
+                    iou = _bbox_iou(orig_bbox, det["bbox"])
+                    if det["detection_id"] == orig_det_id:
+                        if iou >= 0.5:
+                            fallback_det = det
+                        continue
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_det = det
 
-            if corr["correction_type"] == "delete":
-                # Mark as very-low confidence so it visually fades
-                store._conn.execute(
-                    "UPDATE detections SET confidence = 0.0 " "WHERE detection_id = ?",
-                    (did,),
-                )
-            elif corr["correction_type"] in ("relabel", "accept"):
-                new_label = corr["corrected_label"]
-                store._conn.execute(
-                    "UPDATE detections SET element_type = ? " "WHERE detection_id = ?",
-                    (new_label, did),
-                )
-            elif corr["correction_type"] == "reshape":
-                new_bbox = corr["corrected_bbox"]
-                new_label = corr["corrected_label"]
-                store._conn.execute(
-                    "UPDATE detections SET element_type = ?, "
-                    "  bbox_x0 = ?, bbox_y0 = ?, bbox_x1 = ?, bbox_y1 = ? "
-                    "WHERE detection_id = ?",
-                    (new_label, *new_bbox, did),
-                )
+                if best_iou < 0.5 or best_det is None:
+                    # No new detection matched — fall back to original
+                    if fallback_det is not None:
+                        best_det = fallback_det
+                    else:
+                        continue
 
-        store._conn.commit()
+                did = best_det["detection_id"]
+                corrected_det_ids.add(did)
+
+                if corr["correction_type"] == "delete":
+                    # Mark as very-low confidence so it visually fades
+                    store._conn.execute(
+                        "UPDATE detections SET confidence = 0.0 "
+                        "WHERE detection_id = ?",
+                        (did,),
+                    )
+                elif corr["correction_type"] in ("relabel", "accept"):
+                    new_label = corr["corrected_label"]
+                    store._conn.execute(
+                        "UPDATE detections SET element_type = ? "
+                        "WHERE detection_id = ?",
+                        (new_label, did),
+                    )
+                elif corr["correction_type"] == "reshape":
+                    new_bbox = corr["corrected_bbox"]
+                    new_label = corr["corrected_label"]
+                    store._conn.execute(
+                        "UPDATE detections SET element_type = ?, "
+                        "  bbox_x0 = ?, bbox_y0 = ?, bbox_x1 = ?, bbox_y1 = ? "
+                        "WHERE detection_id = ?",
+                        (new_label, *new_bbox, did),
+                    )
+
+            store._conn.commit()
 
         # ── Pass 2 + 3: ML relabelling + confidence scoring ───────
         if not cfg.ml_enabled:
@@ -190,6 +194,10 @@ def _apply_ml_feedback(
                 feat_version = FEATURE_VERSION
             except ImportError:
                 use_cache = False
+
+        # Collect updates for batch execution (transaction safety)
+        pass2_conf_updates: list[tuple[float, str]] = []
+        pass2_label_updates: list[tuple[str, str]] = []
 
         for det in dets:
             if not det["features"]:
@@ -255,34 +263,40 @@ def _apply_ml_feedback(
                             "Feature cache write failed for %s", did, exc_info=True
                         )
 
-            # Always write confidence — unless already set by prior
-            # delete correction (pass 1 sets it to 0.0).
+            # Collect updates for batch execution within write lock
             if did not in corrected_det_ids:
-                store._conn.execute(
-                    "UPDATE detections SET confidence = ? " "WHERE detection_id = ?",
-                    (pred_conf, did),
-                )
+                # Always write confidence — unless already set by prior
+                # delete correction (pass 1 sets it to 0.0).
+                pass2_conf_updates.append((pred_conf, did))
 
-            # Only relabel if: not already corrected by user AND
-            # model disagrees AND model is confident enough
-            if (
-                did not in corrected_det_ids
-                and pred_label != det["element_type"]
-                and pred_conf >= cfg.ml_relabel_confidence
-            ):
-                log.info(
-                    "ML relabel: %s %s → %s (conf=%.2f)",
-                    did[:12],
-                    det["element_type"],
-                    pred_label,
-                    pred_conf,
-                )
-                store._conn.execute(
-                    "UPDATE detections SET element_type = ? " "WHERE detection_id = ?",
-                    (pred_label, did),
-                )
+                # Only relabel if: not already corrected by user AND
+                # model disagrees AND model is confident enough
+                if (
+                    pred_label != det["element_type"]
+                    and pred_conf >= cfg.ml_relabel_confidence
+                ):
+                    log.info(
+                        "ML relabel: %s %s → %s (conf=%.2f)",
+                        did[:12],
+                        det["element_type"],
+                        pred_label,
+                        pred_conf,
+                    )
+                    pass2_label_updates.append((pred_label, did))
 
-        store._conn.commit()
+        # Execute Pass 2 updates in a single transaction
+        with store._write_lock():
+            for conf, did in pass2_conf_updates:
+                store._conn.execute(
+                    "UPDATE detections SET confidence = ? WHERE detection_id = ?",
+                    (conf, did),
+                )
+            for label, did in pass2_label_updates:
+                store._conn.execute(
+                    "UPDATE detections SET element_type = ? WHERE detection_id = ?",
+                    (label, did),
+                )
+            store._conn.commit()
 
         # ── Pass 4: drift detection (Phase 4.1) ───────────────────
         if getattr(cfg, "ml_drift_enabled", False):

@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from plancheck.llm.cost import CostTracker, count_tokens, estimate_cost
@@ -128,6 +129,18 @@ class LLMClient:
     #: with the same config).  Keyed by ``(provider, api_key, api_base)``.
     _client_cache: dict[tuple[str, str, str], Any] = {}
 
+    #: Lock for thread-safe cache access
+    _cache_lock: "threading.Lock | None" = None
+
+    @classmethod
+    def _get_cache_lock(cls) -> "threading.Lock":
+        """Lazily create and return the cache lock."""
+        if cls._cache_lock is None:
+            import threading
+
+            cls._cache_lock = threading.Lock()
+        return cls._cache_lock
+
     def __init__(
         self,
         provider: str = "ollama",
@@ -147,6 +160,48 @@ class LLMClient:
         self.policy = policy
         self.cost_tracker = cost_tracker or CostTracker()
         self.max_retries = max(1, max_retries)
+
+    # ── Resource management ────────────────────────────────────────
+
+    def close(self) -> None:
+        """Close this client's cached SDK connection.
+
+        Removes the SDK client from the cache and calls its close() method
+        if available. Safe to call multiple times.
+        """
+        cache_key = (self.provider, self.api_key, self.api_base)
+        with self._get_cache_lock():
+            client = self._client_cache.pop(cache_key, None)
+        if client is not None and hasattr(client, "close"):
+            try:
+                client.close()
+            except Exception:
+                pass  # Best-effort cleanup
+
+    @classmethod
+    def close_all(cls) -> None:
+        """Close all cached SDK connections.
+
+        Call this at program shutdown to release HTTP connections held
+        by ollama, openai, and anthropic SDK clients.
+        """
+        with cls._get_cache_lock():
+            clients = list(cls._client_cache.values())
+            cls._client_cache.clear()
+        for client in clients:
+            if hasattr(client, "close"):
+                try:
+                    client.close()
+                except Exception:
+                    pass  # Best-effort cleanup
+
+    def __enter__(self) -> "LLMClient":
+        """Context manager entry — returns self."""
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        """Context manager exit — closes this client's cached connection."""
+        self.close()
 
     # ── Policy helpers ─────────────────────────────────────────────
 
@@ -284,34 +339,45 @@ class LLMClient:
     # ── Client cache helpers ───────────────────────────────────────
 
     def _get_or_create_client(self, provider: str) -> Any:
-        """Return a cached SDK client, creating one if needed."""
+        """Return a cached SDK client, creating one if needed (thread-safe)."""
         cache_key = (provider, self.api_key, self.api_base)
+
+        # Fast path: check cache without lock
         client = self._client_cache.get(cache_key)
         if client is not None:
             return client
 
-        if provider == "ollama":
-            import ollama
+        # Slow path: acquire lock and create client
+        with self._get_cache_lock():
+            # Double-check after acquiring lock
+            client = self._client_cache.get(cache_key)
+            if client is not None:
+                return client
 
-            client = ollama.Client(host=self.api_base)
-        elif provider == "openai":
-            import openai
+            if provider == "ollama":
+                import ollama
 
-            client = openai.OpenAI(
-                api_key=self.api_key or None,
-                base_url=(
-                    self.api_base if self.api_base != "http://localhost:11434" else None
-                ),
-            )
-        elif provider == "anthropic":
-            import anthropic
+                client = ollama.Client(host=self.api_base)
+            elif provider == "openai":
+                import openai
 
-            client = anthropic.Anthropic(api_key=self.api_key or None)
-        else:
-            raise ValueError(f"Unknown provider: {provider!r}")
+                client = openai.OpenAI(
+                    api_key=self.api_key or None,
+                    base_url=(
+                        self.api_base
+                        if self.api_base != "http://localhost:11434"
+                        else None
+                    ),
+                )
+            elif provider == "anthropic":
+                import anthropic
 
-        self._client_cache[cache_key] = client
-        return client
+                client = anthropic.Anthropic(api_key=self.api_key or None)
+            else:
+                raise ValueError(f"Unknown provider: {provider!r}")
+
+            self._client_cache[cache_key] = client
+            return client
 
     # ── Provider implementations ───────────────────────────────────
 

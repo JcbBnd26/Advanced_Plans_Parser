@@ -37,9 +37,9 @@ embeddings = [
     "sentence-transformers>=2.2.0",
 ]
 llm = [
-    "ollama>=0.4.0",
-    "openai>=1.0.0",
-    "anthropic>=0.30.0",
+    "ollama>=0.4.0,<1.0.0",
+    "openai>=1.0.0,<2.0.0",
+    "anthropic>=0.30.0,<1.0.0",
 ]
 query = [
     "chromadb>=0.5.0",
@@ -51,6 +51,9 @@ gnn = [
 ]
 dev = [
     "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-timeout>=2.0.0",
+    "pytest-xdist>=3.0.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -59,3 +62,10 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+timeout = 60
+markers = [
+    "unit: fast isolated unit tests",
+    "integration: tests that combine multiple modules",
+    "slow: long-running tests (>10s)",
+    "gpu: tests requiring CUDA/GPU",
+]

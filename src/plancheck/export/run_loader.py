@@ -26,13 +26,9 @@ from ..config import GroupingConfig
 from ..models import (
     AbbreviationEntry,
     AbbreviationRegion,
-    BlockCluster,
-    GlyphBox,
-    GraphicElement,
     LegendEntry,
     LegendRegion,
     MiscTitleRegion,
-    NotesColumn,
     RevisionEntry,
     RevisionRegion,
     StandardDetailEntry,
@@ -77,7 +73,6 @@ def _load_page_from_artifacts(
         Per-page metadata from ``manifest.json`` (stages, counts, etc.).
     """
     from ..analysis.structural_boxes import SemanticRegion, StructuralBox
-    from ..analysis.title_block import TitleBlockInfo
     from ..analysis.zoning import PageZone
 
     # Find extraction file (contains tokens, blocks, notes_columns)

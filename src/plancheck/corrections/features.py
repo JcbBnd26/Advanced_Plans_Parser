@@ -81,7 +81,7 @@ def _load_label_patterns() -> dict[str, list[re.Pattern[str]]]:
             exc_info=True,
         )
         raw = _FALLBACK_PATTERNS
-    except Exception as exc:
+    except Exception:
         log.exception("Unexpected error loading label_registry")
         raw = _FALLBACK_PATTERNS
 

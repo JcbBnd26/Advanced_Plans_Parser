@@ -11,7 +11,7 @@ All public functions are pure and stateless.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Sequence, Tuple
 
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry import box as shapely_box

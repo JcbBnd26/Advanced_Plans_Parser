@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from ..models import BlockCluster, GlyphBox, NotesColumn
+from ..models import BlockCluster, NotesColumn
 from ..pipeline import PageResult, StageResult
 
 # ── Serialization helpers ───────────────────────────────────────────────

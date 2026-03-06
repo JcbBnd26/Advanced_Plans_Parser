@@ -34,7 +34,6 @@ from .page_result import DocumentResult, SkipReason, StageResult
 
 if TYPE_CHECKING:
     from .corrections.store import CorrectionStore
-    from .ingest.ingest import PageContext
 
 log = logging.getLogger(__name__)
 
@@ -334,7 +333,6 @@ def run_pipeline(
     PageResult
         All artefacts produced by the pipeline.
     """
-    from .ml_feedback import _apply_ml_feedback
     from .pipeline_stages import (
         _run_analysis_stage,
         _run_checks_stage,
@@ -596,7 +594,6 @@ def run_document(
     DocumentResult
         Per-page + document-level results.
     """
-    from .document_checks import _run_document_checks
     from .ingest import ingest_pdf
 
     if cfg is None:

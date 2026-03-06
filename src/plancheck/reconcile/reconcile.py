@@ -18,35 +18,26 @@ from typing import List, Optional
 from ..config import GroupingConfig
 from ..models import GlyphBox
 from ..vocr.extract import extract_ocr_tokens
-from .confidence_scoring import (
-    _build_match_index,
-    _build_spatial_grid,
-    _find_best_match,
-    _grid_candidates,
-    _overlap_ratio,
-    _overlaps_existing,
-)
-from .helpers import (
-    MatchRecord,
-    SymbolCandidate,
-    _estimate_char_width,
-    _extra_symbols,
-    _find_line_neighbours,
-    _has_digit_neighbour_left,
-    _is_digit_group,
-    center,
-    has_allowed_symbol,
-    has_numeric_symbol_context,
-)
-from .symbol_injection import (
-    _accept_candidates,
-    _collect_candidate_results,
-    _generate_symbol_candidates,
-    _inject_symbols,
-    _try_inject_case_a,
-    _try_inject_case_b,
-    _try_inject_case_c,
-)
+from .confidence_scoring import _build_spatial_grid  # noqa: F401 - re-exported
+from .confidence_scoring import _find_best_match  # noqa: F401 - re-exported
+from .confidence_scoring import _grid_candidates  # noqa: F401 - re-exported
+from .confidence_scoring import _overlap_ratio  # noqa: F401 - re-exported
+from .confidence_scoring import _overlaps_existing  # noqa: F401 - re-exported
+from .confidence_scoring import _build_match_index
+from .helpers import SymbolCandidate  # noqa: F401 - re-exported
+from .helpers import _estimate_char_width  # noqa: F401 - re-exported
+from .helpers import _extra_symbols  # noqa: F401 - re-exported
+from .helpers import _find_line_neighbours  # noqa: F401 - re-exported
+from .helpers import _has_digit_neighbour_left  # noqa: F401 - re-exported
+from .helpers import _is_digit_group  # noqa: F401 - re-exported
+from .helpers import MatchRecord, center, has_allowed_symbol, has_numeric_symbol_context
+from .symbol_injection import _accept_candidates  # noqa: F401 - re-exported
+from .symbol_injection import _collect_candidate_results  # noqa: F401 - re-exported
+from .symbol_injection import _generate_symbol_candidates  # noqa: F401 - re-exported
+from .symbol_injection import _try_inject_case_a  # noqa: F401 - re-exported
+from .symbol_injection import _try_inject_case_b  # noqa: F401 - re-exported
+from .symbol_injection import _try_inject_case_c  # noqa: F401 - re-exported
+from .symbol_injection import _inject_symbols
 
 log = logging.getLogger(__name__)
 

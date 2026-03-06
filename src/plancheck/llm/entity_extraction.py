@@ -26,13 +26,9 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from plancheck.llm.client import ChatMeta, LLMClient
-from plancheck.llm.cost import CostTracker
 from plancheck.llm.index import (
     Chunk,
     DocumentIndex,
-    SearchResult,
-    chunks_from_document_result,
-    chunks_from_page_result,
 )
 
 log = logging.getLogger(__name__)

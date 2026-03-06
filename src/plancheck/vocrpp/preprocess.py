@@ -64,7 +64,6 @@ def _as_uint8_gray(img: Image.Image):
 
 def _measure_metrics(img: Image.Image) -> Dict[str, float]:
     """Compute basic image statistics (mean, std, sharpness, etc.)."""
-    import numpy as np
 
     arr = _as_uint8_gray(img)
     metrics: Dict[str, float] = {

@@ -18,7 +18,7 @@ from statistics import median
 from typing import List
 
 from ..config import GroupingConfig
-from ..models import BlockCluster, GlyphBox, Line, Span
+from ..models import BlockCluster, GlyphBox, Line
 from ._utils import NOTE_BROAD_RE
 from .labeling import flag_suspect_header_words, mark_headers, mark_notes, mark_tables
 

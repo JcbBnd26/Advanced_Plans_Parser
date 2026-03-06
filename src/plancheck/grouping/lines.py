@@ -8,13 +8,11 @@ on baseline y-position.
 from __future__ import annotations
 
 import logging
-import re
 from statistics import median
 from typing import Iterable, List, Tuple
 
 from ..config import GroupingConfig
 from ..models import GlyphBox, Line, Span
-from ._utils import _open_debug
 
 log = logging.getLogger(__name__)
 

@@ -114,7 +114,6 @@ def auto_retrain(
         Outcome of the retrain attempt.
     """
     from .classifier import ElementClassifier
-    from .metrics import format_metrics_table
 
     model_path = Path(model_path)
     result = RetrainResult(threshold=threshold)

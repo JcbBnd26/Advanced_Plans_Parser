@@ -354,7 +354,7 @@ def _link_snake_continuations(
 
     Returns the updated group_id_counter.
     """
-    dbg.write(f"\n[DEBUG] Checking for implicit snake-column continuations...\n")
+    dbg.write("\n[DEBUG] Checking for implicit snake-column continuations...\n")
 
     for named_col in named_columns:
         if not named_col.notes_blocks:
@@ -372,10 +372,10 @@ def _link_snake_continuations(
         )
 
         if not _text_ends_incomplete(last_text):
-            dbg.write(f"[DEBUG]   Last text ends complete, skipping\n")
+            dbg.write("[DEBUG]   Last text ends complete, skipping\n")
             continue
 
-        dbg.write(f"[DEBUG]   Last text ends incomplete, looking for continuation\n")
+        dbg.write("[DEBUG]   Last text ends incomplete, looking for continuation\n")
 
         best_orphan = None
         best_score = float("inf")
@@ -437,7 +437,7 @@ def _link_by_note_numbering(
 
     Returns the updated group_id_counter.
     """
-    dbg.write(f"\n[DEBUG] Checking note numbering sequences...\n")
+    dbg.write("\n[DEBUG] Checking note numbering sequences...\n")
 
     named_with_notes = []
     for named_col in named_columns:
@@ -521,7 +521,7 @@ def _capture_leading_text(
     dbg,
 ) -> None:
     """Attach unassigned text blocks above orphan columns' first note as leading text."""
-    dbg.write(f"\n[DEBUG] Checking for leading continuation text in linked orphans\n")
+    dbg.write("\n[DEBUG] Checking for leading continuation text in linked orphans\n")
 
     assigned_block_ids = set()
     for col in columns:

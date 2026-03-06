@@ -8,13 +8,14 @@ This module handles spatial layout detection and block grouping:
 
 from __future__ import annotations
 
+import bisect
 import logging
 import re
 from statistics import median
 from typing import List
 
 from ..config import GroupingConfig
-from ..models import BlockCluster, GlyphBox, Line, RowBand, Span
+from ..models import BlockCluster, GlyphBox, Line, RowBand
 from ._utils import NOTE_BROAD_RE, NOTE_SIMPLE_RE
 from .lines import _median_size
 
@@ -51,24 +52,37 @@ def _partition_columns(
     if len(centers) < 2:
         return [(boxes, span_min, span_max)]
 
+    # Pre-sort boxes by center for efficient bisect-based partitioning
+    boxes_by_center = sorted(boxes, key=lambda b: (b.x0 + b.x1) * 0.5)
+    box_centers = [(b.x0 + b.x1) * 0.5 for b in boxes_by_center]
+
     def segments_for_thresh(thresh: float) -> List[tuple[List[GlyphBox], float, float]]:
-        """Return column segments by splitting at gaps wider than *thresh*."""
+        """Return column segments by splitting at gaps wider than *thresh*.
+
+        Uses bisect for O(n log n) partitioning instead of O(n × num_breaks).
+        """
         breaks = []
         for a, b in zip(centers[:-1], centers[1:]):
             if b - a > thresh:
                 breaks.append((a + b) * 0.5)
         if not breaks:
             return []
+
+        # Use bisect to partition boxes into segments efficiently
         segments = []
-        prev = float("-inf")
+        prev_idx = 0
         for br in breaks:
-            seg = [bx for bx in boxes if prev <= (bx.x0 + bx.x1) * 0.5 < br]
+            # Find index of first box with center >= break point
+            end_idx = bisect.bisect_left(box_centers, br)
+            seg = boxes_by_center[prev_idx:end_idx]
             if seg:
                 seg_min = min(bx.x0 for bx in seg)
                 seg_max = max(bx.x1 for bx in seg)
                 segments.append((seg, seg_min, seg_max))
-            prev = br
-        last_seg = [bx for bx in boxes if (bx.x0 + bx.x1) * 0.5 >= prev]
+            prev_idx = end_idx
+
+        # Last segment: all remaining boxes
+        last_seg = boxes_by_center[prev_idx:]
         if last_seg:
             seg_min = min(bx.x0 for bx in last_seg)
             seg_max = max(bx.x1 for bx in last_seg)
@@ -476,13 +490,24 @@ def group_blocks_from_lines(
 
     line_x0s.sort(key=lambda t: t[0])
 
+    # Use incremental sum tracking instead of recalculating cluster average each time
+    # This reduces O(n × avg_cluster_size) to O(n)
     x_clusters: List[List[Line]] = [[line_x0s[0][1]]]
+    cluster_x0_sum = line_x0s[0][0]  # Running sum of x0 values in current cluster
+    cluster_count = 1  # Count of lines in current cluster
+
     for x0, ln in line_x0s[1:]:
-        prev_x0 = sum(l.bbox(tokens)[0] for l in x_clusters[-1]) / len(x_clusters[-1])
-        if abs(x0 - prev_x0) > col_gap:
+        avg_x0 = cluster_x0_sum / cluster_count
+        if abs(x0 - avg_x0) > col_gap:
+            # Start new cluster
             x_clusters.append([ln])
+            cluster_x0_sum = x0
+            cluster_count = 1
         else:
+            # Add to current cluster and update running stats
             x_clusters[-1].append(ln)
+            cluster_x0_sum += x0
+            cluster_count += 1
 
     # --- Pass 2: within each cluster, group by vertical gap ---
     def _group_column(col_lines: List[Line]) -> List[BlockCluster]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Optional, Tuple
+from typing import List
 
 from ..config import GroupingConfig
 from ..models import AbbreviationEntry, AbbreviationRegion, BlockCluster, GraphicElement
