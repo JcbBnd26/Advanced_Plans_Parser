@@ -201,8 +201,16 @@ def auto_retrain(
                         shutil.copy2(backup_path, model_path)
                         backup_path.unlink()
                         log.info("Restored previous model from backup")
-                    result.accepted = False
-                    result.rolled_back = True
+                        result.accepted = False
+                        result.rolled_back = True
+                    else:
+                        log.error(
+                            "Rollback failed: backup unavailable. "
+                            "Regressed model persisted!"
+                        )
+                        result.error = "Rollback failed: backup unavailable"
+                        result.accepted = False
+                        result.rolled_back = False
                     return result
         except Exception:
             log.debug("Auto-rollback check failed", exc_info=True)

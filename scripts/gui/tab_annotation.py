@@ -27,9 +27,9 @@ from plancheck.corrections.classifier import ElementClassifier
 from plancheck.corrections.store import CorrectionStore
 
 # ── Re-exports for backward compatibility ──────────────────────────────
+from .annotation_state import HANDLE_SIZE  # noqa: F401
 from .annotation_state import (
     HANDLE_POSITIONS,
-    HANDLE_SIZE,  # noqa: F401
     CanvasBox,
     _reshape_bbox_from_handle,
     _scale_polygon_to_bbox,
@@ -771,6 +771,15 @@ class AnnotationTab(
         _btn_train.pack(side="left", padx=3)
         self._tooltip(
             _btn_train, "Train the element classifier on accepted/relabeled corrections"
+        )
+        _btn_bootstrap = ttk.Button(
+            model_btns, text="Bootstrap", command=self._on_bootstrap_training
+        )
+        _btn_bootstrap.pack(side="left", padx=3)
+        self._tooltip(
+            _btn_bootstrap,
+            "Generate training data from high-confidence rule-based detections "
+            "(use for cold-start when no corrections exist)",
         )
         _btn_metrics = ttk.Button(
             model_btns, text="Metrics", command=self._on_show_metrics

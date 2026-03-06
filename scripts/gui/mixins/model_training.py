@@ -153,6 +153,101 @@ class ModelTrainingMixin:
 
         threading.Thread(target=_train, daemon=True).start()
 
+    # ── Bootstrap training ───────────────────────────────────────
+
+    def _on_bootstrap_training(self) -> None:
+        """Generate pseudo-labels from high-confidence detections and train.
+
+        This bootstraps the classifier without requiring manual corrections,
+        enabling cold-start learning for new users.
+        """
+        self._model_status_label.configure(text="Bootstrapping…", foreground="orange")
+        self.root.update_idletasks()
+
+        def _bootstrap():
+            try:
+                from plancheck.corrections.retrain_trigger import auto_retrain
+                from plancheck.corrections.store import CorrectionStore as _CS
+
+                store = _CS()
+
+                # Generate pseudo-labels from high-confidence rule-based detections
+                n_generated = store.generate_pseudo_labels(
+                    confidence_threshold=0.95,
+                    max_per_label=500,
+                )
+                log.info("Generated %d pseudo-labels for bootstrap", n_generated)
+
+                if n_generated == 0:
+                    store.close()
+                    self._safe_after(
+                        0,
+                        lambda: self._model_status_label.configure(
+                            text="No high-confidence detections to bootstrap from",
+                            foreground="gray",
+                        ),
+                    )
+                    return
+
+                # Train on the pseudo-labels
+                result = auto_retrain(
+                    store,
+                    model_path="data/element_classifier.pkl",
+                    calibrate=True,
+                    ensemble=False,
+                    threshold=0,  # Force training
+                )
+                store.close()
+
+                # Store metrics for display
+                if result.metrics:
+                    self._last_metrics = result.metrics
+
+                # Update status
+                if result.error:
+                    self._safe_after(
+                        0,
+                        lambda: self._model_status_label.configure(
+                            text=f"Bootstrap failed: {result.error}",
+                            foreground="red",
+                        ),
+                    )
+                elif result.accepted:
+                    acc = result.metrics.get("accuracy", 0)
+                    f1 = result.metrics.get("f1_weighted", 0)
+                    self._safe_after(
+                        0,
+                        lambda: self._model_status_label.configure(
+                            text=f"Bootstrapped ({n_generated} examples) — F1 {f1:.1%}",
+                            foreground="green",
+                        ),
+                    )
+                else:
+                    self._safe_after(
+                        0,
+                        lambda: self._model_status_label.configure(
+                            text="Bootstrap incomplete",
+                            foreground="gray",
+                        ),
+                    )
+
+                # Reload classifier
+                from plancheck.corrections.classifier import ElementClassifier
+
+                self._classifier = ElementClassifier()
+
+            except Exception as exc:
+                log.exception("Bootstrap training failed")
+                self._safe_after(
+                    0,
+                    lambda: self._model_status_label.configure(
+                        text=f"Bootstrap failed: {exc}",
+                        foreground="red",
+                    ),
+                )
+
+        threading.Thread(target=_bootstrap, daemon=True).start()
+
     # ── Metrics display ──────────────────────────────────────────
 
     def _on_show_metrics(self) -> None:
