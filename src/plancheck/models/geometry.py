@@ -64,3 +64,79 @@ def _multi_bbox(
     if not xs0:
         return (0, 0, 0, 0)
     return (min(xs0), min(ys0), max(xs1), max(ys1))
+
+
+# ── Bounding Box Intersection / IoU Utilities ──────────────────────────
+
+
+Bbox = Tuple[float, float, float, float]
+
+
+def bbox_intersection_area(a: Bbox, b: Bbox) -> float:
+    """Compute the intersection area of two axis-aligned bounding boxes.
+
+    Parameters
+    ----------
+    a, b : tuple[float, float, float, float]
+        Bounding boxes as ``(x0, y0, x1, y1)``.
+
+    Returns
+    -------
+    float
+        Intersection area (≥ 0). Zero if boxes don't overlap.
+    """
+    x0 = max(a[0], b[0])
+    y0 = max(a[1], b[1])
+    x1 = min(a[2], b[2])
+    y1 = min(a[3], b[3])
+    return max(0.0, x1 - x0) * max(0.0, y1 - y0)
+
+
+def bbox_iou(a: Bbox, b: Bbox) -> float:
+    """Compute Intersection-over-Union (IoU) of two bounding boxes.
+
+    Parameters
+    ----------
+    a, b : tuple[float, float, float, float]
+        Bounding boxes as ``(x0, y0, x1, y1)``.
+
+    Returns
+    -------
+    float
+        IoU value in [0.0, 1.0]. Returns 0.0 if union area is zero.
+    """
+    inter = bbox_intersection_area(a, b)
+    if inter == 0.0:
+        return 0.0
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def bboxes_overlap(a: Bbox, b: Bbox) -> bool:
+    """Return True if two bounding boxes overlap (share any interior area).
+
+    Parameters
+    ----------
+    a, b : tuple[float, float, float, float]
+        Bounding boxes as ``(x0, y0, x1, y1)``.
+
+    Returns
+    -------
+    bool
+        True if boxes have non-zero intersection area.
+    """
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+def glyph_iou(a: "GlyphBox", b: "GlyphBox") -> float:
+    """Compute IoU between two GlyphBox objects.
+
+    Convenience wrapper around :func:`bbox_iou` for token comparisons.
+    """
+    return bbox_iou(a.bbox(), b.bbox())
+
+
+if TYPE_CHECKING:
+    from .tokens import GlyphBox

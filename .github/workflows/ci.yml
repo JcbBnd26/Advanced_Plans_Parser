@@ -49,3 +49,6 @@ jobs:
 
       - name: Lint with ruff
         run: ruff check src/ tests/ --select E,F,W --ignore E501
+
+      - name: Check formatting
+        run: ruff format --check src/ tests/

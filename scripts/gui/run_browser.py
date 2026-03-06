@@ -87,7 +87,9 @@ class RunBrowserWidget:
                     pages = manifest.get("pages_processed", [])
                     page_str = f"{len(pages)}" if pages else "?"
                     status_str = self._compute_run_status(manifest)
-                except Exception:
+                except (
+                    Exception
+                ):  # noqa: BLE001 — fallback to basic info on parse error
                     timestamp = run_dir.name[4:19]
                     pdf_name = "?"
                     page_str = "?"
@@ -120,7 +122,7 @@ class RunBrowserWidget:
         if manifest_path.exists():
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception:  # noqa: BLE001 — continue without manifest
                 manifest = None
 
         if self._on_select_callback is not None:

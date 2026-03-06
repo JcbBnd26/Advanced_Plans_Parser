@@ -115,6 +115,10 @@ _MAX_FONT_SIZE = 72.0  # cap to avoid absurd outliers
 _HSCALE_MIN = 50.0  # don't compress below 50%
 _HSCALE_MAX = 200.0  # don't stretch above 200%
 
+# String width cache to avoid repeated expensive font measurements.
+# Key: (font_name, font_size, text) -> predicted width
+_string_width_cache: Dict[Tuple[str, float, str], float] = {}
+
 
 def _effective_font_size(glyph: GlyphBox) -> float:
     """Return usable font size in PDF points.
@@ -260,6 +264,9 @@ def _render_tokens(
 
     Uses ``PDFTextObject.setHorizScale`` for width fitting since the method
     only exists on text objects, not on the canvas directly.
+
+    Optimization: caches stringWidth measurements to avoid repeated expensive
+    font metric lookups (10k tokens × repeated text = significant overhead).
     """
     for glyph in glyphs:
         rl_font = resolve_font(glyph.fontname)
@@ -282,7 +289,12 @@ def _render_tokens(
         hscale: float | None = None
         target_w = glyph.x1 - glyph.x0
         if target_w > 0:
-            predicted_w = canvas.stringWidth(glyph.text, rl_font, font_size)
+            # Use cached stringWidth to avoid repeated font metric lookups
+            cache_key = (rl_font, font_size, glyph.text)
+            predicted_w = _string_width_cache.get(cache_key)
+            if predicted_w is None:
+                predicted_w = canvas.stringWidth(glyph.text, rl_font, font_size)
+                _string_width_cache[cache_key] = predicted_w
             if predicted_w > 0:
                 ratio = (target_w / predicted_w) * 100.0
                 if _HSCALE_MIN <= ratio <= _HSCALE_MAX:

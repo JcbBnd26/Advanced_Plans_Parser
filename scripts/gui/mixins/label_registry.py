@@ -55,7 +55,7 @@ class LabelRegistryMixin:
             return json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {"version": "1.0", "label_registry": []}
-        except Exception:
+        except Exception:  # noqa: BLE001 — return default on any error
             return {"version": "1.0", "label_registry": []}
 
     def _save_label_registry_json(self, data: dict) -> None:

@@ -167,7 +167,7 @@ class TestFullPipeline:
         _cv2_available = True
         try:
             import cv2  # noqa: F401
-        except Exception:
+        except Exception:  # noqa: BLE001 — checking for optional dep
             _cv2_available = False
 
         rgb = sample_image.convert("RGB")

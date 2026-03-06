@@ -291,9 +291,7 @@ class ReportViewerWidget:
                                 text="      " + "  ".join(interesting),
                                 foreground="#abb2bf",
                                 wraplength=400,
-                            ).grid(
-                                row=prow, column=0, columnspan=2, sticky="w", padx=4
-                            )
+                            ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4)
                             prow += 1
 
                     s_outputs = stage_info.get("outputs", {})
@@ -306,9 +304,7 @@ class ReportViewerWidget:
                                     key=lambda x: x[1],
                                     reverse=True,
                                 )[:5]
-                                summary = ", ".join(
-                                    f"{k} ({v})" for k, v in top_items
-                                )
+                                summary = ", ".join(f"{k} ({v})" for k, v in top_items)
                                 if len(out_val) > 5:
                                     summary += f" +{len(out_val) - 5} more"
                                 label_text = (
@@ -339,9 +335,7 @@ class ReportViewerWidget:
                             text=f"      Error: {err_text}",
                             foreground="#e06c75",
                             wraplength=400,
-                        ).grid(
-                            row=prow, column=0, columnspan=2, sticky="w", padx=4
-                        )
+                        ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4)
                         prow += 1
 
             stage_health = page_data.get("stage_health", {})
@@ -352,9 +346,7 @@ class ReportViewerWidget:
                         page_frame.content,
                         text="\u26a0 " + ", ".join(health_items),
                         foreground="#e5c07b",
-                    ).grid(
-                        row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1
-                    )
+                    ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
                     prow += 1
 
             region_confs = page_data.get("region_confidences", {})
@@ -387,9 +379,7 @@ class ReportViewerWidget:
                         page_frame.content,
                         text=f"  {rtype}: {', '.join(conf_strs)}",
                         foreground=fg,
-                    ).grid(
-                        row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1
-                    )
+                    ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
                     prow += 1
 
             counts = page_data.get("counts", {})
@@ -413,9 +403,7 @@ class ReportViewerWidget:
                     rec_lines.append(f"Direct matches: {rec_accepted}/{rec_total}")
                 if rec_cand:
                     rate = (
-                        f"{cand_accepted / rec_cand * 100:.0f}%"
-                        if rec_cand
-                        else "N/A"
+                        f"{cand_accepted / rec_cand * 100:.0f}%" if rec_cand else "N/A"
                     )
                     rec_lines.append(
                         f"Candidates: {rec_cand} (accepted {cand_accepted}, "
@@ -429,9 +417,7 @@ class ReportViewerWidget:
                         text=f"  {line}",
                         foreground="#abb2bf",
                         wraplength=420,
-                    ).grid(
-                        row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1
-                    )
+                    ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
                     prow += 1
 
             ocr_keys = {
@@ -482,9 +468,7 @@ class ReportViewerWidget:
                         text=f"  [{sev}] {msg}",
                         foreground=self._severity_color(sev),
                         wraplength=400,
-                    ).grid(
-                        row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1
-                    )
+                    ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
                     prow += 1
 
             artifacts = page_data.get("artifacts", {})
@@ -674,13 +658,11 @@ class ReportViewerWidget:
                 try:
                     parsed = json.loads(content)
                     content = json.dumps(parsed, indent=2)
-                except Exception:
+                except Exception:  # noqa: BLE001 — show raw content if parse fails
                     pass
             text.insert("1.0", content)
         except Exception as e:
             text.insert("1.0", f"Error reading file: {e}")
         text.config(state="disabled")
 
-        ttk.Button(win, text="Close", command=win.destroy).grid(
-            row=2, column=0, pady=4
-        )
+        ttk.Button(win, text="Close", command=win.destroy).grid(row=2, column=0, pady=4)

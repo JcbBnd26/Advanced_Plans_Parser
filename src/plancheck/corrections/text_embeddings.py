@@ -104,7 +104,7 @@ class TextEmbedder:
                 self._embedding_dim,
             )
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 — model load may fail for various reasons
             log.warning(
                 "Failed to load sentence-transformer '%s'",
                 self.model_name,
@@ -155,7 +155,7 @@ class TextEmbedder:
                 normalize_embeddings=True,
             )
             return np.asarray(vec, dtype=np.float32).ravel()
-        except Exception:
+        except Exception:  # noqa: BLE001 — graceful degradation on encode failure
             log.debug("embed() failed for text len=%d", len(text), exc_info=True)
             return np.zeros(self._embedding_dim, dtype=np.float32)
 
@@ -200,7 +200,7 @@ class TextEmbedder:
             )
             for j, idx in enumerate(valid_indices):
                 results[idx] = np.asarray(embeddings[j], dtype=np.float32).ravel()
-        except Exception:
+        except Exception:  # noqa: BLE001 — graceful degradation on batch encode failure
             log.debug(
                 "embed_batch() failed for %d texts", len(valid_texts), exc_info=True
             )

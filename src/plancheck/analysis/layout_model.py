@@ -156,7 +156,7 @@ class LayoutModel:
             )
             self._model = self._model.to(self._device)
             self._model.eval()
-        except Exception:
+        except Exception:  # noqa: BLE001 — model load may fail for many reasons
             log.warning(
                 "Failed to load LayoutLMv3 model '%s'",
                 self.model_name,

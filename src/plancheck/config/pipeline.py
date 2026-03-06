@@ -527,6 +527,85 @@ class PipelineConfig:
 
         return cls.from_dict(data)
 
+    @classmethod
+    def from_toml(cls, path: str | Path) -> "PipelineConfig":
+        """Load configuration from a TOML file.
+
+        Looks for config values at the top level, or under ``[plancheck]``
+        or ``[grouping]`` subtables.
+
+        Raises
+        ------
+        ConfigLoadError
+            If the file cannot be read or parsed.
+        """
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+
+        if not path.exists():
+            raise ConfigLoadError(f"TOML config file not found: {path}")
+
+        try:
+            import tomllib
+        except ImportError:
+            try:
+                import tomli as tomllib  # type: ignore[import-not-found]
+            except ImportError as exc:
+                raise ConfigLoadError(
+                    "tomllib (Python 3.11+) or tomli is required for TOML "
+                    "config loading. Install tomli with: pip install tomli"
+                ) from exc
+
+        try:
+            text = path.read_text(encoding="utf-8")
+            data = tomllib.loads(text)
+        except (OSError, Exception) as exc:
+            raise ConfigLoadError(
+                f"Failed to load TOML config from {path}: {exc}"
+            ) from exc
+
+        if not isinstance(data, dict):
+            raise ConfigLoadError(
+                f"TOML config must be a mapping, got {type(data).__name__}"
+            )
+
+        # Check for subtables: [plancheck] or [grouping]
+        if "plancheck" in data and isinstance(data["plancheck"], dict):
+            data = data["plancheck"]
+        elif "grouping" in data and isinstance(data["grouping"], dict):
+            data = data["grouping"]
+
+        return cls.from_dict(data)
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "PipelineConfig":
+        """Load configuration from a file, auto-detecting format by extension.
+
+        Supported formats:
+        - ``.yaml``, ``.yml``: YAML format
+        - ``.toml``: TOML format
+
+        Raises
+        ------
+        ConfigLoadError
+            If the file cannot be read, parsed, or has an unsupported extension.
+        """
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        suffix = path.suffix.lower()
+
+        if suffix in (".yaml", ".yml"):
+            return cls.from_yaml(path)
+        elif suffix == ".toml":
+            return cls.from_toml(path)
+        else:
+            raise ConfigLoadError(
+                f"Unsupported config file extension '{suffix}'. "
+                "Use .yaml, .yml, or .toml"
+            )
+
 
 def migrate_config(old_dict: dict) -> dict:
     """Migrate a flat config dict from an older version to the current schema.

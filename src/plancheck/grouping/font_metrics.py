@@ -21,13 +21,15 @@ Usage:
     visual_report = visual.analyze_page(pdf_path, page_num)
 """
 
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
-import numpy as np
-import pdfplumber
+if TYPE_CHECKING:
+    import numpy as np
 
 
 @dataclass
@@ -200,6 +202,8 @@ class FontMetricsAnalyzer:
         Returns:
             PageMetricsReport with detected anomalies
         """
+        import pdfplumber
+
         report = PageMetricsReport(page_num=page_num)
 
         # Collect character metrics by font
@@ -338,6 +342,8 @@ def analyze_pdf(
     Returns:
         Dict mapping page number to PageMetricsReport
     """
+    import pdfplumber
+
     analyzer = FontMetricsAnalyzer()
     results = {}
 
@@ -464,6 +470,9 @@ class VisualMetricsAnalyzer:
         Returns:
             VisualMetricsReport with detected anomalies
         """
+        import numpy as np
+        import pdfplumber
+
         report = VisualMetricsReport(page_num=page_num, resolution=self.resolution)
         scale = self.resolution / 72.0
 
@@ -564,6 +573,7 @@ class VisualMetricsAnalyzer:
         page_height: float,
     ) -> Optional[WordVisualAnomaly]:
         """Analyze a single word's visual extent vs reported bbox."""
+        import numpy as np
 
         text = word.get("text", "")
         if not text or len(text) < 3:

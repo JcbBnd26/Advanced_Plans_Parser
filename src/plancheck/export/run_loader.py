@@ -309,7 +309,7 @@ def load_run(run_dir: str | Path) -> DocumentResult:
     if config_data:
         try:
             cfg = GroupingConfig.from_dict(config_data)
-        except Exception:
+        except Exception:  # noqa: BLE001 — config reconstruction is best-effort
             log.debug("Could not reconstruct config from manifest", exc_info=True)
 
     # Determine pages from manifest or by scanning artifacts

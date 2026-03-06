@@ -257,3 +257,43 @@ class TestConfigFromFile:
         f.write_text("{}")
         with pytest.raises(ConfigLoadError, match="Unsupported"):
             GroupingConfig.from_file(f)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Sub-config field synchronization tests
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestSubconfigSync:
+    """Ensure PipelineConfig has every field from every sub-config."""
+
+    def test_subconfig_fields_match_pipeline(self):
+        """Fail immediately if a subconfig field is missing from PipelineConfig."""
+        import dataclasses
+
+        from plancheck.config import PipelineConfig
+        from plancheck.config.subconfigs import (
+            AnalysisConfig,
+            ExportConfig,
+            GroupingStageConfig,
+            MLConfig,
+            ReconcileConfig,
+            TOCRConfig,
+            VOCRConfig,
+        )
+
+        pipeline_fields = {f.name for f in dataclasses.fields(PipelineConfig)}
+        subconfigs = [
+            TOCRConfig,
+            VOCRConfig,
+            ReconcileConfig,
+            GroupingStageConfig,
+            AnalysisConfig,
+            ExportConfig,
+            MLConfig,
+        ]
+        for sub_cls in subconfigs:
+            for f in dataclasses.fields(sub_cls):
+                assert (
+                    f.name in pipeline_fields
+                ), f"{sub_cls.__name__}.{f.name} missing from PipelineConfig"

@@ -171,7 +171,7 @@ class AnnotationTab(
             self.root.bind(
                 "<Destroy>", lambda e: setattr(self, "_closing", True), add="+"
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — binding is best-effort
             pass
 
         # Subscribe to GuiState events

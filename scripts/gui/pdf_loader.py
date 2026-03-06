@@ -37,7 +37,7 @@ class PdfLoaderMixin:
 
                 with pdfplumber.open(self._pdf_path) as pdf:
                     self._page_count = len(pdf.pages)
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort page count
                 self._page_count = 0
             # Reset page selection to first page
             self._page_var.set(0)
@@ -263,14 +263,14 @@ class PdfLoaderMixin:
                         if result.is_drifted:
                             drifted_count += 1
                         total += 1
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — skip malformed detection
                         pass
 
             if drifted_count > 0:
                 self._drift_indicator.configure(
                     text=f"⚠ Drift detected on {drifted_count}/{total} detections"
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001 — drift check is best-effort
             # Silently ignore drift check failures
             pass
 

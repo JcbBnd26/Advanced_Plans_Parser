@@ -45,6 +45,8 @@ class ExperimentSummary:
     hyperparams: dict = field(default_factory=dict)
     feature_version: int = 0
     n_classes: int = 0
+    per_class: dict = field(default_factory=dict)
+    holdout_predictions: list = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +62,8 @@ class ExperimentSummary:
             "hyperparams": self.hyperparams,
             "feature_version": self.feature_version,
             "n_classes": self.n_classes,
+            "per_class": self.per_class,
+            "holdout_predictions": self.holdout_predictions,
         }
 
 
@@ -145,6 +149,8 @@ class ExperimentTracker:
                     hyperparams=r.get("hyperparams", {}),
                     feature_version=r.get("feature_version", 0),
                     n_classes=len(r.get("labels", [])),
+                    per_class=r.get("per_class", {}),
+                    holdout_predictions=r.get("holdout_predictions", []),
                 )
             )
         return results

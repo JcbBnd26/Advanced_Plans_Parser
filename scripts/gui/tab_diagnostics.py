@@ -432,23 +432,26 @@ class TrainingProgressSection(CollapsibleFrame):
             from plancheck.corrections.experiment_tracker import ExperimentTracker
 
             tracker = ExperimentTracker(store)
+            # Fetch experiments with per_class and holdout_predictions included
             experiments = tracker.list_experiments(
                 limit=20, sort_by="trained_at", ascending=True
             )
-            history = store.get_training_history()
 
             if experiments:
                 self._draw_f1_chart(experiments)
                 self._log.write(f"F1 chart: {len(experiments)} runs", "INFO")
 
-            if history:
-                self._draw_perclass_heatmap(history[:10])
+                # Per-class heatmap from experiments (most recent first for heatmap)
+                heatmap_exps = tracker.list_experiments(
+                    limit=10, sort_by="trained_at", ascending=False
+                )
+                self._draw_perclass_heatmap(heatmap_exps)
                 self._log.write("Per-class heatmap rendered.", "INFO")
 
                 # Get holdout predictions from most recent run
-                latest = history[0] if history else None
-                if latest and latest.get("holdout_predictions"):
-                    self._draw_confidence_dist(latest["holdout_predictions"])
+                latest = heatmap_exps[0] if heatmap_exps else None
+                if latest and latest.holdout_predictions:
+                    self._draw_confidence_dist(latest.holdout_predictions)
                     self._log.write("Confidence distribution rendered.", "INFO")
 
             # Corrections trend
@@ -494,8 +497,14 @@ class TrainingProgressSection(CollapsibleFrame):
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def _draw_perclass_heatmap(self, history: list) -> None:
-        """Draw per-class F1 heatmap."""
+    def _draw_perclass_heatmap(self, experiments: list) -> None:
+        """Draw per-class F1 heatmap.
+
+        Parameters
+        ----------
+        experiments : list[ExperimentSummary]
+            List of experiment summaries with per_class data.
+        """
         for w in self._heatmap_canvas.winfo_children():
             w.destroy()
 
@@ -511,8 +520,8 @@ class TrainingProgressSection(CollapsibleFrame):
 
         # Collect all classes across runs
         all_classes = set()
-        for h in history:
-            pc = h.get("per_class", {})
+        for exp in experiments:
+            pc = exp.per_class if hasattr(exp, "per_class") else {}
             all_classes.update(pc.keys())
 
         if not all_classes:
@@ -522,11 +531,12 @@ class TrainingProgressSection(CollapsibleFrame):
         # Build matrix: rows = runs (most recent at top), cols = classes
         matrix = []
         run_labels = []
-        for h in history:
-            pc = h.get("per_class", {})
+        for exp in experiments:
+            pc = exp.per_class if hasattr(exp, "per_class") else {}
             row = [pc.get(c, {}).get("f1", 0.0) for c in classes]
             matrix.append(row)
-            run_labels.append(h.get("run_id", "")[:8])
+            run_id = exp.run_id if hasattr(exp, "run_id") else ""
+            run_labels.append(run_id[:8])
 
         matrix = np.array(matrix)
 
@@ -563,7 +573,7 @@ class TrainingProgressSection(CollapsibleFrame):
         # Get recent corrections grouped by date
         try:
             recent = store.get_recent_corrections(limit=100)
-        except Exception:
+        except Exception:  # noqa: BLE001 — chart is optional
             return
 
         if not recent:

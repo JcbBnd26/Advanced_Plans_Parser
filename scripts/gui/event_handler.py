@@ -4,6 +4,7 @@ Contains all user interaction handlers: mouse clicks, drags, releases,
 keyboard shortcuts, undo/redo, multi-select, word selection, merge,
 group management, and copy/paste.
 """
+
 from __future__ import annotations
 
 import copy
@@ -20,8 +21,8 @@ from plancheck.ingest.ingest import (
 )
 
 from .annotation_state import (
-    CanvasBox,
     HANDLE_POSITIONS,
+    CanvasBox,
     _reshape_bbox_from_handle,
     _scale_polygon_to_bbox,
 )
@@ -259,7 +260,7 @@ class EventHandlerMixin:
             vy1 = self._canvas.canvasy(self._canvas.winfo_height())
             pdf_cx = ((vx0 + vx1) / 2) / eff
             pdf_cy = ((vy0 + vy1) / 2) / eff
-        except Exception:
+        except Exception:  # noqa: BLE001 — use fallback center on any error
             pdf_cx, pdf_cy = 300.0, 300.0
         self._paste_box(pdf_cx, pdf_cy)
 
@@ -476,7 +477,7 @@ class EventHandlerMixin:
                         text=f"Model suggests: {pred_label} ({pred_conf:.0%})"
                     )
                     self._suggest_btn.pack(side="left", padx=4)
-            except Exception:
+            except Exception:  # noqa: BLE001 — classifier suggestion is optional
                 pass
 
         # Update multi-select count
@@ -1028,7 +1029,7 @@ class EventHandlerMixin:
         """Check if the annotation tab is currently visible."""
         try:
             return self.notebook.index("current") == self.notebook.index(self.frame)
-        except Exception:
+        except Exception:  # noqa: BLE001 — fallback to False if notebook unavailable
             return False
 
     def _key_accept(self, event: tk.Event) -> None:
@@ -1529,7 +1530,7 @@ class EventHandlerMixin:
         if len(word_bboxes) >= 2:
             try:
                 merged_poly = merge_boxes(word_bboxes)
-            except Exception:
+            except Exception:  # noqa: BLE001 — fall back to bounding box merge
                 merged_poly = None
         new_bbox = (
             polygon_bbox(merged_poly)
@@ -1607,7 +1608,7 @@ class EventHandlerMixin:
                     pred_label, pred_conf = self._classifier.predict(features)
                     if pred_conf and pred_conf > 0.5:
                         chosen_type = pred_label
-                except Exception:
+                except Exception:  # noqa: BLE001 — classifier is optional
                     pass
 
             det_id = self._store.save_detection(
@@ -1879,4 +1880,3 @@ class EventHandlerMixin:
         )
 
     # ── Filters ────────────────────────────────────────────────────
-

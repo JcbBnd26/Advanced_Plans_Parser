@@ -33,7 +33,7 @@ def _fmt_ts(ts: str | None) -> str:
     try:
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         return dt.strftime("%Y-%m-%d  %H:%M:%S")
-    except Exception:
+    except Exception:  # noqa: BLE001 — return raw timestamp on parse failure
         return ts[:19] if len(ts) >= 19 else ts
 
 
@@ -190,7 +190,7 @@ class DatabaseTab:
         try:
             selected = self.notebook.index(self.notebook.select())
             my_index = self.notebook.index(self.frame)
-        except Exception:
+        except Exception:  # noqa: BLE001 — notebook may be in bad state
             return
         if selected == my_index:
             self._refresh()

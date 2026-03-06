@@ -1,4 +1,5 @@
 """Right-click context menu mixin for the annotation tab."""
+
 from __future__ import annotations
 
 import tkinter as tk
@@ -254,7 +255,7 @@ class ContextMenuMixin:
                 display_name=raw.strip(),
                 color=hex_color,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — registry write is best-effort
             self._status.configure(text="Warning: failed to write label_registry.json")
 
         # Create detection from words using this type (force create, no classifier override)
@@ -278,4 +279,3 @@ class ContextMenuMixin:
         self._status.configure(
             text=f"Selected all {len(self._selected_word_rids)} words"
         )
-

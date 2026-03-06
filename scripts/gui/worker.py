@@ -31,7 +31,7 @@ class QueueHandler(logging.Handler):
             msg = self.format(record)
             level = record.levelname  # DEBUG/INFO/WARNING/ERROR
             self.q.put(("log", msg, level))
-        except Exception:
+        except Exception:  # noqa: BLE001 — logging must not crash
             self.handleError(record)
 
 
@@ -175,7 +175,7 @@ class PipelineWorker:
         # If the root window has been destroyed, stop polling quietly.
         try:
             root_exists = bool(self.root.winfo_exists())
-        except Exception:
+        except Exception:  # noqa: BLE001 — assume exists on error
             root_exists = True
 
         if not root_exists:
@@ -185,7 +185,7 @@ class PipelineWorker:
         if self.is_running:
             try:
                 self.root.after(50, self._poll)
-            except Exception:
+            except Exception:  # noqa: BLE001 — stop polling if window closing
                 # Window likely closing; stop polling
                 self._polling = False
                 return
@@ -206,25 +206,25 @@ class PipelineWorker:
             if self.log_panel:
                 try:
                     self.log_panel.write(text, level)
-                except Exception:
+                except Exception:  # noqa: BLE001 — GUI callback is best-effort
                     pass
             # Forward ERROR-level messages to error panel
             if self.error_panel and level in ("ERROR", "CRITICAL"):
                 try:
                     self.error_panel.add_error(text, level)
-                except Exception:
+                except Exception:  # noqa: BLE001 — GUI callback is best-effort
                     pass
         elif kind == "stage":
             _, stage_name, status = msg
             if self.stage_bar:
                 try:
                     self.stage_bar.set_stage(stage_name, status)
-                except Exception:
+                except Exception:  # noqa: BLE001 — GUI callback is best-effort
                     pass
             if self.log_panel and status == "running":
                 try:
                     self.log_panel.write(f"▸ {stage_name}...", "STAGE")
-                except Exception:
+                except Exception:  # noqa: BLE001 — GUI callback is best-effort
                     pass
         elif kind == "done":
             _, result, error, elapsed = msg
@@ -240,12 +240,12 @@ class PipelineWorker:
                             f"\nPipeline finished in {elapsed:.1f}s",
                             "SUCCESS",
                         )
-                except Exception:
+                except Exception:  # noqa: BLE001 — GUI callback is best-effort
                     pass
             if self._on_done:
                 try:
                     self._on_done(result, error, elapsed)
-                except Exception:
+                except Exception:  # noqa: BLE001 — done callback is best-effort
                     pass
 
     def post_stage(self, stage: str, status: str) -> None:

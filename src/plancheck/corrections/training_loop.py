@@ -57,7 +57,7 @@ def _calibrate(
             cv_folds,
         )
         return cal
-    except Exception:
+    except Exception:  # noqa: BLE001 — calibration is optional enhancement
         log.warning("Calibration failed — using raw model.", exc_info=True)
         return None
 
@@ -106,12 +106,7 @@ def train_classifier(
     # Lazy imports avoid circular dependencies at module load time
     from sklearn.utils.class_weight import compute_sample_weight
 
-    from .classifier import (
-        FEATURE_VERSION,
-        _NUMERIC_KEYS,
-        ZONE_VALUES,
-        encode_features,
-    )
+    from .classifier import _NUMERIC_KEYS, FEATURE_VERSION, ZONE_VALUES, encode_features
     from .metrics import compute_metrics
 
     # ── Load data ────────────────────────────────────────────────
@@ -138,6 +133,13 @@ def train_classifier(
     # ── Balanced class weighting ─────────────────────────────────
     sample_weights = compute_sample_weight("balanced", y_train)
 
+    # ── Prepare validation data for calibration ──────────────────
+    X_val = None
+    y_val = None
+    if val_ex:
+        X_val = np.array([encode_features(e["features"]) for e in val_ex])
+        y_val = [e["label"] for e in val_ex]
+
     # ── Build and fit ─────────────────────────────────────────────
     ensemble_members: list[str] = []
     if ensemble:
@@ -150,7 +152,24 @@ def train_classifier(
         raw_model = clf
 
     # ── Confidence calibration (isotonic regression) ──────────────
-    calibrated_clf = _calibrate(clf, X_train, y_train, calibrate=calibrate)
+    # Use validation data if available AND sufficiently large for more honest
+    # calibration. Fall back to training data if validation set is too small.
+    calibrated_clf = None
+    if val_ex and X_val is not None and y_val is not None:
+        # Check if validation set is large enough for calibration CV
+        n_unique_val = len(set(y_val))
+        n_samples_val = len(y_val)
+        cv_folds_val = min(5, max(2, n_samples_val // max(n_unique_val, 1)))
+        if n_samples_val >= cv_folds_val * n_unique_val:
+            # Validation set is large enough - calibrate on it
+            calibrated_clf = _calibrate(clf, X_val, y_val, calibrate=calibrate)
+            if calibrated_clf is not None:
+                log.info("Calibrated on validation data (%d samples).", n_samples_val)
+    # Fall back to training data if we don't have calibration yet
+    if calibrated_clf is None and calibrate:
+        calibrated_clf = _calibrate(clf, X_train, y_train, calibrate=calibrate)
+        if calibrated_clf is not None:
+            log.info("Calibrated on training data (validation set too small).")
 
     # ── Evaluate on validation set (or training set if no val) ────
     eval_on_train = not bool(val_ex)

@@ -17,6 +17,7 @@ from PIL import Image
 
 from ..config import GroupingConfig
 from ..models import GlyphBox
+from ..models.geometry import glyph_iou as iou  # backward-compat alias
 
 log = logging.getLogger(__name__)
 
@@ -25,22 +26,6 @@ log = logging.getLogger(__name__)
 # stays within this limit.  The default is overridden by cfg.vocr_max_tile_px.
 _PADDLE_MAX_SIDE_DEFAULT = 3800
 _TILE_OVERLAP_FRAC_DEFAULT = 0.05  # 5 % overlap between adjacent tiles
-
-
-# ── Geometry helper (used by dedup_tiles and reconcile) ────────────────
-
-
-def iou(a: GlyphBox, b: GlyphBox) -> float:
-    """Intersection-over-union of two axis-aligned boxes."""
-    ix0 = max(a.x0, b.x0)
-    iy0 = max(a.y0, b.y0)
-    ix1 = min(a.x1, b.x1)
-    iy1 = min(a.y1, b.y1)
-    inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
-    if inter == 0:
-        return 0.0
-    union = a.area() + b.area() - inter
-    return inter / union if union > 0 else 0.0
 
 
 # ── Stage 1: Extract OCR tokens from full page (with tiling) ──────────
@@ -261,7 +246,7 @@ def extract_ocr_tokens(
             """Thread target that executes the OCR function."""
             try:
                 result_box.append(func(*args))
-            except Exception:
+            except Exception:  # noqa: BLE001 — capture any worker exception
                 # Capture full exception info including traceback
                 exc_box.append(sys.exc_info())
 

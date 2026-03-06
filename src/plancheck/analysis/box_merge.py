@@ -17,6 +17,8 @@ from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry import box as shapely_box
 from shapely.ops import unary_union
 
+from ..models.geometry import bboxes_overlap as boxes_overlap  # noqa: F401 — re-export
+
 logger = logging.getLogger("plancheck.box_merge")
 
 # Type aliases
@@ -132,11 +134,6 @@ def simplify_polygon(
     poly = Polygon(coords)
     simplified = poly.simplify(tolerance, preserve_topology=True)
     return list(simplified.exterior.coords)
-
-
-def boxes_overlap(a: Bbox, b: Bbox) -> bool:
-    """Return True if two bounding boxes overlap (share any interior area)."""
-    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
 
 
 def find_overlap_clusters(bboxes: Sequence[Bbox]) -> List[List[int]]:

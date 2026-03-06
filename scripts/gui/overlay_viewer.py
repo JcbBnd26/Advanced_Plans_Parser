@@ -662,7 +662,7 @@ def render_overlay(
                 sboxes = detect_structural_boxes(graphics, page_w, page_h)
                 classify_structural_boxes(sboxes, blocks, page_w, page_h)
                 _draw_structural_boxes_layer(draw, sboxes, scale, font)
-            except Exception:
+            except Exception:  # noqa: BLE001 — layer rendering is best-effort
                 pass
 
         # Exclusion zones for downstream detectors
@@ -679,7 +679,7 @@ def render_overlay(
                     cfg=cfg,
                 )
                 _draw_legend_layer(draw, lregs, scale, font)
-            except Exception:
+            except Exception:  # noqa: BLE001 — layer rendering is best-effort
                 pass
 
         if layers.get("abbreviations", False):
@@ -688,7 +688,7 @@ def render_overlay(
                     blocks, graphics, page_w, page_h, cfg=cfg
                 )
                 _draw_abbreviation_layer(draw, aregs, scale, font)
-            except Exception:
+            except Exception:  # noqa: BLE001 — layer rendering is best-effort
                 pass
 
         if layers.get("revisions", False):
@@ -702,7 +702,7 @@ def render_overlay(
                     cfg=cfg,
                 )
                 _draw_revision_layer(draw, rregs, scale, font)
-            except Exception:
+            except Exception:  # noqa: BLE001 — layer rendering is best-effort
                 pass
 
         if layers.get("std_details", False):
@@ -716,7 +716,7 @@ def render_overlay(
                     cfg=cfg,
                 )
                 _draw_std_detail_layer(draw, dregs, scale, font)
-            except Exception:
+            except Exception:  # noqa: BLE001 — layer rendering is best-effort
                 pass
 
         if layers.get("zones", False):
@@ -725,7 +725,7 @@ def render_overlay(
                     page_w, page_h, blocks, notes_columns=notes_columns, cfg=cfg
                 )
                 _draw_zone_layer(draw, zones, scale, font)
-            except Exception:
+            except Exception:  # noqa: BLE001 — layer rendering is best-effort
                 pass
 
     return img
@@ -1029,7 +1029,7 @@ class OverlayViewerTab:
                     ):
                         return
                     self.frame.after(0, lambda: self._show_image(img, elapsed))
-                except Exception:
+                except Exception:  # noqa: BLE001 — GUI callback is best-effort
                     return
             except Exception as exc:
                 elapsed = time.perf_counter() - t0
@@ -1040,7 +1040,7 @@ class OverlayViewerTab:
                     ):
                         return
                     self.frame.after(0, lambda: self._render_error(str(exc), elapsed))
-                except Exception:
+                except Exception:  # noqa: BLE001 — GUI callback is best-effort
                     return
 
         self._render_thread = threading.Thread(target=worker, daemon=True)
@@ -1212,7 +1212,7 @@ class OverlayViewerTab:
                     pdf_path = Path(pdf_path_str)
                     if not pdf_path.is_file():
                         pdf_path = None
-            except Exception:
+            except Exception:  # noqa: BLE001 — manifest parsing is best-effort
                 pass
 
         if pdf_path is None:

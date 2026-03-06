@@ -69,3 +69,10 @@ markers = [
     "slow: long-running tests (>10s)",
     "gpu: tests requiring CUDA/GPU",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "double"

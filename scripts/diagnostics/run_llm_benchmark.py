@@ -43,7 +43,7 @@ def _count_tokens_tiktoken(text: str, model: str = "gpt-4") -> int:
 
         enc = tiktoken.encoding_for_model(model)
         return len(enc.encode(text))
-    except Exception:
+    except Exception:  # noqa: BLE001 — tiktoken may fail, use fallback
         # Fallback: ~4 chars per token for English text
         return max(1, len(text) // 4)
 

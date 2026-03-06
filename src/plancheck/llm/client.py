@@ -175,8 +175,8 @@ class LLMClient:
         if client is not None and hasattr(client, "close"):
             try:
                 client.close()
-            except Exception:
-                pass  # Best-effort cleanup
+            except Exception:  # noqa: BLE001 — best-effort cleanup
+                pass
 
     @classmethod
     def close_all(cls) -> None:
@@ -192,8 +192,8 @@ class LLMClient:
             if hasattr(client, "close"):
                 try:
                     client.close()
-                except Exception:
-                    pass  # Best-effort cleanup
+                except Exception:  # noqa: BLE001 — best-effort cleanup
+                    pass
 
     def __enter__(self) -> "LLMClient":
         """Context manager entry — returns self."""

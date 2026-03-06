@@ -287,7 +287,7 @@ def build_document_graph(
             if include_embeddings and text_embedder is not None and text:
                 try:
                     text_emb = text_embedder.embed(text)
-                except Exception:
+                except Exception:  # noqa: BLE001 — embedding is optional enhancement
                     pass
 
             node = GraphNode(

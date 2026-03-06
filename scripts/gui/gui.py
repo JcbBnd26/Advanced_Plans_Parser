@@ -73,7 +73,7 @@ class GuiState:
         for cb in self._subscribers.get(event, []):
             try:
                 cb()
-            except Exception:
+            except Exception:  # noqa: BLE001 — subscribers must not break event loop
                 logger.exception(
                     "GuiState subscriber failed for event=%s callback=%r", event, cb
                 )
@@ -136,7 +136,7 @@ class PlanParserGUI:
                         f1 = result.metrics.get("f1_weighted", 0)
                         msg = f"Auto-retrained on startup (F1: {f1:.1%})"
                         self.root.after(0, lambda: self._status_bar.set_status(msg))
-            except Exception:
+            except Exception:  # noqa: BLE001 — startup check is best-effort
                 logger.debug("Startup check failed", exc_info=True)
 
         threading.Thread(target=_check, daemon=True).start()

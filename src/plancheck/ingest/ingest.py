@@ -334,7 +334,7 @@ def build_page_context(
         try:
             info = pdf.metadata or {}
             producer_id = str(info.get("Producer", "") or "")
-        except Exception:
+        except Exception:  # noqa: BLE001 — metadata extraction is optional
             pass
 
         # Text tokens

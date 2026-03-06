@@ -10,24 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from .config import GroupingConfig
+from .models.geometry import bbox_iou as _bbox_iou
 
 log = logging.getLogger(__name__)
-
-
-def _bbox_iou(
-    a: tuple[float, float, float, float],
-    b: tuple[float, float, float, float],
-) -> float:
-    """Compute Intersection-over-Union between two bboxes."""
-    x0 = max(a[0], b[0])
-    y0 = max(a[1], b[1])
-    x1 = min(a[2], b[2])
-    y1 = min(a[3], b[3])
-    inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
-    area_a = (a[2] - a[0]) * (a[3] - a[1])
-    area_b = (b[2] - b[0]) * (b[3] - b[1])
-    union = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
 
 
 def _apply_ml_feedback(
@@ -164,7 +149,7 @@ def _apply_ml_feedback(
                     img_extractor = ImageFeatureExtractor(
                         backbone=cfg.ml_vision_backbone
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001 — optional dep may fail to load
                 log.debug("Vision feature extractor init failed", exc_info=True)
 
         # Optionally set up text embedder
@@ -178,7 +163,7 @@ def _apply_ml_feedback(
 
                 if is_embeddings_available():
                     text_embedder = TextEmbedder(model_name=cfg.ml_embeddings_model)
-            except Exception:
+            except Exception:  # noqa: BLE001 — optional dep may fail to load
                 log.debug("Text embedder init failed", exc_info=True)
 
         # Refresh detections after pass 1 modifications
@@ -333,10 +318,10 @@ def _apply_ml_feedback(
                             len(dets),
                             page_num,
                         )
-            except Exception:
+            except Exception:  # noqa: BLE001 — drift detection is best-effort
                 log.debug("Drift detection failed", exc_info=True)
 
-    except Exception:
+    except Exception:  # noqa: BLE001 — ML feedback must not break pipeline
         log.debug("ML feedback failed", exc_info=True)
 
     return drift_warnings

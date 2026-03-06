@@ -98,7 +98,7 @@ def process_page(
         ):
             try:
                 stage_callback(st, "pending")
-            except Exception:
+            except Exception:  # noqa: BLE001 — callback must not break batch run
                 pass
 
     # ── Run the canonical library pipeline ────────────────────────────

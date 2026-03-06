@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from ..analysis.gnn.graph import GraphNode
+from ..models.geometry import bbox_intersection_area as _bbox_overlap
 
 log = logging.getLogger(__name__)
 
@@ -57,20 +58,6 @@ except ImportError:
 
 # Number of candidate-level features appended to GNN embeddings.
 CANDIDATE_FEATURE_DIM = 3  # count, mean_confidence, hit_rate
-
-
-# ── Node ↔ Candidate mapping ───────────────────────────────────────────
-
-
-def _bbox_overlap(a: Tuple[float, ...], b: Tuple[float, ...]) -> float:
-    """Return intersection area of two (x0, y0, x1, y1) boxes."""
-    x0 = max(a[0], b[0])
-    y0 = max(a[1], b[1])
-    x1 = min(a[2], b[2])
-    y1 = min(a[3], b[3])
-    if x1 <= x0 or y1 <= y0:
-        return 0.0
-    return (x1 - x0) * (y1 - y0)
 
 
 def assign_candidates_to_nodes(

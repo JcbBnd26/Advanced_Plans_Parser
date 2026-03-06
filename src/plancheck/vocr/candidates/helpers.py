@@ -6,6 +6,7 @@ import re
 from typing import List, Tuple
 
 from plancheck.models import GlyphBox
+from plancheck.models.geometry import bbox_iou as _iou_bbox  # backward-compat alias
 
 # ── Geometry helpers ───────────────────────────────────────────────────
 
@@ -37,22 +38,6 @@ def _pad_bbox(
         min(page_w, x1 + margin),
         min(page_h, y1 + margin),
     )
-
-
-def _iou_bbox(
-    a: Tuple[float, float, float, float],
-    b: Tuple[float, float, float, float],
-) -> float:
-    ix0 = max(a[0], b[0])
-    iy0 = max(a[1], b[1])
-    ix1 = min(a[2], b[2])
-    iy1 = min(a[3], b[3])
-    inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
-    if inter == 0:
-        return 0.0
-    a_area = (a[2] - a[0]) * (a[3] - a[1])
-    b_area = (b[2] - b[0]) * (b[3] - b[1])
-    return inter / (a_area + b_area - inter) if (a_area + b_area - inter) > 0 else 0.0
 
 
 # ── Regex patterns for digit detection ────────────────────────────────

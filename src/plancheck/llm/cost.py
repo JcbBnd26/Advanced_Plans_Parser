@@ -52,7 +52,7 @@ def count_tokens(
 
             enc = tiktoken.encoding_for_model(model)
             return len(enc.encode(text))
-        except Exception:
+        except Exception:  # noqa: BLE001 — tiktoken may fail if model not recognized
             pass
 
     # Heuristic fallback

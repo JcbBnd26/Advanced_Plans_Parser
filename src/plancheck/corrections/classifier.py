@@ -562,7 +562,7 @@ class ElementClassifier:
 
         try:
             importances = np.asarray(model.feature_importances_)
-        except Exception:
+        except Exception:  # noqa: BLE001 — not all models have feature_importances_
             return {}
 
         if importances.shape[0] != len(feature_names):
@@ -649,7 +649,7 @@ class ElementClassifier:
                 )
                 total_ece += ece * n_pos
                 total_weight += n_pos
-            except Exception:
+            except Exception:  # noqa: BLE001 — skip label if calibration calc fails
                 continue
 
         weighted_ece = total_ece / total_weight if total_weight > 0 else 0.0

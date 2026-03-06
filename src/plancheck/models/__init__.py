@@ -8,7 +8,15 @@ Re-exports all models for backward compatibility with:
 from .blocks import BlockCluster, HeaderTextMixin, NotesColumn
 
 # Geometry utilities
-from .geometry import _multi_bbox, _region_bbox
+from .geometry import (
+    Bbox,
+    _multi_bbox,
+    _region_bbox,
+    bbox_intersection_area,
+    bbox_iou,
+    bboxes_overlap,
+    glyph_iou,
+)
 
 # Graphics
 from .graphics import GraphicElement
@@ -36,6 +44,11 @@ __all__ = [
     # Geometry
     "_region_bbox",
     "_multi_bbox",
+    "Bbox",
+    "bbox_intersection_area",
+    "bbox_iou",
+    "bboxes_overlap",
+    "glyph_iou",
     # Graphics
     "GraphicElement",
     # Tokens

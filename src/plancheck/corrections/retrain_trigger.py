@@ -212,7 +212,7 @@ def auto_retrain(
                         result.accepted = False
                         result.rolled_back = False
                     return result
-        except Exception:
+        except Exception:  # noqa: BLE001 — auto-rollback check should not break retrain
             log.debug("Auto-rollback check failed", exc_info=True)
 
         result.accepted = True
@@ -231,7 +231,7 @@ def auto_retrain(
             drift_det.fit(jsonl_path)
             drift_det.save(drift_stats_path)
             log.info("Drift stats updated: %s", drift_stats_path)
-        except Exception:
+        except Exception:  # noqa: BLE001 — drift stats update is best-effort
             log.debug("Drift stats update failed", exc_info=True)
 
     except Exception as exc:

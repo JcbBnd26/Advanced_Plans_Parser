@@ -20,7 +20,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict, List
 
 
 def _safe_str(val: Any) -> str:
@@ -35,6 +35,58 @@ def _bbox_str(bbox: list | tuple | None) -> str:
     if not bbox:
         return ""
     return f"({bbox[0]:.1f}, {bbox[1]:.1f}, {bbox[2]:.1f}, {bbox[3]:.1f})"
+
+
+def _export_region_entries_csv(
+    json_path: Path,
+    out_path: Path,
+    entry_builder: Callable[[str, dict, int], dict],
+    page_num: int = 0,
+) -> Path:
+    """Generic CSV export for region-based JSON with entries.
+
+    Reads a JSON file containing a list of regions, each with a
+    ``header_text`` and ``entries`` list. Builds one row per entry using
+    *entry_builder(region_header, entry, page_num)*.
+
+    Parameters
+    ----------
+    json_path : Path
+        Path to the JSON artifact.
+    out_path : Path
+        Output CSV path (appends if exists).
+    entry_builder : callable
+        Function taking (region_header, entry_dict, page_num) -> row dict.
+    page_num : int
+        Page number to include in each row.
+
+    Returns
+    -------
+    Path
+        The output path.
+    """
+    data = json.loads(json_path.read_text()) if json_path.exists() else []
+
+    rows: List[dict] = []
+    for region in data:
+        region_header = region.get("header_text", "")
+        for entry in region.get("entries", []):
+            rows.append(entry_builder(region_header, entry, page_num))
+
+    _write_csv_rows(out_path, rows)
+    return out_path
+
+
+def _write_csv_rows(out_path: Path, rows: List[dict]) -> None:
+    """Write rows to CSV, appending if file exists."""
+    if not rows:
+        return
+    write_header = not out_path.exists()
+    with open(out_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        if write_header:
+            writer.writeheader()
+        writer.writerows(rows)
 
 
 # ── Per-page export ────────────────────────────────────────────────────
@@ -115,15 +167,48 @@ def export_notes_csv(
             }
         )
 
-    write_header = not out_path.exists()
-    with open(out_path, "a", newline="", encoding="utf-8") as f:
-        if rows:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            if write_header:
-                writer.writeheader()
-            writer.writerows(rows)
-
+    _write_csv_rows(out_path, rows)
     return out_path
+
+
+# ── Row builders for region-entry exports ──────────────────────────────
+
+
+def _build_abbrev_row(region_header: str, entry: dict, page_num: int) -> dict:
+    return {
+        "page": page_num,
+        "region_header": region_header,
+        "code": entry.get("code", ""),
+        "meaning": entry.get("meaning", ""),
+    }
+
+
+def _build_legend_row(region_header: str, entry: dict, page_num: int) -> dict:
+    return {
+        "page": page_num,
+        "region_header": region_header,
+        "description": entry.get("description", ""),
+        "symbol_bbox": _bbox_str(entry.get("symbol_bbox")),
+    }
+
+
+def _build_detail_row(region_header: str, entry: dict, page_num: int) -> dict:
+    return {
+        "page": page_num,
+        "region_header": region_header,
+        "sheet_number": entry.get("sheet_number", ""),
+        "description": entry.get("description", ""),
+    }
+
+
+def _build_revision_row(region_header: str, entry: dict, page_num: int) -> dict:
+    return {
+        "page": page_num,
+        "region_header": region_header,
+        "number": entry.get("number", ""),
+        "description": entry.get("description", ""),
+        "date": entry.get("date", ""),
+    }
 
 
 def export_abbreviations_csv(
@@ -132,30 +217,9 @@ def export_abbreviations_csv(
     page_num: int = 0,
 ) -> Path:
     """Export abbreviation entries to CSV (one row per abbreviation)."""
-    data = json.loads(abbrev_json.read_text()) if abbrev_json.exists() else []
-
-    rows = []
-    for region in data:
-        region_header = region.get("header_text", "")
-        for entry in region.get("entries", []):
-            rows.append(
-                {
-                    "page": page_num,
-                    "region_header": region_header,
-                    "code": entry.get("code", ""),
-                    "meaning": entry.get("meaning", ""),
-                }
-            )
-
-    write_header = not out_path.exists()
-    with open(out_path, "a", newline="", encoding="utf-8") as f:
-        if rows:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            if write_header:
-                writer.writeheader()
-            writer.writerows(rows)
-
-    return out_path
+    return _export_region_entries_csv(
+        abbrev_json, out_path, _build_abbrev_row, page_num
+    )
 
 
 def export_legends_csv(
@@ -164,30 +228,9 @@ def export_legends_csv(
     page_num: int = 0,
 ) -> Path:
     """Export legend entries to CSV (one row per legend entry)."""
-    data = json.loads(legends_json.read_text()) if legends_json.exists() else []
-
-    rows = []
-    for region in data:
-        region_header = region.get("header_text", "")
-        for entry in region.get("entries", []):
-            rows.append(
-                {
-                    "page": page_num,
-                    "region_header": region_header,
-                    "description": entry.get("description", ""),
-                    "symbol_bbox": _bbox_str(entry.get("symbol_bbox")),
-                }
-            )
-
-    write_header = not out_path.exists()
-    with open(out_path, "a", newline="", encoding="utf-8") as f:
-        if rows:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            if write_header:
-                writer.writeheader()
-            writer.writerows(rows)
-
-    return out_path
+    return _export_region_entries_csv(
+        legends_json, out_path, _build_legend_row, page_num
+    )
 
 
 def export_standard_details_csv(
@@ -196,30 +239,9 @@ def export_standard_details_csv(
     page_num: int = 0,
 ) -> Path:
     """Export standard detail entries to CSV."""
-    data = json.loads(details_json.read_text()) if details_json.exists() else []
-
-    rows = []
-    for region in data:
-        region_header = region.get("header_text", "")
-        for entry in region.get("entries", []):
-            rows.append(
-                {
-                    "page": page_num,
-                    "region_header": region_header,
-                    "sheet_number": entry.get("sheet_number", ""),
-                    "description": entry.get("description", ""),
-                }
-            )
-
-    write_header = not out_path.exists()
-    with open(out_path, "a", newline="", encoding="utf-8") as f:
-        if rows:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            if write_header:
-                writer.writeheader()
-            writer.writerows(rows)
-
-    return out_path
+    return _export_region_entries_csv(
+        details_json, out_path, _build_detail_row, page_num
+    )
 
 
 def export_revisions_csv(
@@ -228,31 +250,9 @@ def export_revisions_csv(
     page_num: int = 0,
 ) -> Path:
     """Export revision entries to CSV."""
-    data = json.loads(revisions_json.read_text()) if revisions_json.exists() else []
-
-    rows = []
-    for region in data:
-        region_header = region.get("header_text", "")
-        for entry in region.get("entries", []):
-            rows.append(
-                {
-                    "page": page_num,
-                    "region_header": region_header,
-                    "number": entry.get("number", ""),
-                    "description": entry.get("description", ""),
-                    "date": entry.get("date", ""),
-                }
-            )
-
-    write_header = not out_path.exists()
-    with open(out_path, "a", newline="", encoding="utf-8") as f:
-        if rows:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            if write_header:
-                writer.writeheader()
-            writer.writerows(rows)
-
-    return out_path
+    return _export_region_entries_csv(
+        revisions_json, out_path, _build_revision_row, page_num
+    )
 
 
 def export_blocks_csv(
