@@ -119,6 +119,15 @@ def auto_retrain(
     model_path = Path(model_path)
     result = RetrainResult(threshold=threshold)
 
+    # Backup existing model before training (for rollback)
+    backup_path = model_path.with_suffix(".pkl.bak")
+    model_existed = model_path.exists()
+    if model_existed:
+        import shutil
+
+        shutil.copy2(model_path, backup_path)
+        log.debug("Backed up existing model to %s", backup_path)
+
     # Check if retrain is needed
     n_new = store.count_corrections_since_last_train()
     result.new_corrections = n_new
@@ -186,6 +195,13 @@ def auto_retrain(
                         prev_f1,
                         curr_f1,
                     )
+                    # Restore the backed-up model
+                    if model_existed and backup_path.exists():
+                        import shutil
+
+                        shutil.copy2(backup_path, model_path)
+                        backup_path.unlink()
+                        log.info("Restored previous model from backup")
                     result.accepted = False
                     result.rolled_back = True
                     return result
@@ -193,6 +209,11 @@ def auto_retrain(
             log.debug("Auto-rollback check failed", exc_info=True)
 
         result.accepted = True
+
+        # Clean up backup since model was accepted
+        if backup_path.exists():
+            backup_path.unlink()
+            log.debug("Removed model backup after successful retrain")
 
         # Fit drift detector on the new training data
         try:

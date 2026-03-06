@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 # Feature schema version — increment when _NUMERIC_KEYS or ZONE_VALUES change.
 # Used by the feature cache to invalidate stale entries.
-FEATURE_VERSION: int = 5
+FEATURE_VERSION: int = 6
 
 # Zone values for one-hot encoding — must match ZoneTag enum in analysis.zoning
 ZONE_VALUES: list[str] = [
@@ -82,6 +82,12 @@ _NUMERIC_KEYS: list[str] = [
     # OCR confidence features (added in v4)
     "mean_token_confidence",
     "min_token_confidence",
+    # Relational features (added in v6)
+    "is_below_header",
+    "header_distance_pts",
+    "sibling_count",
+    "column_position_index",
+    "starts_with_note_number",
 ]
 
 _DEFAULT_MODEL_PATH = Path("data/element_classifier.pkl")

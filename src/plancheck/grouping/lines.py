@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from statistics import mean, median
+from statistics import median
 from typing import Iterable, List, Tuple
 
 from ..config import GroupingConfig
@@ -74,14 +74,12 @@ def build_lines(tokens: List[GlyphBox], settings: GroupingConfig) -> List[Line]:
 
         # Try to place in existing line
         for line in lines:
-            # Compute current line's y-center from its tokens
-            line_boxes = [tokens[i] for i in line.token_indices]
-            line_y_centers = [(b.y0 + b.y1) * 0.5 for b in line_boxes]
-            line_center = mean(line_y_centers)
+            # Use cached accumulators for O(1) access instead of recomputing
+            line_center = line.y_center
+            line_y0 = line._y0_min
+            line_y1 = line._y1_max
 
             # Check overlap ratio for better accuracy
-            line_y0 = min(b.y0 for b in line_boxes)
-            line_y1 = max(b.y1 for b in line_boxes)
             overlap = min(token.y1, line_y1) - max(token.y0, line_y0)
             min_h = min(token.y1 - token.y0, line_y1 - line_y0)
             overlap_ratio = overlap / (min_h + 1e-6)
@@ -91,6 +89,7 @@ def build_lines(tokens: List[GlyphBox], settings: GroupingConfig) -> List[Line]:
                 and overlap_ratio > settings.grouping_line_overlap_ratio
             ):
                 line.token_indices.append(idx)
+                line.update_bounds(token)  # O(1) incremental update
                 placed = True
                 break
 
@@ -103,6 +102,7 @@ def build_lines(tokens: List[GlyphBox], settings: GroupingConfig) -> List[Line]:
                 baseline_y=y_center,
                 spans=[],
             )
+            new_line.init_bounds(token)  # Initialize accumulators
             lines.append(new_line)
             line_id += 1
 

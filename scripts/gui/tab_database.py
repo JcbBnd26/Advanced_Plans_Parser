@@ -328,11 +328,14 @@ class DatabaseTab:
                 )
 
         # ── Training History ─────────────────────────────────────────
-        history = self._store.get_training_history()
-        if history:
+        from plancheck.corrections.experiment_tracker import ExperimentTracker
+
+        tracker = ExperimentTracker(self._store)
+        experiments = tracker.list_experiments(limit=15, sort_by="trained_at")
+        if experiments:
             th_sec = CollapsibleFrame(
                 self._detail_inner,
-                f"Training History ({len(history)} runs)",
+                f"Training History ({len(experiments)} runs)",
             )
             th_sec.grid(row=row, column=0, sticky="ew", pady=2, padx=4)
             row += 1
@@ -344,14 +347,14 @@ class DatabaseTab:
                     font=("TkDefaultFont", 8, "bold"),
                     foreground="gray",
                 ).grid(row=0, column=ci, sticky="w", padx=4)
-            for ri, run in enumerate(history[:15], start=1):
-                ts_short = _fmt_ts(run.get("trained_at"))
+            for ri, exp in enumerate(experiments, start=1):
+                ts_short = _fmt_ts(exp.trained_at)
                 vals = [
                     ts_short,
-                    str(run.get("n_train", "")),
-                    str(run.get("n_val", "")),
-                    f"{run['accuracy']:.3f}" if run.get("accuracy") else "—",
-                    f"{run['f1_macro']:.3f}" if run.get("f1_macro") else "—",
+                    str(exp.n_train),
+                    str(exp.n_val),
+                    f"{exp.accuracy:.3f}" if exp.accuracy else "—",
+                    f"{exp.f1_macro:.3f}" if exp.f1_macro else "—",
                 ]
                 for ci, v in enumerate(vals):
                     ttk.Label(th_sec.content, text=v, font=("TkDefaultFont", 8)).grid(

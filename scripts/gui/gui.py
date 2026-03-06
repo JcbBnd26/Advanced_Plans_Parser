@@ -26,8 +26,12 @@ import logging
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
+from typing import TYPE_CHECKING
 
 from plancheck.config import GroupingConfig
+
+if TYPE_CHECKING:
+    from plancheck.corrections.experiment_tracker import ExperimentTracker
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +64,7 @@ class GuiState:
         self.last_run_dir: Path | None = None
         self.config: GroupingConfig = GroupingConfig()
         self._subscribers: dict[str, list] = {}
+        self.experiment_tracker: ExperimentTracker | None = None
 
     def subscribe(self, event: str, callback) -> None:
         self._subscribers.setdefault(event, []).append(callback)
@@ -105,11 +110,36 @@ class PlanParserGUI:
         self._build_ui()
         self._bind_shortcuts()
 
+        # Run startup check for auto-retrain in background
+        self.root.after(500, self._run_startup_check)
+
         # Shutdown safety: cancel background workers before destroying the root.
         try:
             self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         except Exception:  # noqa: BLE001
             logger.debug("Failed to set WM_DELETE_WINDOW protocol", exc_info=True)
+
+    def _run_startup_check(self) -> None:
+        """Check if auto-retrain is needed on startup."""
+        import threading
+
+        def _check():
+            try:
+                from plancheck.corrections.retrain_trigger import startup_check
+
+                result = startup_check(self.state.config)
+                if result and result.retrained:
+                    if result.rolled_back:
+                        msg = "Startup retrain rolled back — F1 regressed"
+                        self.root.after(0, lambda: self._status_bar.set_status(msg))
+                    elif result.accepted:
+                        f1 = result.metrics.get("f1_weighted", 0)
+                        msg = f"Auto-retrained on startup (F1: {f1:.1%})"
+                        self.root.after(0, lambda: self._status_bar.set_status(msg))
+            except Exception:
+                logger.debug("Startup check failed", exc_info=True)
+
+        threading.Thread(target=_check, daemon=True).start()
 
     def _on_close(self) -> None:
         """Best-effort shutdown: cancel workers, then close the window."""

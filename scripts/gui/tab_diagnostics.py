@@ -373,7 +373,283 @@ class MLCalibrationSection(CollapsibleFrame):
 
 
 # ---------------------------------------------------------------------------
-# Section 4 – Model Comparison
+# Section 4 – Training Progress Charts
+# ---------------------------------------------------------------------------
+
+
+class TrainingProgressSection(CollapsibleFrame):
+    """Collapsible section with training progress visualization charts."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, "Training Progress", **kwargs)
+        self._log = log_panel
+        self._state = state
+        self._root = root
+        self._build()
+
+    def _build(self) -> None:
+        cc = self.content
+        cc.columnconfigure(0, weight=1)
+        cc.columnconfigure(1, weight=1)
+
+        # Chart frames - 2x2 grid
+        self._f1_canvas = ttk.Frame(cc)
+        self._f1_canvas.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+
+        self._heatmap_canvas = ttk.Frame(cc)
+        self._heatmap_canvas.grid(row=0, column=1, sticky="nsew", padx=2, pady=2)
+
+        self._corrections_canvas = ttk.Frame(cc)
+        self._corrections_canvas.grid(row=1, column=0, sticky="nsew", padx=2, pady=2)
+
+        self._confidence_canvas = ttk.Frame(cc)
+        self._confidence_canvas.grid(row=1, column=1, sticky="nsew", padx=2, pady=2)
+
+        # Refresh button
+        btn_row = ttk.Frame(cc)
+        btn_row.grid(row=2, column=0, columnspan=2, pady=4)
+        ttk.Button(btn_row, text="Refresh Charts", command=self._refresh_all).pack()
+
+    def _refresh_all(self) -> None:
+        """Refresh all training progress charts."""
+        db_path = Path("data") / "corrections.db"
+        if not db_path.exists():
+            self._log.write("No corrections.db found.", "WARNING")
+            return
+
+        from plancheck.corrections.store import CorrectionStore
+
+        store = CorrectionStore(db_path)
+
+        try:
+            from plancheck.corrections.experiment_tracker import ExperimentTracker
+
+            tracker = ExperimentTracker(store)
+            experiments = tracker.list_experiments(
+                limit=20, sort_by="trained_at", ascending=True
+            )
+            history = store.get_training_history()
+
+            if experiments:
+                self._draw_f1_chart(experiments)
+                self._log.write(f"F1 chart: {len(experiments)} runs", "INFO")
+
+            if history:
+                self._draw_perclass_heatmap(history[:10])
+                self._log.write("Per-class heatmap rendered.", "INFO")
+
+                # Get holdout predictions from most recent run
+                latest = history[0] if history else None
+                if latest and latest.get("holdout_predictions"):
+                    self._draw_confidence_dist(latest["holdout_predictions"])
+                    self._log.write("Confidence distribution rendered.", "INFO")
+
+            # Corrections trend
+            self._draw_corrections_trend(store)
+
+        except Exception as exc:
+            self._log.write(f"Chart refresh failed: {exc}", "ERROR")
+        finally:
+            store.close()
+
+    def _draw_f1_chart(self, experiments: list) -> None:
+        """Draw F1 Over Time line chart."""
+        for w in self._f1_canvas.winfo_children():
+            w.destroy()
+
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+        except ImportError:
+            return
+
+        fig = Figure(figsize=(4, 3), dpi=80)
+        ax = fig.add_subplot(111)
+
+        dates = list(range(len(experiments)))
+        f1_weighted = [e.f1_weighted for e in experiments]
+        f1_macro = [e.f1_macro for e in experiments]
+
+        ax.plot(dates, f1_weighted, "b-o", markersize=4, label="F1 Weighted")
+        ax.plot(dates, f1_macro, "g--s", markersize=4, label="F1 Macro")
+
+        ax.set_xlabel("Training Run")
+        ax.set_ylabel("F1 Score")
+        ax.set_title("F1 Over Time")
+        ax.legend(loc="lower right", fontsize=7)
+        ax.set_ylim(0, 1)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self._f1_canvas)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def _draw_perclass_heatmap(self, history: list) -> None:
+        """Draw per-class F1 heatmap."""
+        for w in self._heatmap_canvas.winfo_children():
+            w.destroy()
+
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import numpy as np
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+        except ImportError:
+            return
+
+        # Collect all classes across runs
+        all_classes = set()
+        for h in history:
+            pc = h.get("per_class", {})
+            all_classes.update(pc.keys())
+
+        if not all_classes:
+            return
+
+        classes = sorted(all_classes)
+        # Build matrix: rows = runs (most recent at top), cols = classes
+        matrix = []
+        run_labels = []
+        for h in history:
+            pc = h.get("per_class", {})
+            row = [pc.get(c, {}).get("f1", 0.0) for c in classes]
+            matrix.append(row)
+            run_labels.append(h.get("run_id", "")[:8])
+
+        matrix = np.array(matrix)
+
+        fig = Figure(figsize=(4, 3), dpi=80)
+        ax = fig.add_subplot(111)
+
+        im = ax.imshow(matrix, cmap="RdYlGn", vmin=0, vmax=1, aspect="auto")
+        ax.set_xticks(range(len(classes)))
+        ax.set_xticklabels(classes, rotation=45, ha="right", fontsize=6)
+        ax.set_yticks(range(len(run_labels)))
+        ax.set_yticklabels(run_labels, fontsize=6)
+        ax.set_title("Per-Class F1 by Run", fontsize=9)
+        fig.colorbar(im, ax=ax, shrink=0.8)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self._heatmap_canvas)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def _draw_corrections_trend(self, store: Any) -> None:
+        """Draw corrections per document trend chart."""
+        for w in self._corrections_canvas.winfo_children():
+            w.destroy()
+
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+        except ImportError:
+            return
+
+        # Get recent corrections grouped by date
+        try:
+            recent = store.get_recent_corrections(limit=100)
+        except Exception:
+            return
+
+        if not recent:
+            return
+
+        # Group by date
+        from collections import Counter
+
+        date_counts = Counter()
+        for corr in recent:
+            ts = corr.get("corrected_at", "")[:10]  # YYYY-MM-DD
+            if ts:
+                date_counts[ts] += 1
+
+        if not date_counts:
+            return
+
+        dates = sorted(date_counts.keys())
+        counts = [date_counts[d] for d in dates]
+
+        fig = Figure(figsize=(4, 3), dpi=80)
+        ax = fig.add_subplot(111)
+
+        ax.bar(range(len(dates)), counts, color="steelblue")
+        ax.set_xticks(range(len(dates)))
+        ax.set_xticklabels([d[5:] for d in dates], rotation=45, ha="right", fontsize=6)
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Corrections")
+        ax.set_title("Corrections per Day", fontsize=9)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self._corrections_canvas)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def _draw_confidence_dist(self, holdout_predictions: list) -> None:
+        """Draw confidence distribution histogram."""
+        for w in self._confidence_canvas.winfo_children():
+            w.destroy()
+
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import numpy as np
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+        except ImportError:
+            return
+
+        if not holdout_predictions:
+            return
+
+        correct = [
+            p.get("confidence", 0)
+            for p in holdout_predictions
+            if p.get("label_true") == p.get("label_pred")
+        ]
+        incorrect = [
+            p.get("confidence", 0)
+            for p in holdout_predictions
+            if p.get("label_true") != p.get("label_pred")
+        ]
+
+        fig = Figure(figsize=(4, 3), dpi=80)
+        ax = fig.add_subplot(111)
+
+        bins = np.linspace(0, 1, 11)
+        if correct:
+            ax.hist(correct, bins, alpha=0.7, label="Correct", color="green")
+        if incorrect:
+            ax.hist(incorrect, bins, alpha=0.7, label="Incorrect", color="red")
+
+        ax.set_xlabel("Confidence")
+        ax.set_ylabel("Count")
+        ax.set_title("Confidence Distribution", fontsize=9)
+        ax.legend(loc="upper left", fontsize=7)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self._confidence_canvas)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+
+# ---------------------------------------------------------------------------
+# Section 5 – Model Comparison
 # ---------------------------------------------------------------------------
 
 
@@ -433,19 +709,21 @@ class ModelComparisonSection(CollapsibleFrame):
             messagebox.showwarning("No Database", "corrections.db not found.")
             return
 
+        from plancheck.corrections.experiment_tracker import ExperimentTracker
         from plancheck.corrections.store import CorrectionStore
 
         store = CorrectionStore(db_path)
-        history = store.get_training_history()
+        tracker = ExperimentTracker(store)
+        experiments = tracker.list_experiments(limit=50, sort_by="trained_at")
         store.close()
 
-        if not history:
+        if not experiments:
             messagebox.showinfo("No Runs", "No training runs found.")
             return
 
         display_values = [
-            f"{run['run_id']} | F1={run['f1_weighted']:.3f} | {run['trained_at'][:16]}"
-            for run in history
+            f"{exp.run_id} | F1={exp.f1_weighted:.3f} | {exp.trained_at[:16]}"
+            for exp in experiments
         ]
 
         self._cmp_combo_a["values"] = display_values
@@ -457,7 +735,7 @@ class ModelComparisonSection(CollapsibleFrame):
             self._cmp_combo_a.current(0)
             self._cmp_combo_b.current(0)
 
-        self._log.write(f"Loaded {len(history)} training run(s).", "INFO")
+        self._log.write(f"Loaded {len(experiments)} training run(s).", "INFO")
 
     def _compare_runs(self) -> None:
         run_a_str = self._cmp_run_a.get()
@@ -469,21 +747,25 @@ class ModelComparisonSection(CollapsibleFrame):
             return
 
         db_path = Path("data") / "corrections.db"
+        from plancheck.corrections.experiment_tracker import ExperimentTracker
         from plancheck.corrections.store import CorrectionStore
 
         store = CorrectionStore(db_path)
-        history = store.get_training_history()
-        store.close()
+        tracker = ExperimentTracker(store)
 
         id_a = run_a_str.split(" | ")[0].strip()
         id_b = run_b_str.split(" | ")[0].strip()
 
-        run_a = next((r for r in history if r["run_id"] == id_a), None)
-        run_b = next((r for r in history if r["run_id"] == id_b), None)
-
-        if not run_a or not run_b:
-            messagebox.showwarning("Not Found", "Could not find selected runs.")
+        try:
+            comparison = tracker.compare_experiments(id_a, id_b)
+        except Exception as exc:
+            store.close()
+            messagebox.showwarning("Comparison Error", str(exc))
             return
+        store.close()
+
+        run_a = comparison.run_a
+        run_b = comparison.run_b
 
         self._log.clear()
         self._log.write(f"Comparing {id_a} vs {id_b}", "INFO")
@@ -493,31 +775,32 @@ class ModelComparisonSection(CollapsibleFrame):
         self._log.write("-" * 57, "INFO")
 
         for metric in ("accuracy", "f1_macro", "f1_weighted"):
-            va = run_a.get(metric, 0.0)
-            vb = run_b.get(metric, 0.0)
+            va = getattr(run_a, metric, 0.0)
+            vb = getattr(run_b, metric, 0.0)
             delta = vb - va
             sign = "+" if delta >= 0 else ""
             self._log.write(
                 f"{metric:<25} {va:>10.4f} {vb:>10.4f} {sign}{delta:>9.4f}", "INFO"
             )
 
-        pc_a = run_a.get("per_class", {})
-        pc_b = run_b.get("per_class", {})
-        all_classes = sorted(set(pc_a.keys()) | set(pc_b.keys()))
-        if all_classes:
+        # Show per-class deltas from comparison
+        if comparison.per_class_deltas:
+            self._log.write("", "INFO")
+            self._log.write(f"{'Class':<20} {'Delta':>10}", "INFO")
+            self._log.write("-" * 32, "INFO")
+            for cls, delta in sorted(comparison.per_class_deltas.items()):
+                sign = "+" if delta >= 0 else ""
+                self._log.write(f"{cls:<20} {sign}{delta:>9.4f}", "INFO")
+
+        if comparison.improved_classes:
             self._log.write("", "INFO")
             self._log.write(
-                f"{'Class':<20} {'F1(A)':>8} {'F1(B)':>8} {'Delta':>8}", "INFO"
+                f"Improved: {', '.join(comparison.improved_classes)}", "INFO"
             )
-            self._log.write("-" * 46, "INFO")
-            for cls in all_classes:
-                f1_a = pc_a.get(cls, {}).get("f1", 0.0)
-                f1_b = pc_b.get(cls, {}).get("f1", 0.0)
-                delta = f1_b - f1_a
-                sign = "+" if delta >= 0 else ""
-                self._log.write(
-                    f"{cls:<20} {f1_a:>8.4f} {f1_b:>8.4f} {sign}{delta:>7.4f}", "INFO"
-                )
+        if comparison.regressed_classes:
+            self._log.write(
+                f"Regressed: {', '.join(comparison.regressed_classes)}", "WARNING"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1009,6 +1292,7 @@ class DiagnosticsTab:
             FontDiagnosticsSection(self._inner, **section_kwargs),
             BenchmarkSection(self._inner, **section_kwargs),
             MLCalibrationSection(self._inner, **section_kwargs),
+            TrainingProgressSection(self._inner, **section_kwargs),
             ModelComparisonSection(self._inner, **section_kwargs),
             LayoutModelSection(self._inner, **section_kwargs),
             TextEmbeddingsSection(self._inner, **section_kwargs),

@@ -163,6 +163,13 @@ CREATE TABLE IF NOT EXISTS candidate_outcomes (
     features_json       TEXT DEFAULT '{}',
     created_at          TEXT NOT NULL
 );
+
+-- Indices for frequently-queried patterns (efficiency fix)
+CREATE INDEX IF NOT EXISTS idx_detections_doc_page ON detections(doc_id, page);
+CREATE INDEX IF NOT EXISTS idx_detections_run ON detections(run_id);
+CREATE INDEX IF NOT EXISTS idx_corrections_doc_page ON corrections(doc_id, page);
+CREATE INDEX IF NOT EXISTS idx_corrections_detection ON corrections(detection_id);
+CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_doc_page ON candidate_outcomes(doc_id, page);
 """
 
 
@@ -266,6 +273,18 @@ class CorrectionStore:
                 "ADD COLUMN feature_version INTEGER DEFAULT 0"
             )
             self._conn.commit()
+
+        # Create indices for frequently-queried patterns (idempotent)
+        self._conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_detections_doc_page ON detections(doc_id, page);
+            CREATE INDEX IF NOT EXISTS idx_detections_run ON detections(run_id);
+            CREATE INDEX IF NOT EXISTS idx_corrections_doc_page ON corrections(doc_id, page);
+            CREATE INDEX IF NOT EXISTS idx_corrections_detection ON corrections(detection_id);
+            CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_doc_page ON candidate_outcomes(doc_id, page);
+            """
+        )
+        self._conn.commit()
 
     def close(self) -> None:
         """Close the underlying database connection."""
@@ -857,7 +876,99 @@ class CorrectionStore:
         """
         return hashlib.md5(detection_id.encode()).hexdigest()
 
-    def build_training_set(self) -> int:
+    def generate_pseudo_labels(
+        self,
+        confidence_threshold: float = 0.95,
+        max_per_label: int = 500,
+    ) -> int:
+        """Generate pseudo-labels from high-confidence rule-based detections.
+
+        Bootstraps training data by treating detections with very high
+        pipeline confidence as ground truth. This is useful for cold-start
+        scenarios before human corrections are available.
+
+        Parameters
+        ----------
+        confidence_threshold : float
+            Minimum confidence score required for a detection to be
+            considered as a pseudo-label. Default 0.95.
+        max_per_label : int
+            Maximum number of pseudo-labels per element type to avoid
+            class imbalance. Default 500.
+
+        Returns
+        -------
+        int
+            Number of pseudo-label examples inserted into training_examples.
+        """
+        with self._write_lock():
+            # Remove existing pseudo-labels before regenerating
+            self._conn.execute("DELETE FROM training_examples WHERE source = 'pseudo'")
+
+            # Select high-confidence detections, grouped by label
+            rows = self._conn.execute(
+                """
+                SELECT d.detection_id, d.element_type, d.features_json, d.confidence
+                FROM detections d
+                WHERE d.confidence >= ?
+                  AND d.element_type IS NOT NULL
+                  AND d.features_json IS NOT NULL
+                  AND d.detection_id NOT IN (
+                      SELECT detection_id FROM corrections WHERE detection_id IS NOT NULL
+                  )
+                ORDER BY d.element_type, d.confidence DESC
+                """,
+                (confidence_threshold,),
+            ).fetchall()
+
+            # Group by label and cap at max_per_label
+            from collections import defaultdict
+
+            by_label: dict[str, list] = defaultdict(list)
+            for r in rows:
+                label = r["element_type"]
+                if len(by_label[label]) < max_per_label:
+                    by_label[label].append(r)
+
+            now = _utcnow_iso()
+            count = 0
+            for label, group in sorted(by_label.items()):
+                # Sort deterministically within class for reproducible splits
+                group.sort(
+                    key=lambda r: self._deterministic_sort_key(r["detection_id"])
+                )
+                n = len(group)
+                train_end = max(1, int(n * 0.7))
+                val_end = max(train_end + 1, int(n * 0.9)) if n >= 2 else train_end
+                for i, r in enumerate(group):
+                    if i < train_end:
+                        split = "train"
+                    elif i < val_end:
+                        split = "val"
+                    else:
+                        split = "test"
+                    self._conn.execute(
+                        "INSERT INTO training_examples "
+                        "(example_id, source, correction_id, detection_id, "
+                        " label, features_json, split, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            _gen_id("ex_"),
+                            "pseudo",
+                            None,
+                            r["detection_id"],
+                            label,
+                            r["features_json"],
+                            split,
+                            now,
+                        ),
+                    )
+                    count += 1
+
+            self._conn.commit()
+            return count
+
+    def build_training_set(self, include_pseudo_labels: bool = False) -> int:
         """Rebuild the ``training_examples`` table from corrections.
 
         For each non-delete correction, creates a training example
@@ -874,6 +985,12 @@ class CorrectionStore:
 
         This guarantees every class with ≥2 examples has
         representation in at least two splits.
+
+        Parameters
+        ----------
+        include_pseudo_labels : bool
+            If True, also generate pseudo-labels from high-confidence
+            detections to bootstrap training data. Default False.
 
         Returns the number of examples inserted.
         """
@@ -946,7 +1063,12 @@ class CorrectionStore:
                     count += 1
 
             self._conn.commit()
-            return count
+
+        # Optionally add pseudo-labels from high-confidence detections
+        if include_pseudo_labels:
+            count += self.generate_pseudo_labels()
+
+        return count
 
     def export_training_jsonl(self, output_path: Path) -> int:
         """Write training examples as JSON-Lines to *output_path*.
@@ -1598,6 +1720,10 @@ class CorrectionStore:
         row = self._conn.execute("SELECT COUNT(*) AS n FROM training_runs").fetchone()
         trains = row["n"] if row else 0
         row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM training_examples"
+        ).fetchone()
+        examples = row["n"] if row else 0
+        row = self._conn.execute(
             "SELECT MAX(created_at) AS ts FROM detections"
         ).fetchone()
         last_det = row["ts"] if row else None
@@ -1614,9 +1740,17 @@ class CorrectionStore:
             "total_corrections": corrs,
             "total_groups": groups,
             "total_training_runs": trains,
+            "total_training_examples": examples,
             "last_detection_at": last_det,
             "last_correction_at": last_corr,
         }
+
+    def get_detection_type_breakdown(self) -> dict[str, int]:
+        """Detection counts grouped by element_type across all documents."""
+        rows = self._conn.execute(
+            "SELECT element_type, COUNT(*) AS n FROM detections GROUP BY element_type"
+        ).fetchall()
+        return {r["element_type"]: r["n"] for r in rows}
 
     def get_doc_summary(self, doc_id: str) -> dict[str, Any]:
         """Summary stats for a single document."""

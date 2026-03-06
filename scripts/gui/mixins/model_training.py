@@ -56,7 +56,7 @@ class ModelTrainingMixin:
     # ── Training ─────────────────────────────────────────────────
 
     def _on_train_model(self) -> None:
-        """Train the classifier in a background thread."""
+        """Train the classifier in a background thread using auto_retrain()."""
         self._model_status_label.configure(text="Training…", foreground="orange")
         self.root.update_idletasks()
 
@@ -73,66 +73,75 @@ class ModelTrainingMixin:
                     or my_gen != self._train_gen
                 ):
                     return
+
+                from plancheck.corrections.retrain_trigger import auto_retrain
                 from plancheck.corrections.store import CorrectionStore as _CS
 
                 store = _CS()
-                n_examples = store.build_training_set()
-                if n_examples < 10:
+
+                # Force retrain by setting threshold=0 when user explicitly requests
+                result = auto_retrain(
+                    store,
+                    model_path="data/element_classifier.pkl",
+                    calibrate=True,
+                    ensemble=False,
+                    threshold=0,  # Always train when user clicks button
+                )
+                store.close()
+
+                if (
+                    self._train_cancel_event.is_set()
+                    or self._closing
+                    or my_gen != self._train_gen
+                ):
+                    return
+
+                # Store metrics for display
+                if result.metrics:
+                    self._last_metrics = result.metrics
+
+                # Update status based on result
+                if result.error:
                     self._safe_after(
                         0,
                         lambda: self._model_status_label.configure(
-                            text=f"Need more data ({n_examples} examples)",
+                            text=f"Train failed: {result.error}",
                             foreground="red",
                         ),
                     )
-                    return
-
-                import tempfile
-
-                tmp = Path(tempfile.mkdtemp()) / "train.jsonl"
-                store.export_training_jsonl(tmp)
-
-                if (
-                    self._train_cancel_event.is_set()
-                    or self._closing
-                    or my_gen != self._train_gen
-                ):
-                    return
-
-                from plancheck.corrections.classifier import ElementClassifier
-
-                clf = ElementClassifier()
-                metrics = clf.train(str(tmp))
-                self._last_metrics = metrics
-
-                if (
-                    self._train_cancel_event.is_set()
-                    or self._closing
-                    or my_gen != self._train_gen
-                ):
-                    return
-
-                # Record training run in the database
-                try:
-                    store.save_training_run(
-                        metrics, model_path=str(clf.model_path), notes="GUI train"
+                elif result.rolled_back:
+                    f1 = result.metrics.get("f1_weighted", 0)
+                    self._safe_after(
+                        0,
+                        lambda: self._model_status_label.configure(
+                            text=f"Model rolled back — F1 regressed ({f1:.1%})",
+                            foreground="orange",
+                        ),
                     )
-                except Exception:  # noqa: BLE001
-                    log.debug("Training run save failed", exc_info=True)
+                elif result.accepted:
+                    acc = result.metrics.get("accuracy", 0)
+                    f1 = result.metrics.get("f1_weighted", 0)
+                    self._safe_after(
+                        0,
+                        lambda: self._model_status_label.configure(
+                            text=f"Model trained — acc {acc:.1%}  F1 {f1:.1%}",
+                            foreground="green",
+                        ),
+                    )
+                else:
+                    self._safe_after(
+                        0,
+                        lambda: self._model_status_label.configure(
+                            text="Training incomplete",
+                            foreground="gray",
+                        ),
+                    )
 
-                acc = metrics.get("accuracy", 0)
-                f1m = metrics.get("f1_macro", 0)
-                self._safe_after(
-                    0,
-                    lambda: self._model_status_label.configure(
-                        text=f"Model trained — acc {acc:.1%}  F1 {f1m:.1%}",
-                        foreground="green",
-                    ),
-                )
                 # Reload classifier
                 from plancheck.corrections.classifier import ElementClassifier
 
                 self._classifier = ElementClassifier()
+
             except Exception as exc:
                 self._safe_after(
                     0,
@@ -170,12 +179,15 @@ class ModelTrainingMixin:
     def _on_show_training_history(self) -> None:
         """Show a popup with all past training runs."""
         try:
-            history = self._store.get_training_history()
+            from plancheck.corrections.experiment_tracker import ExperimentTracker
+
+            tracker = ExperimentTracker(self._store)
+            experiments = tracker.list_experiments(limit=50, sort_by="trained_at")
         except Exception:  # noqa: BLE001
             log.debug("Failed to get training history", exc_info=True)
-            history = []
+            experiments = []
 
-        if not history:
+        if not experiments:
             messagebox.showinfo("Training History", "No training runs recorded yet.")
             return
 
@@ -184,12 +196,12 @@ class ModelTrainingMixin:
             f"{'Acc':>7s} {'F1mac':>7s} {'F1wt':>7s} {'Notes':<12s}",
             "-" * 88,
         ]
-        for r in history:
-            ts = r["trained_at"][:19].replace("T", " ")
+        for exp in experiments:
+            ts = exp.trained_at[:19].replace("T", " ")
             lines.append(
-                f"{r['run_id']:<14s} {ts:<22s} {r['n_train']:>6d} {r['n_val']:>5d} "
-                f"{r['accuracy']:>6.1%} {r['f1_macro']:>6.1%} {r['f1_weighted']:>6.1%} "
-                f"{r.get('notes', ''):<12s}"
+                f"{exp.run_id:<14s} {ts:<22s} {exp.n_train:>6d} {exp.n_val:>5d} "
+                f"{exp.accuracy:>6.1%} {exp.f1_macro:>6.1%} {exp.f1_weighted:>6.1%} "
+                f"{exp.notes:<12s}"
             )
 
         win = tk.Toplevel(self.root)
@@ -251,19 +263,15 @@ class ModelTrainingMixin:
     def _refresh_stats(self) -> None:
         """Query the DB for annotation statistics and display them."""
         try:
-            cur = self._store._conn.cursor()
-            n_docs = cur.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-            n_dets = cur.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
-            n_corr = cur.execute("SELECT COUNT(*) FROM corrections").fetchone()[0]
-            n_train = cur.execute("SELECT COUNT(*) FROM training_examples").fetchone()[
-                0
-            ]
+            ov = self._store.get_db_overview()
+            n_docs = ov["total_documents"]
+            n_dets = ov["total_detections"]
+            n_corr = ov["total_corrections"]
+            n_train = ov["total_training_examples"]
 
             # Per-type breakdown
-            rows = cur.execute(
-                "SELECT element_type, COUNT(*) FROM detections GROUP BY element_type"
-            ).fetchall()
-            breakdown = "\n".join(f"  {r[0]}: {r[1]}" for r in rows)
+            type_breakdown = self._store.get_detection_type_breakdown()
+            breakdown = "\n".join(f"  {k}: {v}" for k, v in type_breakdown.items())
 
             text = (
                 f"Docs: {n_docs}  Dets: {n_dets}\n"

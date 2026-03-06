@@ -711,6 +711,9 @@ class Line:
 
     This is the canonical row-truth layer. A Line is never split by column
     detection - columns only label spans/tokens with col_id.
+
+    Accumulator fields (_y_sum, _y0_min, _y1_max, _count) enable O(1)
+    incremental updates during line building instead of O(k) per comparison.
     """
 
     line_id: int
@@ -718,6 +721,33 @@ class Line:
     token_indices: List[int] = field(default_factory=list)
     baseline_y: float = 0.0
     spans: List[Span] = field(default_factory=list)
+
+    # Accumulators for incremental line building (not serialized)
+    _y_sum: float = field(default=0.0, repr=False)
+    _y0_min: float = field(default=float("inf"), repr=False)
+    _y1_max: float = field(default=float("-inf"), repr=False)
+    _count: int = field(default=0, repr=False)
+
+    @property
+    def y_center(self) -> float:
+        """Return cached y-center from accumulators, or 0 if empty."""
+        return self._y_sum / self._count if self._count > 0 else 0.0
+
+    def update_bounds(self, token: "GlyphBox") -> None:
+        """Incrementally update accumulators when a token is added."""
+        y_center = (token.y0 + token.y1) * 0.5
+        self._y_sum += y_center
+        self._y0_min = min(self._y0_min, token.y0)
+        self._y1_max = max(self._y1_max, token.y1)
+        self._count += 1
+
+    def init_bounds(self, token: "GlyphBox") -> None:
+        """Initialize accumulators with the first token."""
+        y_center = (token.y0 + token.y1) * 0.5
+        self._y_sum = y_center
+        self._y0_min = token.y0
+        self._y1_max = token.y1
+        self._count = 1
 
     def bbox(self, tokens: List[GlyphBox]) -> Tuple[float, float, float, float]:
         """Compute bounding box from referenced tokens."""

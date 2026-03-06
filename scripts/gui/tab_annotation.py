@@ -26,14 +26,11 @@ from PIL import Image, ImageTk
 from plancheck.corrections.classifier import ElementClassifier
 from plancheck.corrections.store import CorrectionStore
 
-from .widgets import LogPanel, StatusBar
-from .worker import PipelineWorker
-
 # ── Re-exports for backward compatibility ──────────────────────────────
-from .annotation_state import (  # noqa: F401
-    CanvasBox,
+from .annotation_state import (
     HANDLE_POSITIONS,
-    HANDLE_SIZE,
+    HANDLE_SIZE,  # noqa: F401
+    CanvasBox,
     _reshape_bbox_from_handle,
     _scale_polygon_to_bbox,
 )
@@ -42,6 +39,8 @@ from .canvas_renderer import CanvasRendererMixin
 from .context_menu import ContextMenuMixin
 from .event_handler import EventHandlerMixin
 from .pdf_loader import PdfLoaderMixin
+from .widgets import LogPanel, StatusBar
+from .worker import PipelineWorker
 
 
 class AnnotationTab(
@@ -803,6 +802,17 @@ class AnnotationTab(
         self._add_copy_menu(self._model_status_label)
         self._tooltip(self._model_status_label, "Current model training status")
 
+        # ── Drift Warning Indicator ───────────────────────────────
+        row += 1
+        self._drift_indicator = ttk.Label(inspector, text="", foreground="orange")
+        self._drift_indicator.grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=4, pady=1
+        )
+        self._tooltip(
+            self._drift_indicator,
+            "Drift detected: this page looks different from training data",
+        )
+
         # ── Annotation Stats ──────────────────────────────────────
         row += 1
         ttk.Separator(inspector).grid(
@@ -958,4 +968,3 @@ class AnnotationTab(
             self._deselect()
         else:
             self._canvas.config(cursor="")
-

@@ -240,6 +240,7 @@ def _detect_placeholder_tokens(
 
 def _detect_intraline_gaps(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
@@ -247,7 +248,6 @@ def _detect_intraline_gaps(
     gap_mult: float,
 ) -> List[VocrCandidate]:
     """Signal #4: abnormally large horizontal gaps within a text line."""
-    lines = _group_by_baseline(tokens)
     candidates: List[VocrCandidate] = []
 
     for line in lines:
@@ -362,6 +362,7 @@ def _detect_dense_cluster_holes(
 
 def _detect_baseline_style_gaps(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
@@ -369,7 +370,6 @@ def _detect_baseline_style_gaps(
     gap_mult: float,
 ) -> List[VocrCandidate]:
     """Signal #6: intraline gap where neighbors share font + size."""
-    lines = _group_by_baseline(tokens)
     candidates: List[VocrCandidate] = []
 
     for line in lines:
@@ -433,13 +433,13 @@ def _detect_baseline_style_gaps(
 
 def _detect_template_adjacency(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
     margin: float,
 ) -> List[VocrCandidate]:
     """Signal #7: NUMBER + gap + keyword (TYP, DIA, TOL, etc.)."""
-    lines = _group_by_baseline(tokens)
     candidates: List[VocrCandidate] = []
 
     for line in lines:
@@ -513,13 +513,13 @@ def _detect_template_adjacency(
 
 def _detect_regex_digit_patterns(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
     margin: float,
 ) -> List[VocrCandidate]:
     """Signal #8: digit-gap-digit where a separator is expected."""
-    lines = _group_by_baseline(tokens)
     candidates: List[VocrCandidate] = []
 
     # Pattern: two decimal numbers with a gap → likely ± or ×
@@ -602,13 +602,13 @@ def _detect_regex_digit_patterns(
 
 def _detect_impossible_sequences(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
     margin: float,
 ) -> List[VocrCandidate]:
     """Signal #9: back-to-back numeric tokens with no separator."""
-    lines = _group_by_baseline(tokens)
     candidates: List[VocrCandidate] = []
 
     for line in lines:
@@ -662,6 +662,7 @@ def _detect_impossible_sequences(
 
 def _detect_vocab_triggers(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
@@ -669,7 +670,6 @@ def _detect_vocab_triggers(
 ) -> List[VocrCandidate]:
     """Signal #10: keywords suggesting a specific symbol nearby."""
     candidates: List[VocrCandidate] = []
-    lines = _group_by_baseline(tokens)
 
     for line in lines:
         for i, t in enumerate(line):
@@ -725,13 +725,13 @@ def _detect_vocab_triggers(
 
 def _detect_keyword_cooccurrence(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
     margin: float,
 ) -> List[VocrCandidate]:
     """Signal #11: keyword without expected partner symbol (OC→@, BAR→#)."""
-    lines = _group_by_baseline(tokens)
     candidates: List[VocrCandidate] = []
 
     for line in lines:
@@ -786,13 +786,13 @@ def _detect_keyword_cooccurrence(
 
 def _detect_cross_ref_phrases(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
     margin: float,
 ) -> List[VocrCandidate]:
     """Signal #12: same dimension phrase appears elsewhere with a symbol."""
-    lines = _group_by_baseline(tokens)
     candidates: List[VocrCandidate] = []
 
     # Build a map of "canonical numeric phrases" → occurrences
@@ -869,13 +869,13 @@ def _detect_cross_ref_phrases(
 
 def _detect_near_duplicate_lines(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
     margin: float,
 ) -> List[VocrCandidate]:
     """Signal #13: repeated patterns where one instance lacks a symbol."""
-    lines = _group_by_baseline(tokens)
     candidates: List[VocrCandidate] = []
 
     # Fingerprint each line by its stripped text sequence
@@ -939,6 +939,7 @@ def _detect_near_duplicate_lines(
 
 def _detect_font_subset_correlation(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_chars: List[dict],
     page_num: int,
     page_w: float,
@@ -974,7 +975,6 @@ def _detect_font_subset_correlation(
         return []
 
     candidates: List[VocrCandidate] = []
-    lines = _group_by_baseline(tokens)
     for line in lines:
         for i, t in enumerate(line):
             if t.fontname not in bad_fonts:
@@ -1126,6 +1126,7 @@ def _detect_vector_circles(
 
 def _detect_semantic_no_units(
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
@@ -1133,7 +1134,6 @@ def _detect_semantic_no_units(
 ) -> List[VocrCandidate]:
     """Signal #17: dimension-like numbers without any unit on the line."""
     _UNIT_TOKENS = {'"', "'", "MM", "CM", "M", "IN", "FT", "INCH", "INCHES", "FEET"}
-    lines = _group_by_baseline(tokens)
     candidates: List[VocrCandidate] = []
 
     for line in lines:
@@ -1183,6 +1183,7 @@ def _detect_semantic_no_units(
 def _detect_dimension_geometry(
     page_lines: List[dict],
     tokens: List[GlyphBox],
+    lines: List[List[GlyphBox]],
     page_num: int,
     page_w: float,
     page_h: float,
@@ -1193,7 +1194,6 @@ def _detect_dimension_geometry(
         return []
 
     # Build set of token-gap rects first
-    lines = _group_by_baseline(tokens)
     gap_rects: List[Tuple[float, float, float, float, GlyphBox, GlyphBox]] = []
     for line in lines:
         for i in range(len(line) - 1):
@@ -1345,6 +1345,9 @@ def detect_vocr_candidates(
     pw, ph = page_width, page_height
     pn = page_num
 
+    # Cache baseline-grouped lines once for all detection methods (efficiency fix)
+    baseline_lines = _group_by_baseline(tokens)
+
     all_candidates: List[VocrCandidate] = []
 
     # --- Tier 1: exact-location signals ---
@@ -1353,7 +1356,9 @@ def detect_vocr_candidates(
 
     # --- Tier 2: spatial gap signals ---
     all_candidates.extend(
-        _detect_intraline_gaps(tokens, pn, pw, ph, m, cfg.vocr_cand_gap_multiplier)
+        _detect_intraline_gaps(
+            tokens, baseline_lines, pn, pw, ph, m, cfg.vocr_cand_gap_multiplier
+        )
     )
     all_candidates.extend(
         _detect_dense_cluster_holes(
@@ -1361,23 +1366,39 @@ def detect_vocr_candidates(
         )
     )
     all_candidates.extend(
-        _detect_baseline_style_gaps(tokens, pn, pw, ph, m, cfg.vocr_cand_gap_multiplier)
+        _detect_baseline_style_gaps(
+            tokens, baseline_lines, pn, pw, ph, m, cfg.vocr_cand_gap_multiplier
+        )
     )
 
     # --- Tier 3: template / token-context signals ---
-    all_candidates.extend(_detect_template_adjacency(tokens, pn, pw, ph, m))
-    all_candidates.extend(_detect_regex_digit_patterns(tokens, pn, pw, ph, m))
-    all_candidates.extend(_detect_impossible_sequences(tokens, pn, pw, ph, m))
-    all_candidates.extend(_detect_vocab_triggers(tokens, pn, pw, ph, m))
-    all_candidates.extend(_detect_keyword_cooccurrence(tokens, pn, pw, ph, m))
+    all_candidates.extend(
+        _detect_template_adjacency(tokens, baseline_lines, pn, pw, ph, m)
+    )
+    all_candidates.extend(
+        _detect_regex_digit_patterns(tokens, baseline_lines, pn, pw, ph, m)
+    )
+    all_candidates.extend(
+        _detect_impossible_sequences(tokens, baseline_lines, pn, pw, ph, m)
+    )
+    all_candidates.extend(_detect_vocab_triggers(tokens, baseline_lines, pn, pw, ph, m))
+    all_candidates.extend(
+        _detect_keyword_cooccurrence(tokens, baseline_lines, pn, pw, ph, m)
+    )
 
     # --- Tier 4: cross-reference / consensus ---
-    all_candidates.extend(_detect_cross_ref_phrases(tokens, pn, pw, ph, m))
-    all_candidates.extend(_detect_near_duplicate_lines(tokens, pn, pw, ph, m))
+    all_candidates.extend(
+        _detect_cross_ref_phrases(tokens, baseline_lines, pn, pw, ph, m)
+    )
+    all_candidates.extend(
+        _detect_near_duplicate_lines(tokens, baseline_lines, pn, pw, ph, m)
+    )
 
     # --- Tier 5: structural / statistical ---
     all_candidates.extend(
-        _detect_font_subset_correlation(tokens, page_chars, pn, pw, ph, m)
+        _detect_font_subset_correlation(
+            tokens, baseline_lines, page_chars, pn, pw, ph, m
+        )
     )
     all_candidates.extend(
         _detect_token_width_anomaly(
@@ -1395,8 +1416,12 @@ def detect_vocr_candidates(
             cfg.vocr_cand_vector_circle_max_diameter,
         )
     )
-    all_candidates.extend(_detect_semantic_no_units(tokens, pn, pw, ph, m))
-    all_candidates.extend(_detect_dimension_geometry(page_lines, tokens, pn, pw, ph, m))
+    all_candidates.extend(
+        _detect_semantic_no_units(tokens, baseline_lines, pn, pw, ph, m)
+    )
+    all_candidates.extend(
+        _detect_dimension_geometry(page_lines, tokens, baseline_lines, pn, pw, ph, m)
+    )
 
     # Apply adaptive confidence from accumulated stats (Level 1)
     if method_stats is not None:

@@ -3,7 +3,7 @@
 Converts pipeline objects into flat feature dicts suitable for
 JSON serialisation and downstream classification.
 
-Feature schema (37 keys):
+Feature schema (42 keys):
   - 3 font metrics: font_size_pt, font_size_max_pt, font_size_min_pt
   - 8 text properties: is_all_caps, is_bold, token_count, row_count,
         text_length, avg_chars_per_token, unique_word_ratio,
@@ -20,6 +20,8 @@ Feature schema (37 keys):
   - 3 discriminative: text_density, x_dist_to_right_margin,
         line_width_variance
   - 2 OCR confidence: mean_token_confidence, min_token_confidence
+  - 5 relational (v6): is_below_header, header_distance_pts, sibling_count,
+        column_position_index, starts_with_note_number
 """
 
 from __future__ import annotations
@@ -249,6 +251,71 @@ def featurize(
     mean_token_confidence = round(statistics.mean(confs), 4) if confs else 1.0
     min_token_confidence = round(min(confs), 4) if confs else 1.0
 
+    # ── Relational features (v6) ───────────────────────────────────
+    # Note number pattern for notes detection
+    _NOTE_NUMBER_RE = re.compile(r"^\s*(\d+\.|\(\d+\)|[a-zA-Z]\.)")
+    starts_with_note_number = int(bool(_NOTE_NUMBER_RE.match(first_text)))
+
+    # Header proximity and sibling features require all_blocks
+    is_below_header = 0
+    header_distance_pts = 500.0  # Default max distance
+    sibling_count = 0
+    column_position_index = 0
+
+    if all_blocks:
+        # Find headers above this block
+        median_h = statistics.median([b.height() for b in boxes]) if boxes else 12.0
+        header_threshold = median_h * 2.0  # Within 2x median line height
+
+        for ob in all_blocks:
+            if ob is block:
+                continue
+            ob_bbox = ob.bbox()
+            # Check if this is a header block (has is_header attr or is_all_caps)
+            is_header_block = getattr(ob, "is_header", False)
+            if not is_header_block:
+                # Fallback: check if all caps and short
+                ob_boxes = (
+                    ob.get_all_boxes(tokens=tokens)
+                    if hasattr(ob, "get_all_boxes")
+                    else []
+                )
+                if ob_boxes:
+                    ob_text = " ".join(b.text for b in ob_boxes)
+                    ob_alpha = [c for c in ob_text if c.isalpha()]
+                    if ob_alpha and len(ob_alpha) < 100:
+                        ob_upper = sum(1 for c in ob_alpha if c.isupper())
+                        is_header_block = (ob_upper / len(ob_alpha)) > 0.8
+
+            if is_header_block:
+                # Check if header is directly above (x-overlap and above in y)
+                ob_x0, ob_y0, ob_x1, ob_y1 = ob_bbox
+                x_overlap = max(0, min(x1, ob_x1) - max(x0, ob_x0))
+                if x_overlap > 0 and ob_y1 <= y0:  # Header above this block
+                    distance = y0 - ob_y1
+                    if distance < header_distance_pts:
+                        header_distance_pts = distance
+                        if distance <= header_threshold:
+                            is_below_header = 1
+
+        # Count siblings: blocks under same header (similar x-range, close y)
+        for ob in all_blocks:
+            if ob is block:
+                continue
+            ob_bbox = ob.bbox()
+            ob_x0, ob_y0, ob_x1, ob_y1 = ob_bbox
+            # Similar x-range (column) and not too far in y
+            x_overlap_frac = max(0, min(x1, ob_x1) - max(x0, ob_x0)) / max(w, 1.0)
+            y_distance = abs((y0 + y1) / 2 - (ob_y0 + ob_y1) / 2)
+            if x_overlap_frac > 0.5 and y_distance < 200:
+                sibling_count += 1
+
+        # Column position: bin x-position into 5 columns (0-4)
+        column_position_index = min(4, int(x_center_frac * 5))
+
+    # Cap header distance
+    header_distance_pts = min(500.0, header_distance_pts)
+
     return {
         "font_size_pt": round(font_size_pt, 2),
         "font_size_max_pt": round(font_size_max_pt, 2),
@@ -280,6 +347,11 @@ def featurize(
         "line_width_variance": line_width_variance,
         "mean_token_confidence": mean_token_confidence,
         "min_token_confidence": min_token_confidence,
+        "is_below_header": is_below_header,
+        "header_distance_pts": round(header_distance_pts, 2),
+        "sibling_count": sibling_count,
+        "column_position_index": column_position_index,
+        "starts_with_note_number": starts_with_note_number,
         **kw_scores,
     }
 
@@ -411,5 +483,11 @@ def featurize_region(
         "line_width_variance": line_width_variance,
         "mean_token_confidence": mean_token_confidence,
         "min_token_confidence": min_token_confidence,
+        # ── Relational features (v6) ─ defaults for region context ──
+        "is_below_header": 0,
+        "header_distance_pts": 500.0,
+        "sibling_count": 0,
+        "column_position_index": 0,
+        "starts_with_note_number": 0,
         **kw_scores,
     }

@@ -99,14 +99,17 @@ def train_candidate_classifier(
         min_samples_leaf=5,
         random_state=42,
     )
-    base_model.fit(X_train, y_train)
 
-    # Optional calibration
-    if calibrate and len(X_val) >= 5:
-        cal_model = CalibratedClassifierCV(base_model, method="isotonic", cv="prefit")
-        cal_model.fit(X_val, y_val)
+    # Apply cross-validated calibration on training data (avoid data leakage)
+    if calibrate and len(X_train) >= 10:
+        # Use CV-based calibration on training data, not prefit on val
+        cal_model = CalibratedClassifierCV(
+            estimator=base_model, method="isotonic", cv=3
+        )
+        cal_model.fit(X_train, y_train)
         final_model = cal_model
     else:
+        base_model.fit(X_train, y_train)
         final_model = base_model
 
     # Evaluate

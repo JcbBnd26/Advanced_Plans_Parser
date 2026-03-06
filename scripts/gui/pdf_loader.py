@@ -1,4 +1,5 @@
 """PDF loading, page navigation, and zoom mixin for the annotation tab."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -12,6 +13,7 @@ from .annotation_state import CanvasBox
 
 # Foreground color used to prompt the user to run the pipeline
 _PIPELINE_PENDING_COLOR = "#cc6600"
+
 
 class PdfLoaderMixin:
     """Mixin providing PDF loading, navigation, and zoom methods."""
@@ -188,9 +190,7 @@ class PdfLoaderMixin:
         self._multi_selected.clear()
 
         if self._pipeline_ran_for_doc:
-            dets = self._store.get_latest_detections_for_page(
-                self._doc_id, self._page
-            )
+            dets = self._store.get_latest_detections_for_page(self._doc_id, self._page)
             for d in dets:
                 self._canvas_boxes.append(
                     CanvasBox(
@@ -210,6 +210,9 @@ class PdfLoaderMixin:
         # Load any saved groups for this page
         self._load_groups_for_page()
 
+        # Check for drift on loaded detections
+        self._check_drift_on_detections()
+
         self._draw_all_boxes()
         n = len(self._canvas_boxes)
         page_label = f"Page {self._page}"
@@ -220,10 +223,56 @@ class PdfLoaderMixin:
         elif self._pipeline_ran_for_doc:
             self._status.configure(text=f"{page_label} — no detections on this page")
         else:
-            self._status.configure(text=f"{page_label} — run pipeline to load detections")
+            self._status.configure(
+                text=f"{page_label} — run pipeline to load detections"
+            )
             # Draw a watermark on the canvas
             self._draw_pipeline_prompt()
         self._update_page_summary()
+
+    def _check_drift_on_detections(self) -> None:
+        """Check for drift on current page detections and update indicator."""
+        # Clear previous drift indicator
+        if hasattr(self, "_drift_indicator"):
+            self._drift_indicator.configure(text="")
+
+        if not self._canvas_boxes:
+            return
+
+        try:
+            from pathlib import Path as _Path
+
+            import numpy as np
+
+            drift_stats_path = _Path("data") / "drift_stats.json"
+            if not drift_stats_path.exists():
+                return
+
+            from plancheck.corrections.drift_detection import DriftDetector
+
+            detector = DriftDetector.load(drift_stats_path)
+
+            # Check each detection's features for drift
+            drifted_count = 0
+            total = 0
+            for cb in self._canvas_boxes:
+                if cb.features:
+                    try:
+                        vec = np.array(cb.features, dtype=float)
+                        result = detector.check(vec)
+                        if result.is_drifted:
+                            drifted_count += 1
+                        total += 1
+                    except Exception:
+                        pass
+
+            if drifted_count > 0:
+                self._drift_indicator.configure(
+                    text=f"⚠ Drift detected on {drifted_count}/{total} detections"
+                )
+        except Exception:
+            # Silently ignore drift check failures
+            pass
 
     # ── Page element summary ───────────────────────────────────────
 
@@ -248,4 +297,3 @@ class PdfLoaderMixin:
         self._page_elements_label.configure(text="\n".join(lines), foreground="#222222")
 
     # ── Model training ─────────────────────────────────────────────
-
