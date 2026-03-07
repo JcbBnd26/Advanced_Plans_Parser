@@ -11,6 +11,7 @@ extract_vocr_tokens  – run full-page PaddleOCR and return raw tokens
 from __future__ import annotations
 
 import logging
+import threading
 from typing import List, Tuple
 
 from PIL import Image
@@ -21,11 +22,76 @@ from ..models.geometry import glyph_iou as iou  # backward-compat alias
 
 log = logging.getLogger(__name__)
 
+# Flag to force subprocess mode (useful for testing/debugging)
+_FORCE_SUBPROCESS = False
+
 # PaddleOCR's internal limit: images wider/taller than this get silently
 # downscaled, destroying small CAD text.  We tile the image so each tile
 # stays within this limit.  The default is overridden by cfg.vocr_max_tile_px.
 _PADDLE_MAX_SIDE_DEFAULT = 3800
 _TILE_OVERLAP_FRAC_DEFAULT = 0.05  # 5 % overlap between adjacent tiles
+
+
+def _is_main_thread() -> bool:
+    """Check if current thread is the main thread."""
+    return threading.current_thread() is threading.main_thread()
+
+
+def _should_use_subprocess() -> bool:
+    """Determine if we should use subprocess mode for OCR.
+
+    Subprocess mode is used when:
+    - _FORCE_SUBPROCESS is True (for testing)
+    - OR we're running from a background thread (PaddlePaddle threading bug)
+    """
+    if _FORCE_SUBPROCESS:
+        return True
+    return not _is_main_thread()
+
+
+def _subprocess_ocr(
+    page_image: Image.Image,
+    page_num: int,
+    page_width: float,
+    page_height: float,
+    cfg: GroupingConfig,
+) -> Tuple[List[GlyphBox], List[float]]:
+    """Run OCR via subprocess client to avoid threading issues.
+
+    The subprocess worker handles all tiling internally and returns
+    tokens in PDF-point space.
+    """
+    from .subprocess_client import get_vocr_client
+
+    client = get_vocr_client()
+
+    # The subprocess returns token dicts and confidences
+    token_dicts, confs = client.ocr_image(page_image, page_num, cfg)
+
+    # Convert dicts to GlyphBox objects
+    # Subprocess returns tokens with coords already in pixel space,
+    # we need to convert to PDF points
+    img_w, img_h = page_image.size
+    sx = img_w / page_width  # pixels per PDF point (x)
+    sy = img_h / page_height  # pixels per PDF point (y)
+
+    tokens: List[GlyphBox] = []
+    for td in token_dicts:
+        # Token dict has: page, x0, y0, x1, y1, text, confidence (in pixels)
+        tokens.append(
+            GlyphBox(
+                page=td["page"],
+                x0=td["x0"] / sx,
+                y0=td["y0"] / sy,
+                x1=td["x1"] / sx,
+                y1=td["y1"] / sy,
+                text=td["text"],
+                origin="ocr_full",
+                confidence=td.get("confidence", 1.0),
+            )
+        )
+
+    return tokens, confs
 
 
 # ── Stage 1: Extract OCR tokens from full page (with tiling) ──────────
@@ -163,6 +229,15 @@ def extract_ocr_tokens(
     confidences : list[float]
         Parallel list of per-token confidence scores.
     """
+    # === SUBPROCESS PATH ===
+    # When running from a background thread (e.g., GUI worker), PaddleOCR's
+    # native C++ code has threading issues. Use subprocess to isolate OCR.
+    if _should_use_subprocess():
+        log.info("  OCR running in subprocess mode (background thread detected)")
+        return _subprocess_ocr(page_image, page_num, page_width, page_height, cfg)
+
+    # === DIRECT PATH ===
+    # Main thread: run PaddleOCR directly (faster, no IPC overhead)
     import time
 
     import numpy as np

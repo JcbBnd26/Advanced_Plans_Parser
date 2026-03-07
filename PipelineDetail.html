@@ -343,10 +343,25 @@
             margin-bottom: 8px;
         }
 
-        .tier-1 { background: rgba(34, 197, 94, .15); color: #4ade80; }
-        .tier-2 { background: rgba(59, 130, 246, .15); color: #60a5fa; }
-        .tier-3 { background: rgba(168, 85, 247, .15); color: #c084fc; }
-        .tier-4 { background: rgba(251, 146, 60, .15); color: #fb923c; }
+        .tier-1 {
+            background: rgba(34, 197, 94, .15);
+            color: #4ade80;
+        }
+
+        .tier-2 {
+            background: rgba(59, 130, 246, .15);
+            color: #60a5fa;
+        }
+
+        .tier-3 {
+            background: rgba(168, 85, 247, .15);
+            color: #c084fc;
+        }
+
+        .tier-4 {
+            background: rgba(251, 146, 60, .15);
+            color: #fb923c;
+        }
 
         /* ── highlight box ───────────────────────────── */
         .highlight-box {
@@ -439,22 +454,31 @@
                         <span class="step-title">PipelineConfig — The Control Center</span>
                     </div>
                     <p class="step-summary">
-                        Before anything runs, a <strong>PipelineConfig</strong> (aliased as GroupingConfig) object 
-                        holds ~150+ configuration parameters organized into typed sub-configs. Every stage reads 
+                        Before anything runs, a <strong>PipelineConfig</strong> (aliased as GroupingConfig) object
+                        holds ~150+ configuration parameters organized into typed sub-configs. Every stage reads
                         the knobs it needs. The config system includes automatic migration for forward compatibility.
                     </p>
                     <details>
                         <summary>Configuration categories ▸</summary>
                         <ul class="detail-list">
-                            <li><strong>TOCRConfig</strong> — text layer extraction: x/y tolerance, font filtering, margin clipping, quality thresholds</li>
-                            <li><strong>VOCRConfig</strong> — visual OCR: resolution, confidence thresholds, tiling, engine selection</li>
-                            <li><strong>VOCRPPConfig</strong> — preprocessing: grayscale, CLAHE contrast, denoising, adaptive binarization, sharpening</li>
-                            <li><strong>ReconcileConfig</strong> — symbol injection: allowed symbols (/, %, °, ±), numeric context rules, overlap guards</li>
-                            <li><strong>GroupingConfig</strong> — clustering: row spacing, column detection, block height limits, notes detection</li>
-                            <li><strong>AnalysisConfig</strong> — region detection: legends, abbreviations, revisions, title blocks, semantic regions</li>
-                            <li><strong>MLConfig</strong> — machine learning: model paths, confidence thresholds, vision backbone, drift detection</li>
-                            <li><strong>LLMConfig</strong> — language models: provider (ollama/openai/anthropic), budget limits, token tracking</li>
-                            <li><strong>CandidatesConfig</strong> — VOCR candidate detection: gap multipliers, method toggles, ML classifier path</li>
+                            <li><strong>TOCRConfig</strong> — text layer extraction: x/y tolerance, font filtering,
+                                margin clipping, quality thresholds</li>
+                            <li><strong>VOCRConfig</strong> — visual OCR: resolution, confidence thresholds, tiling,
+                                engine selection</li>
+                            <li><strong>VOCRPPConfig</strong> — preprocessing: grayscale, CLAHE contrast, denoising,
+                                adaptive binarization, sharpening</li>
+                            <li><strong>ReconcileConfig</strong> — symbol injection: allowed symbols (/, %, °, ±),
+                                numeric context rules, overlap guards</li>
+                            <li><strong>GroupingConfig</strong> — clustering: row spacing, column detection, block
+                                height limits, notes detection</li>
+                            <li><strong>AnalysisConfig</strong> — region detection: legends, abbreviations, revisions,
+                                title blocks, semantic regions</li>
+                            <li><strong>MLConfig</strong> — machine learning: model paths, confidence thresholds, vision
+                                backbone, drift detection</li>
+                            <li><strong>LLMConfig</strong> — language models: provider (ollama/openai/anthropic), budget
+                                limits, token tracking</li>
+                            <li><strong>CandidatesConfig</strong> — VOCR candidate detection: gap multipliers, method
+                                toggles, ML classifier path</li>
                         </ul>
                     </details>
                     <details>
@@ -462,7 +486,8 @@
                         <ul class="detail-list">
                             <li>Sub-configs are defined in <code>config/subconfigs.py</code> as dataclasses</li>
                             <li><code>migrate_config()</code> handles version upgrades automatically</li>
-                            <li>Configs are JSON-serializable with <code>from_json()</code> / <code>to_json()</code></li>
+                            <li>Configs are JSON-serializable with <code>from_json()</code> / <code>to_json()</code>
+                            </li>
                             <li>Pydantic schemas in <code>validation/schemas.py</code> enforce structure</li>
                         </ul>
                     </details>
@@ -482,7 +507,7 @@
                         <span class="step-title">Create Run Folder & Initialize Stores</span>
                     </div>
                     <p class="step-summary">
-                        A timestamped folder is created under <code>runs/</code>. The 
+                        A timestamped folder is created under <code>runs/</code>. The
                         <strong>CorrectionStore</strong> SQLite database is opened for tracking detections,
                         corrections, and ML training data.
                     </p>
@@ -726,8 +751,9 @@
                     </div>
                     <p class="step-summary">
                         Instead of running expensive full-page OCR, <strong>17+ specialized detection methods</strong>
-                        analyze the page to identify "candidate patches" — small regions where missing symbols are 
-                        likely to exist. This targeted approach reduces OCR time by up to 90% while maintaining accuracy.
+                        analyze the page to identify "candidate patches" — small regions where missing symbols are
+                        likely to exist. This targeted approach reduces OCR time by up to 90% while maintaining
+                        accuracy.
                     </p>
 
                     <div class="highlight-box">
@@ -736,16 +762,20 @@
                             <div class="level-card" style="--level-color: #34d399;">
                                 <h5>Level 1 — Method Stats</h5>
                                 <p>Per-method hit/miss rates from historical runs. Methods that perform well get higher
-                                    confidence; poor performers are down-weighted. Persisted to <code>candidate_method_stats.json</code>.</p>
+                                    confidence; poor performers are down-weighted. Persisted to
+                                    <code>candidate_method_stats.json</code>.</p>
                             </div>
                             <div class="level-card" style="--level-color: #60a5fa;">
                                 <h5>Level 2 — ML Classifier</h5>
-                                <p>A trained GradientBoostingClassifier filters candidates using geometric + text features.
-                                    Runs when <code>vocr_cand_ml_enabled=True</code>. Model stored in <code>data/</code>.</p>
+                                <p>A trained GradientBoostingClassifier filters candidates using geometric + text
+                                    features.
+                                    Runs when <code>vocr_cand_ml_enabled=True</code>. Model stored in
+                                    <code>data/</code>.</p>
                             </div>
                             <div class="level-card" style="--level-color: #c084fc;">
                                 <h5>Level 3 — Producer Stats</h5>
-                                <p>Per-PDF-producer method effectiveness. CAD software from different vendors has different
+                                <p>Per-PDF-producer method effectiveness. CAD software from different vendors has
+                                    different
                                     symbol-rendering patterns. Persisted to <code>producer_method_stats.json</code>.</p>
                             </div>
                         </div>
@@ -758,44 +788,52 @@
                             <div class="method-item">
                                 <span class="tier-label tier-1">TIER 1: Exact Location</span>
                                 <div class="method-name">Char Encoding Failures</div>
-                                <div class="method-desc">Detect Unicode replacement chars (U+FFFD) and unmappable glyphs at character level</div>
+                                <div class="method-desc">Detect Unicode replacement chars (U+FFFD) and unmappable glyphs
+                                    at character level</div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-1">TIER 1</span>
                                 <div class="method-name">Placeholder Tokens</div>
-                                <div class="method-desc">Find tokens like "??", "□□", "__" that indicate OCR needed</div>
+                                <div class="method-desc">Find tokens like "??", "□□", "__" that indicate OCR needed
+                                </div>
                             </div>
                             <!-- Tier 2 -->
                             <div class="method-item">
                                 <span class="tier-label tier-2">TIER 2: Spatial Gaps</span>
                                 <div class="method-name">Intraline Gaps</div>
-                                <div class="method-desc">Detect unusually large gaps within text lines that suggest missing content</div>
+                                <div class="method-desc">Detect unusually large gaps within text lines that suggest
+                                    missing content</div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-2">TIER 2</span>
                                 <div class="method-name">Dense Cluster Holes</div>
-                                <div class="method-desc">Grid-based density analysis to find empty pockets in dense text areas</div>
+                                <div class="method-desc">Grid-based density analysis to find empty pockets in dense text
+                                    areas</div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-2">TIER 2</span>
                                 <div class="method-name">Baseline Style Gaps</div>
-                                <div class="method-desc">Gaps where baseline style changes (italic→regular) suggest symbols</div>
+                                <div class="method-desc">Gaps where baseline style changes (italic→regular) suggest
+                                    symbols</div>
                             </div>
                             <!-- Tier 3 -->
                             <div class="method-item">
                                 <span class="tier-label tier-3">TIER 3: Template Context</span>
                                 <div class="method-name">Template Adjacency</div>
-                                <div class="method-desc">Patterns like "12_4" where underscore likely represents "/" or "%"</div>
+                                <div class="method-desc">Patterns like "12_4" where underscore likely represents "/" or
+                                    "%"</div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-3">TIER 3</span>
                                 <div class="method-name">Regex Digit Patterns</div>
-                                <div class="method-desc">Match "12 4", "3 8" patterns that suggest fractions (12/4, 3/8)</div>
+                                <div class="method-desc">Match "12 4", "3 8" patterns that suggest fractions (12/4, 3/8)
+                                </div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-3">TIER 3</span>
                                 <div class="method-name">Keyword Cooccurrence</div>
-                                <div class="method-desc">Words like "SLOPE", "GRADE" near numbers suggest % or ° symbols</div>
+                                <div class="method-desc">Words like "SLOPE", "GRADE" near numbers suggest % or ° symbols
+                                </div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-3">TIER 3</span>
@@ -806,17 +844,20 @@
                             <div class="method-item">
                                 <span class="tier-label tier-4">TIER 4: Advanced</span>
                                 <div class="method-name">Vector Circles</div>
-                                <div class="method-desc">Detect ° degree symbols rendered as small circles in vector graphics</div>
+                                <div class="method-desc">Detect ° degree symbols rendered as small circles in vector
+                                    graphics</div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-4">TIER 4</span>
                                 <div class="method-name">Font Subset Correlation</div>
-                                <div class="method-desc">Fonts missing certain glyphs correlate with symbol-as-graphics rendering</div>
+                                <div class="method-desc">Fonts missing certain glyphs correlate with symbol-as-graphics
+                                    rendering</div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-4">TIER 4</span>
                                 <div class="method-name">Impossible Sequences</div>
-                                <div class="method-desc">"12-4" that should be "12/4" based on construction notation</div>
+                                <div class="method-desc">"12-4" that should be "12/4" based on construction notation
+                                </div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-4">TIER 4</span>
@@ -826,12 +867,14 @@
                             <div class="method-item">
                                 <span class="tier-label tier-4">TIER 4</span>
                                 <div class="method-name">Near Duplicate Lines</div>
-                                <div class="method-desc">Repeated patterns like notes where one has symbol, another doesn't</div>
+                                <div class="method-desc">Repeated patterns like notes where one has symbol, another
+                                    doesn't</div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-4">TIER 4</span>
                                 <div class="method-name">Token Width Anomaly</div>
-                                <div class="method-desc">Token width inconsistent with character count (likely hidden symbol)</div>
+                                <div class="method-desc">Token width inconsistent with character count (likely hidden
+                                    symbol)</div>
                             </div>
                             <div class="method-item">
                                 <span class="tier-label tier-4">TIER 4</span>
@@ -841,7 +884,8 @@
                             <div class="method-item">
                                 <span class="tier-label tier-4">TIER 4</span>
                                 <div class="method-name">Cross-Ref Phrases</div>
-                                <div class="method-desc">References like "SEE DWG 1/A" patterns where "/" is commonly lost</div>
+                                <div class="method-desc">References like "SEE DWG 1/A" patterns where "/" is commonly
+                                    lost</div>
                             </div>
                         </div>
                     </details>
@@ -851,7 +895,8 @@
                         <ul class="detail-list" style="margin-top: 8px;">
                             <li><strong>x0, y0, x1, y1</strong> — bounding box in PDF points (with padding margin)</li>
                             <li><strong>confidence</strong> — adaptive confidence (0.0–1.0) from all three levels</li>
-                            <li><strong>trigger_methods</strong> — list of detection methods that flagged this region</li>
+                            <li><strong>trigger_methods</strong> — list of detection methods that flagged this region
+                            </li>
                             <li><strong>anchor_tokens</strong> — the TOCR tokens that triggered the detection</li>
                             <li><strong>outcome</strong> — after VOCR: "hit", "miss", or "error"</li>
                             <li><strong>found_text</strong> — text discovered by OCR (if any)</li>
@@ -877,7 +922,8 @@
                         <span class="step-title">Targeted VOCR — Patch-by-Patch OCR</span>
                     </div>
                     <p class="step-summary">
-                        When candidates exist, VOCR runs in <strong>targeted mode</strong>: each candidate's bounding box
+                        When candidates exist, VOCR runs in <strong>targeted mode</strong>: each candidate's bounding
+                        box
                         is cropped from the full-page image and OCR is run on just that small patch. Much faster than
                         full-page OCR, and each candidate's outcome is tracked for adaptive learning.
                     </p>
@@ -941,7 +987,8 @@
                     <p class="step-summary">
                         The dual-source reconciliation engine compares TOCR tokens (PDF text layer) with VOCR tokens
                         (visual OCR) and injects only the missing special characters. A sophisticated multi-phase
-                        approach prevents false positives while maximizing recall for symbols like <strong>/ % ° ±</strong>.
+                        approach prevents false positives while maximizing recall for symbols like <strong>/ % °
+                            ±</strong>.
                     </p>
 
                     <details>
@@ -1016,7 +1063,8 @@
                         <span class="step-title">GROUPING — Geometry-First Clustering</span>
                     </div>
                     <p class="step-summary">
-                        Transform a flat pile of word boxes into structured layout: rows → lines → spans → blocks → notes columns.
+                        Transform a flat pile of word boxes into structured layout: rows → lines → spans → blocks →
+                        notes columns.
                         Pure geometry-based (no ML) — uses positions, spacing, and font analysis.
                     </p>
 
@@ -1024,14 +1072,21 @@
                         <summary>Clustering pipeline ▸</summary>
                         <ul class="detail-list" style="margin-top: 8px;">
                             <li><strong>group_rows()</strong> — sort by Y, cluster into horizontal rows</li>
-                            <li><strong>split_wide_lines()</strong> — break lines spanning multiple columns at largest gaps</li>
-                            <li><strong>build_lines()</strong> — combine nearby rows into Line objects with reading order</li>
-                            <li><strong>split_line_spans()</strong> — break lines into Span groups at large horizontal gaps</li>
-                            <li><strong>group_blocks()</strong> — stack nearby lines vertically into BlockCluster objects</li>
+                            <li><strong>split_wide_lines()</strong> — break lines spanning multiple columns at largest
+                                gaps</li>
+                            <li><strong>build_lines()</strong> — combine nearby rows into Line objects with reading
+                                order</li>
+                            <li><strong>split_line_spans()</strong> — break lines into Span groups at large horizontal
+                                gaps</li>
+                            <li><strong>group_blocks()</strong> — stack nearby lines vertically into BlockCluster
+                                objects</li>
                             <li><strong>mark_tables()</strong> — flag blocks with columnar alignment as tables</li>
-                            <li><strong>mark_headers()</strong> — identify header rows (bold, larger font, top of block)</li>
-                            <li><strong>mark_notes()</strong> — detect numbered-note patterns (1. ..., 2. ..., etc.)</li>
-                            <li><strong>group_notes_columns()</strong> — combine consecutive note blocks under shared headers</li>
+                            <li><strong>mark_headers()</strong> — identify header rows (bold, larger font, top of block)
+                            </li>
+                            <li><strong>mark_notes()</strong> — detect numbered-note patterns (1. ..., 2. ..., etc.)
+                            </li>
+                            <li><strong>group_notes_columns()</strong> — combine consecutive note blocks under shared
+                                headers</li>
                             <li><strong>link_continued_columns()</strong> — connect "NOTES" to "NOTES (CONT'D)"</li>
                         </ul>
                     </details>
@@ -1117,14 +1172,19 @@
                         subsequent detectors don't double-count regions.
                     </p>
                     <ul class="detail-list">
-                        <li><strong>① AbbreviationRegion</strong> — two-column lists (CODE = MEANING). Returns parsed entries.</li>
-                        <li><strong>② MiscTitleRegion</strong> — page-level titles ("OKLAHOMA DEPARTMENT OF TRANSPORTATION")</li>
-                        <li><strong>③ RevisionRegion</strong> — revision tables with number, description, date per row</li>
+                        <li><strong>① AbbreviationRegion</strong> — two-column lists (CODE = MEANING). Returns parsed
+                            entries.</li>
+                        <li><strong>② MiscTitleRegion</strong> — page-level titles ("OKLAHOMA DEPARTMENT OF
+                            TRANSPORTATION")</li>
+                        <li><strong>③ RevisionRegion</strong> — revision tables with number, description, date per row
+                        </li>
                         <li><strong>④ Filter Graphics</strong> — remove shapes inside already-detected regions</li>
                         <li><strong>⑤ LegendRegion</strong> — symbol + description pairs; scans remaining graphics</li>
                         <li><strong>⑥ StandardDetailRegion</strong> — sheet-number / description reference tables</li>
-                        <li><strong>⑦ TitleBlockInfo</strong> — parse title block fields (project name, sheet number, etc.)</li>
-                        <li><strong>⑧ SemanticRegion</strong> — header-anchored content areas with confidence scores</li>
+                        <li><strong>⑦ TitleBlockInfo</strong> — parse title block fields (project name, sheet number,
+                            etc.)</li>
+                        <li><strong>⑧ SemanticRegion</strong> — header-anchored content areas with confidence scores
+                        </li>
                     </ul>
                     <div class="badge-row">
                         <span class="badge badge-file">📄 src/plancheck/analysis/abbreviations.py</span>
@@ -1146,8 +1206,11 @@
                         (ZoneTag enum). Provides spatial context for ML classification and checks.
                     </p>
                     <ul class="detail-list">
-                        <li>ZoneTags: <code>border</code>, <code>drawing</code>, <code>notes</code>, <code>title_block</code>, 
-                            <code>legend</code>, <code>abbreviations</code>, <code>revisions</code>, <code>details</code>, <code>page</code></li>
+                        <li>ZoneTags: <code>border</code>, <code>drawing</code>, <code>notes</code>,
+                            <code>title_block</code>,
+                            <code>legend</code>, <code>abbreviations</code>, <code>revisions</code>,
+                            <code>details</code>, <code>page</code>
+                        </li>
                         <li>Blocks are classified by zone with <code>classify_blocks()</code></li>
                         <li>Zone summary provides page layout statistics</li>
                     </ul>
@@ -1204,7 +1267,8 @@
                         <span class="step-title">JSON Artifacts</span>
                     </div>
                     <p class="step-summary">
-                        All structured data is serialized to JSON files in the run folder's <code>artifacts/</code> directory.
+                        All structured data is serialized to JSON files in the run folder's <code>artifacts/</code>
+                        directory.
                     </p>
                     <ul class="detail-list">
                         <li><strong>boxes.json</strong> — all tokens with position, text, origin</li>
@@ -1322,8 +1386,10 @@
                     <details>
                         <summary>Database schema ▸</summary>
                         <ul class="detail-list" style="margin-top: 8px;">
-                            <li><strong>documents</strong> — PDF metadata (doc_id, filename, page_count, dimensions)</li>
-                            <li><strong>detections</strong> — pipeline detections (bbox, element_type, confidence, features_json)</li>
+                            <li><strong>documents</strong> — PDF metadata (doc_id, filename, page_count, dimensions)
+                            </li>
+                            <li><strong>detections</strong> — pipeline detections (bbox, element_type, confidence,
+                                features_json)</li>
                             <li><strong>corrections</strong> — user corrections (relabel, reshape, delete, accept)</li>
                             <li><strong>training_examples</strong> — labeled examples for classifier training</li>
                             <li><strong>candidate_outcomes</strong> — VOCR candidate hit/miss records</li>
@@ -1367,8 +1433,10 @@
                     <details>
                         <summary>Feature categories ▸</summary>
                         <ul class="detail-list" style="margin-top: 8px;">
-                            <li><strong>Geometric</strong> — x/y position, width/height, aspect ratio, zone position</li>
-                            <li><strong>Text</strong> — font size, is_bold, is_all_caps, token count, avg word length</li>
+                            <li><strong>Geometric</strong> — x/y position, width/height, aspect ratio, zone position
+                            </li>
+                            <li><strong>Text</strong> — font size, is_bold, is_all_caps, token count, avg word length
+                            </li>
                             <li><strong>Content</strong> — keyword patterns (NOTES, LEGEND, etc.), digit presence</li>
                             <li><strong>Relational</strong> — below header?, header distance, sibling count</li>
                             <li><strong>OCR</strong> — mean/min token confidence</li>
@@ -1423,9 +1491,11 @@
                     </p>
                     <ul class="detail-list">
                         <li><strong>Pass 1</strong> — Match prior corrections to new detections by bbox IoU</li>
-                        <li><strong>Pass 2</strong> — ML relabeling: if model disagrees with rule-based label and confidence ≥ threshold, update</li>
+                        <li><strong>Pass 2</strong> — ML relabeling: if model disagrees with rule-based label and
+                            confidence ≥ threshold, update</li>
                         <li><strong>Pass 3</strong> — Write model confidence to all detections</li>
-                        <li><strong>Pass 4</strong> — Drift detection (optional): flag feature vectors outside training distribution</li>
+                        <li><strong>Pass 4</strong> — Drift detection (optional): flag feature vectors outside training
+                            distribution</li>
                     </ul>
                     <div class="badge-row">
                         <span class="badge badge-file">📄 src/plancheck/ml_feedback.py</span>
@@ -1471,7 +1541,8 @@
                     </div>
                     <p class="step-summary">
                         Unified LLM client supporting Ollama (local), OpenAI, and Anthropic providers. Used for semantic
-                        checks, entity extraction, and query answering with built-in token tracking and budget enforcement.
+                        checks, entity extraction, and query answering with built-in token tracking and budget
+                        enforcement.
                     </p>
                     <ul class="detail-list">
                         <li><strong>LLMClient</strong> — unified interface with policy enforcement</li>
@@ -1495,7 +1566,8 @@
                         <span class="step-title">GNN Cross-Page Reasoning</span>
                     </div>
                     <p class="step-summary">
-                        Graph Neural Network for document-level understanding. Builds a graph where nodes are blocks/regions
+                        Graph Neural Network for document-level understanding. Builds a graph where nodes are
+                        blocks/regions
                         and edges represent spatial or semantic relationships across pages.
                     </p>
                     <ul class="detail-list">
@@ -1564,7 +1636,8 @@
 
         <div class="footer">
             Advanced Plans Parser · Pipeline Detail Reference · March 2026<br>
-            <span style="color: #64748b;">Python 3.10+ · pdfplumber · PaddleOCR · scikit-learn · NumPy · OpenCV · ReportLab</span>
+            <span style="color: #64748b;">Python 3.10+ · pdfplumber · PaddleOCR · scikit-learn · NumPy · OpenCV ·
+                ReportLab</span>
         </div>
     </div>
 </body>
