@@ -907,6 +907,11 @@ class EventHandlerMixin:
         if not new_label:
             return
 
+        # Validate label is a known type
+        if new_label not in self.ELEMENT_TYPES:
+            self._status.configure(text=f"Unknown element type: {new_label}")
+            return
+
         count = 0
         for cbox in targets:
             if new_label == cbox.element_type:
@@ -1061,6 +1066,10 @@ class EventHandlerMixin:
             return
         if self._selected_box is None:
             self._select_box(self._canvas_boxes[-1])
+        elif self._selected_box not in self._canvas_boxes:
+            # Box was deleted; reset selection
+            self._selected_box = None
+            self._select_box(self._canvas_boxes[-1])
         else:
             idx = self._canvas_boxes.index(self._selected_box)
             prev_idx = (idx - 1) % len(self._canvas_boxes)
@@ -1072,6 +1081,10 @@ class EventHandlerMixin:
         if isinstance(event.widget, (tk.Entry, tk.Text, ttk.Entry, ttk.Spinbox)):
             return
         if self._selected_box is None:
+            self._select_box(self._canvas_boxes[0])
+        elif self._selected_box not in self._canvas_boxes:
+            # Box was deleted; reset selection
+            self._selected_box = None
             self._select_box(self._canvas_boxes[0])
         else:
             idx = self._canvas_boxes.index(self._selected_box)
@@ -1149,19 +1162,26 @@ class EventHandlerMixin:
                 self._draw_box(target)
             self._status.configure(text="Undo reshape")
         elif action == "delete":
-            # Re-add the box visually
-            cbox = CanvasBox(
-                detection_id=rec["detection_id"],
-                element_type=rec["element_type"],
-                confidence=rec.get("confidence"),
-                text_content="",
-                features={},
-                pdf_bbox=rec["pdf_bbox"],
-                corrected=rec.get("corrected", False),
+            # Check if box with this detection_id already exists (avoid duplicate)
+            already_exists = any(
+                cb.detection_id == rec["detection_id"] for cb in self._canvas_boxes
             )
-            self._canvas_boxes.append(cbox)
-            self._draw_box(cbox)
-            self._status.configure(text="Undo reject")
+            if already_exists:
+                self._status.configure(text="Undo reject (box already restored)")
+            else:
+                # Re-add the box visually
+                cbox = CanvasBox(
+                    detection_id=rec["detection_id"],
+                    element_type=rec["element_type"],
+                    confidence=rec.get("confidence"),
+                    text_content="",
+                    features={},
+                    pdf_bbox=rec["pdf_bbox"],
+                    corrected=rec.get("corrected", False),
+                )
+                self._canvas_boxes.append(cbox)
+                self._draw_box(cbox)
+                self._status.configure(text="Undo reject")
         elif action == "accept" and target:
             target.corrected = rec.get("corrected", False)
             self._draw_box(target)

@@ -307,6 +307,17 @@ class CorrectionStore(
         )
         self._conn.commit()
 
+    def refresh(self) -> None:
+        """Ensure the connection sees the latest committed data from other connections.
+
+        Call this before reading if another process or connection may have
+        modified the database (e.g., after a pipeline run completes in a
+        background thread).
+        """
+        # Commit ends any implicit read transaction, ensuring subsequent
+        # queries see the latest committed data from all connections.
+        self._conn.commit()
+
     def close(self) -> None:
         """Close the underlying database connection."""
         self._conn.close()
@@ -411,26 +422,69 @@ class CorrectionStore(
         always preserved.  Orphaned ``box_groups`` / ``box_group_members``
         whose detections no longer exist are cleaned up as well.
 
+        Corrections and training_examples that reference purged detections
+        have their detection_id set to NULL (preserving user annotations).
+
         Returns the number of deleted detection rows.
         """
         with self._write_lock():
-            cur = self._conn.execute(
-                "DELETE FROM detections "
-                "WHERE doc_id = ? AND run_id != ? AND run_id NOT LIKE 'manual%'",
-                (doc_id, keep_run_id),
-            )
-            n_deleted = cur.rowcount
+            # Build list of detection_ids that will be deleted
+            to_delete = [
+                row[0]
+                for row in self._conn.execute(
+                    "SELECT detection_id FROM detections "
+                    "WHERE doc_id = ? AND run_id != ? AND run_id NOT LIKE 'manual%'",
+                    (doc_id, keep_run_id),
+                ).fetchall()
+            ]
 
-            # Cascade-clean orphaned group members
+            if not to_delete:
+                return 0
+
+            placeholders = ",".join("?" * len(to_delete))
+
+            # Nullify FK references in corrections (preserve user annotations)
             self._conn.execute(
-                "DELETE FROM box_group_members "
-                "WHERE detection_id NOT IN (SELECT detection_id FROM detections)"
+                f"UPDATE corrections SET detection_id = NULL "
+                f"WHERE detection_id IN ({placeholders})",
+                to_delete,
             )
-            # Remove empty groups
+
+            # Delete training_examples referencing these detections
+            # (training examples without a detection are not useful)
+            self._conn.execute(
+                f"DELETE FROM training_examples "
+                f"WHERE detection_id IN ({placeholders})",
+                to_delete,
+            )
+
+            # Delete box_group_members referencing these detections
+            self._conn.execute(
+                f"DELETE FROM box_group_members "
+                f"WHERE detection_id IN ({placeholders})",
+                to_delete,
+            )
+
+            # Delete box_groups whose root_detection_id will be deleted
+            self._conn.execute(
+                f"DELETE FROM box_groups "
+                f"WHERE root_detection_id IN ({placeholders})",
+                to_delete,
+            )
+
+            # Remove empty groups (no remaining members)
             self._conn.execute(
                 "DELETE FROM box_groups WHERE group_id NOT IN "
                 "(SELECT DISTINCT group_id FROM box_group_members)"
             )
+
+            # Now delete the detections
+            cur = self._conn.execute(
+                f"DELETE FROM detections WHERE detection_id IN ({placeholders})",
+                to_delete,
+            )
+            n_deleted = cur.rowcount
+
             self._conn.commit()
         return n_deleted
 
@@ -666,8 +720,9 @@ class CorrectionStore(
         document (not per-page), so pages that were not part of the most
         recent pipeline run return an empty list instead of stale data.
 
-        Manual annotations (run_id starting with ``'manual'``) are always
-        included regardless of which run they belong to.
+        Manual annotations are only included for pages that ALSO have
+        pipeline detections from the latest run. This prevents showing
+        stale manual annotations on pages that weren't processed.
         """
         # Find the globally latest pipeline run_id for this document
         row = self._conn.execute(
@@ -677,16 +732,24 @@ class CorrectionStore(
             (doc_id,),
         ).fetchone()
         if not row:
-            # No pipeline detections — return only manual ones for this page
-            rows = self._conn.execute(
-                "SELECT * FROM detections "
-                "WHERE doc_id = ? AND page = ? AND run_id LIKE 'manual%' "
-                "ORDER BY created_at",
-                (doc_id, page),
-            ).fetchall()
-            return self._rows_to_detection_dicts(rows)
+            # No pipeline detections at all — return empty
+            # (manual-only pages are not shown until a pipeline run)
+            return []
 
         latest_run_id = row["run_id"]
+
+        # Check if this specific page was processed in the latest run
+        page_in_latest_run = self._conn.execute(
+            "SELECT 1 FROM detections "
+            "WHERE doc_id = ? AND page = ? AND run_id = ? LIMIT 1",
+            (doc_id, page, latest_run_id),
+        ).fetchone()
+
+        if not page_in_latest_run:
+            # This page was NOT processed in the latest run — return empty
+            return []
+
+        # This page WAS processed — include pipeline detections + manual annotations
         rows = self._conn.execute(
             "SELECT * FROM detections "
             "WHERE doc_id = ? AND page = ? "

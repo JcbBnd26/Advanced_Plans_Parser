@@ -38,14 +38,49 @@ class QueueHandler(logging.Handler):
 class StdoutCapture:
     """File-like object that captures print() output and posts to a queue."""
 
+    # PaddleOCR/PaddlePaddle messages that should not be shown as ERROR
+    _PADDLE_INFO_PATTERNS = (
+        "Connectivity check",
+        "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK",
+        "Creating model:",
+        "Model files already exist",
+        "Using cached files",
+        "Using official model",
+        "Fetching",
+        "Download complete",
+        "oneDNN",
+        "InitGoogleLogging",
+    )
+    _PADDLE_WARN_PATTERNS = (
+        "GPU) is not available",
+        "Switching to CPU",
+        "No ccache found",
+        "recompiling all source files",
+        "DeprecationWarning",
+    )
+
     def __init__(self, q: queue.Queue, original: Any, level: str = "INFO") -> None:
         self.q = q
         self.original = original
         self.level = level
 
+    def _classify_level(self, text: str) -> str:
+        """Reclassify PaddleOCR stderr messages to appropriate levels."""
+        if self.level != "ERROR":
+            return self.level
+        # Check if this is a PaddleOCR info message masquerading as error
+        for pattern in self._PADDLE_INFO_PATTERNS:
+            if pattern in text:
+                return "DEBUG"  # Suppress to debug level
+        for pattern in self._PADDLE_WARN_PATTERNS:
+            if pattern in text:
+                return "WARNING"
+        return self.level
+
     def write(self, text: str) -> None:
         if text and text.strip():
-            self.q.put(("log", text.rstrip("\n"), self.level))
+            level = self._classify_level(text)
+            self.q.put(("log", text.rstrip("\n"), level))
         # Also write to original so terminal still works
         if self.original:
             self.original.write(text)

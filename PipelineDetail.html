@@ -20,12 +20,12 @@
         }
 
         .container {
-            max-width: 960px;
+            max-width: 1100px;
             margin: 0 auto;
         }
 
         h1 {
-            font-size: 28px;
+            font-size: 32px;
             margin-bottom: 6px;
             background: linear-gradient(135deg, #38bdf8, #818cf8);
             -webkit-background-clip: text;
@@ -35,8 +35,44 @@
 
         .subtitle {
             color: #94a3b8;
-            margin-bottom: 40px;
+            margin-bottom: 20px;
             font-size: 14px;
+        }
+
+        .arch-overview {
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.08), rgba(129, 140, 248, 0.08));
+            border: 1px solid rgba(129, 140, 248, 0.25);
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 40px;
+        }
+
+        .arch-overview h2 {
+            font-size: 16px;
+            color: #818cf8;
+            margin-bottom: 12px;
+        }
+
+        .pipeline-flow {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: #94a3b8;
+        }
+
+        .pipeline-flow .stage {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 6px 12px;
+            color: #e2e8f0;
+        }
+
+        .pipeline-flow .arrow {
+            color: #64748b;
         }
 
         /* ── timeline spine ─────────────────────────────── */
@@ -52,7 +88,7 @@
             top: 0;
             bottom: 0;
             width: 3px;
-            background: linear-gradient(to bottom, #38bdf8, #818cf8, #c084fc, #f472b6, #facc15);
+            background: linear-gradient(to bottom, #38bdf8, #818cf8, #c084fc, #f472b6, #facc15, #34d399, #f97316);
             border-radius: 2px;
         }
 
@@ -169,6 +205,16 @@
             color: #fde68a;
         }
 
+        .badge-ml {
+            background: rgba(244, 114, 182, .15);
+            color: #f9a8d4;
+        }
+
+        .badge-db {
+            background: rgba(34, 211, 238, .15);
+            color: #67e8f9;
+        }
+
         /* ── parallel fork ──────────────────────────────── */
         .parallel-wrapper {
             position: relative;
@@ -259,14 +305,124 @@
             color: #475569;
             font-size: 12px;
         }
+
+        /* ── method grid for candidate detection ─────── */
+        .method-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .method-item {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 12px 14px;
+        }
+
+        .method-item .method-name {
+            font-weight: 600;
+            color: #e2e8f0;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+
+        .method-item .method-desc {
+            font-size: 12px;
+            color: #94a3b8;
+            line-height: 1.4;
+        }
+
+        .tier-label {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 4px;
+            display: inline-block;
+            margin-bottom: 8px;
+        }
+
+        .tier-1 { background: rgba(34, 197, 94, .15); color: #4ade80; }
+        .tier-2 { background: rgba(59, 130, 246, .15); color: #60a5fa; }
+        .tier-3 { background: rgba(168, 85, 247, .15); color: #c084fc; }
+        .tier-4 { background: rgba(251, 146, 60, .15); color: #fb923c; }
+
+        /* ── highlight box ───────────────────────────── */
+        .highlight-box {
+            background: linear-gradient(135deg, rgba(244, 114, 182, 0.08), rgba(251, 146, 60, 0.08));
+            border: 1px solid rgba(244, 114, 182, 0.3);
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin: 16px 0;
+        }
+
+        .highlight-box h4 {
+            font-size: 14px;
+            color: #f472b6;
+            margin-bottom: 10px;
+        }
+
+        /* ── three-level box ───────────────────────────── */
+        .level-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .level-card {
+            background: rgba(15, 23, 42, 0.7);
+            border-radius: 8px;
+            padding: 14px 16px;
+            border-left: 3px solid var(--level-color, #818cf8);
+        }
+
+        .level-card h5 {
+            font-size: 12px;
+            color: var(--level-color, #818cf8);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+        }
+
+        .level-card p {
+            font-size: 12px;
+            color: #94a3b8;
+            line-height: 1.4;
+        }
     </style>
 </head>
 
 <body>
     <div class="container">
-        <h1>Advanced Plans Parser — Full Pipeline Detail</h1>
-        <p class="subtitle">Every step the system takes from a raw PDF to structured JSON output, explained in sequence.
+        <h1>Advanced Plans Parser — Complete Pipeline Reference</h1>
+        <p class="subtitle">
+            A comprehensive deep-dive into the 9-stage architectural/engineering plan parsing pipeline with
+            OCR reconciliation, ML classification, adaptive learning, and LLM integration.
         </p>
+
+        <!-- Architecture Overview -->
+        <div class="arch-overview">
+            <h2>🔄 Pipeline Flow</h2>
+            <div class="pipeline-flow">
+                <span class="stage">INGEST</span><span class="arrow">→</span>
+                <span class="stage">TOCR</span><span class="arrow">→</span>
+                <span class="stage">VOCRPP</span><span class="arrow">→</span>
+                <span class="stage">VOCR Candidates</span><span class="arrow">→</span>
+                <span class="stage">VOCR</span><span class="arrow">→</span>
+                <span class="stage">RECONCILE</span><span class="arrow">→</span>
+                <span class="stage">GROUPING</span><span class="arrow">→</span>
+                <span class="stage">ANALYSIS</span><span class="arrow">→</span>
+                <span class="stage">CHECKS</span><span class="arrow">→</span>
+                <span class="stage">EXPORT</span>
+            </div>
+            <p style="margin-top: 12px; font-size: 13px; color: #94a3b8;">
+                The pipeline processes construction drawings through text extraction, visual OCR,
+                spatial clustering, semantic region detection, and automated quality checks.
+                An ML feedback loop continuously improves accuracy based on human corrections.
+            </p>
+        </div>
 
         <!-- ════════════════════════════════════════════════════════════════ -->
         <div class="phase-divider"><span>Pre-Pipeline Setup</span></div>
@@ -274,57 +430,71 @@
 
         <div class="timeline">
 
-            <!-- STEP 0 -->
+            <!-- STEP 0: Configuration -->
             <div class="step" style="--dot-color: #94a3b8;">
                 <div class="step-dot"></div>
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STEP 0</span>
-                        <span class="step-title">Create Settings (GroupingConfig)</span>
+                        <span class="step-title">PipelineConfig — The Control Center</span>
                     </div>
                     <p class="step-summary">
-                        Before anything runs, the system creates a single settings object called
-                        <strong>GroupingConfig</strong>.
-                        Think of it as a control panel with ~100 knobs — every later stage reads the knobs it cares
-                        about.
-                        If you don't customize anything, sensible defaults are used automatically.
+                        Before anything runs, a <strong>PipelineConfig</strong> (aliased as GroupingConfig) object 
+                        holds ~150+ configuration parameters organized into typed sub-configs. Every stage reads 
+                        the knobs it needs. The config system includes automatic migration for forward compatibility.
                     </p>
                     <details>
-                        <summary>What kinds of settings live here?</summary>
+                        <summary>Configuration categories ▸</summary>
                         <ul class="detail-list">
-                            <li>How close characters must be to count as one word (x/y tolerance)</li>
-                            <li>Minimum / maximum font size to keep</li>
-                            <li>Whether to keep rotated (sideways) text</li>
-                            <li>Page-edge margin to ignore (title blocks, borders)</li>
-                            <li>Quality thresholds — garbled-text detection, word-density minimums</li>
-                            <li>OCR engine settings — confidence thresholds, allowed symbols, tiling</li>
-                            <li>Image preprocessing toggles — grayscale, contrast, sharpening, denoising</li>
-                            <li>Grouping geometry — row spacing, column gap detection, block height limits</li>
-                            <li>Region detection parameters for legends, abbreviations, revisions, etc.</li>
+                            <li><strong>TOCRConfig</strong> — text layer extraction: x/y tolerance, font filtering, margin clipping, quality thresholds</li>
+                            <li><strong>VOCRConfig</strong> — visual OCR: resolution, confidence thresholds, tiling, engine selection</li>
+                            <li><strong>VOCRPPConfig</strong> — preprocessing: grayscale, CLAHE contrast, denoising, adaptive binarization, sharpening</li>
+                            <li><strong>ReconcileConfig</strong> — symbol injection: allowed symbols (/, %, °, ±), numeric context rules, overlap guards</li>
+                            <li><strong>GroupingConfig</strong> — clustering: row spacing, column detection, block height limits, notes detection</li>
+                            <li><strong>AnalysisConfig</strong> — region detection: legends, abbreviations, revisions, title blocks, semantic regions</li>
+                            <li><strong>MLConfig</strong> — machine learning: model paths, confidence thresholds, vision backbone, drift detection</li>
+                            <li><strong>LLMConfig</strong> — language models: provider (ollama/openai/anthropic), budget limits, token tracking</li>
+                            <li><strong>CandidatesConfig</strong> — VOCR candidate detection: gap multipliers, method toggles, ML classifier path</li>
+                        </ul>
+                    </details>
+                    <details>
+                        <summary>Sub-configs architecture ▸</summary>
+                        <ul class="detail-list">
+                            <li>Sub-configs are defined in <code>config/subconfigs.py</code> as dataclasses</li>
+                            <li><code>migrate_config()</code> handles version upgrades automatically</li>
+                            <li>Configs are JSON-serializable with <code>from_json()</code> / <code>to_json()</code></li>
+                            <li>Pydantic schemas in <code>validation/schemas.py</code> enforce structure</li>
                         </ul>
                     </details>
                     <div class="badge-row">
-                        <span class="badge badge-file">📄 src/plancheck/config.py</span>
+                        <span class="badge badge-file">📄 src/plancheck/config/pipeline.py</span>
+                        <span class="badge badge-file">📄 src/plancheck/config/subconfigs.py</span>
                     </div>
                 </div>
             </div>
 
-            <!-- STEP 0b -->
+            <!-- STEP 0b: Run folder -->
             <div class="step" style="--dot-color: #94a3b8;">
                 <div class="step-dot"></div>
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STEP 0b</span>
-                        <span class="step-title">Create Run Folder</span>
+                        <span class="step-title">Create Run Folder & Initialize Stores</span>
                     </div>
                     <p class="step-summary">
-                        A timestamped folder is created under <code>runs/</code> (e.g.
-                        <code>run_20260215_103528_IFC_Operations_Facil</code>).
-                        Every file the pipeline produces — images, JSON, overlays, logs — goes into sub-folders here.
-                        Old runs are automatically cleaned up (default: keep the last 50).
+                        A timestamped folder is created under <code>runs/</code>. The 
+                        <strong>CorrectionStore</strong> SQLite database is opened for tracking detections,
+                        corrections, and ML training data.
                     </p>
+                    <ul class="detail-list">
+                        <li>Folder name: <code>run_YYYYMMDD_HHMMSS_&lt;pdf_stem&gt;</code></li>
+                        <li>Sub-folders: <code>artifacts/</code>, <code>overlays/</code>, <code>images/</code></li>
+                        <li>CorrectionStore database: <code>data/corrections.db</code> (SQLite)</li>
+                        <li>Old runs auto-pruned (configurable retention, default: 50)</li>
+                    </ul>
                     <div class="badge-row">
                         <span class="badge badge-output">📁 runs/run_&lt;timestamp&gt;_&lt;name&gt;/</span>
+                        <span class="badge badge-db">🗄️ data/corrections.db</span>
                     </div>
                 </div>
             </div>
@@ -341,15 +511,13 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 1</span>
-                        <span class="step-title">INGEST — Open & Render the PDF</span>
+                        <span class="step-title">INGEST — Open PDF & Build PageContext</span>
                     </div>
                     <p class="step-summary">
-                        The pipeline opens the PDF file and does two things at once: it renders the page into a picture
-                        (like taking a screenshot) for the image-based OCR path, <strong>and</strong> it passes the raw
-                        PDF file
-                        path directly to TOCR so TOCR can open the PDF itself and read its hidden text layer
-                        independently.
-                        These two outputs feed the parallel stages below.
+                        The PDF is opened <strong>exactly once</strong> via <code>build_page_context()</code>.
+                        This single-open strategy extracts all needed data (words, chars, lines, curves, rects,
+                        images) into a <code>PageContext</code> object that every downstream stage consumes.
+                        No subsequent stage re-opens the PDF.
                     </p>
                     <ul class="detail-list">
                         <li>Open the PDF using pdfplumber</li>
@@ -545,6 +713,192 @@
         </div>
 
         <!-- ════════════════════════════════════════════════════════════════ -->
+        <div class="phase-divider"><span>Stage 3.5 — VOCR Candidate Detection</span></div>
+        <!-- ════════════════════════════════════════════════════════════════ -->
+
+        <div class="timeline">
+            <div class="step" style="--dot-color: #f97316;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">STAGE 3.5</span>
+                        <span class="step-title">VOCR Candidates — Intelligent Patch Selection</span>
+                    </div>
+                    <p class="step-summary">
+                        Instead of running expensive full-page OCR, <strong>17+ specialized detection methods</strong>
+                        analyze the page to identify "candidate patches" — small regions where missing symbols are 
+                        likely to exist. This targeted approach reduces OCR time by up to 90% while maintaining accuracy.
+                    </p>
+
+                    <div class="highlight-box">
+                        <h4>🎯 Three-Level Adaptive Confidence System</h4>
+                        <div class="level-grid">
+                            <div class="level-card" style="--level-color: #34d399;">
+                                <h5>Level 1 — Method Stats</h5>
+                                <p>Per-method hit/miss rates from historical runs. Methods that perform well get higher
+                                    confidence; poor performers are down-weighted. Persisted to <code>candidate_method_stats.json</code>.</p>
+                            </div>
+                            <div class="level-card" style="--level-color: #60a5fa;">
+                                <h5>Level 2 — ML Classifier</h5>
+                                <p>A trained GradientBoostingClassifier filters candidates using geometric + text features.
+                                    Runs when <code>vocr_cand_ml_enabled=True</code>. Model stored in <code>data/</code>.</p>
+                            </div>
+                            <div class="level-card" style="--level-color: #c084fc;">
+                                <h5>Level 3 — Producer Stats</h5>
+                                <p>Per-PDF-producer method effectiveness. CAD software from different vendors has different
+                                    symbol-rendering patterns. Persisted to <code>producer_method_stats.json</code>.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <details>
+                        <summary>Detection Methods (organized by tier) ▸</summary>
+                        <div class="method-grid">
+                            <!-- Tier 1 -->
+                            <div class="method-item">
+                                <span class="tier-label tier-1">TIER 1: Exact Location</span>
+                                <div class="method-name">Char Encoding Failures</div>
+                                <div class="method-desc">Detect Unicode replacement chars (U+FFFD) and unmappable glyphs at character level</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-1">TIER 1</span>
+                                <div class="method-name">Placeholder Tokens</div>
+                                <div class="method-desc">Find tokens like "??", "□□", "__" that indicate OCR needed</div>
+                            </div>
+                            <!-- Tier 2 -->
+                            <div class="method-item">
+                                <span class="tier-label tier-2">TIER 2: Spatial Gaps</span>
+                                <div class="method-name">Intraline Gaps</div>
+                                <div class="method-desc">Detect unusually large gaps within text lines that suggest missing content</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-2">TIER 2</span>
+                                <div class="method-name">Dense Cluster Holes</div>
+                                <div class="method-desc">Grid-based density analysis to find empty pockets in dense text areas</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-2">TIER 2</span>
+                                <div class="method-name">Baseline Style Gaps</div>
+                                <div class="method-desc">Gaps where baseline style changes (italic→regular) suggest symbols</div>
+                            </div>
+                            <!-- Tier 3 -->
+                            <div class="method-item">
+                                <span class="tier-label tier-3">TIER 3: Template Context</span>
+                                <div class="method-name">Template Adjacency</div>
+                                <div class="method-desc">Patterns like "12_4" where underscore likely represents "/" or "%"</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-3">TIER 3</span>
+                                <div class="method-name">Regex Digit Patterns</div>
+                                <div class="method-desc">Match "12 4", "3 8" patterns that suggest fractions (12/4, 3/8)</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-3">TIER 3</span>
+                                <div class="method-name">Keyword Cooccurrence</div>
+                                <div class="method-desc">Words like "SLOPE", "GRADE" near numbers suggest % or ° symbols</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-3">TIER 3</span>
+                                <div class="method-name">Semantic No Units</div>
+                                <div class="method-desc">Detect dimension-like text without unit markers</div>
+                            </div>
+                            <!-- Tier 4 -->
+                            <div class="method-item">
+                                <span class="tier-label tier-4">TIER 4: Advanced</span>
+                                <div class="method-name">Vector Circles</div>
+                                <div class="method-desc">Detect ° degree symbols rendered as small circles in vector graphics</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-4">TIER 4</span>
+                                <div class="method-name">Font Subset Correlation</div>
+                                <div class="method-desc">Fonts missing certain glyphs correlate with symbol-as-graphics rendering</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-4">TIER 4</span>
+                                <div class="method-name">Impossible Sequences</div>
+                                <div class="method-desc">"12-4" that should be "12/4" based on construction notation</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-4">TIER 4</span>
+                                <div class="method-name">Dimension Geometry</div>
+                                <div class="method-desc">Dimension lines with arrows but missing text</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-4">TIER 4</span>
+                                <div class="method-name">Near Duplicate Lines</div>
+                                <div class="method-desc">Repeated patterns like notes where one has symbol, another doesn't</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-4">TIER 4</span>
+                                <div class="method-name">Token Width Anomaly</div>
+                                <div class="method-desc">Token width inconsistent with character count (likely hidden symbol)</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-4">TIER 4</span>
+                                <div class="method-name">Vocab Triggers</div>
+                                <div class="method-desc">Domain vocabulary that typically appears with symbols</div>
+                            </div>
+                            <div class="method-item">
+                                <span class="tier-label tier-4">TIER 4</span>
+                                <div class="method-name">Cross-Ref Phrases</div>
+                                <div class="method-desc">References like "SEE DWG 1/A" patterns where "/" is commonly lost</div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details>
+                        <summary>Output structure (VocrCandidate) ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li><strong>x0, y0, x1, y1</strong> — bounding box in PDF points (with padding margin)</li>
+                            <li><strong>confidence</strong> — adaptive confidence (0.0–1.0) from all three levels</li>
+                            <li><strong>trigger_methods</strong> — list of detection methods that flagged this region</li>
+                            <li><strong>anchor_tokens</strong> — the TOCR tokens that triggered the detection</li>
+                            <li><strong>outcome</strong> — after VOCR: "hit", "miss", or "error"</li>
+                            <li><strong>found_text</strong> — text discovered by OCR (if any)</li>
+                            <li><strong>found_symbol</strong> — whether a target symbol was found</li>
+                        </ul>
+                    </details>
+
+                    <div class="badge-row">
+                        <span class="badge badge-input">TOCR tokens + page graphics</span>
+                        <span class="badge badge-output">VocrCandidate patches</span>
+                        <span class="badge badge-ml">📊 Adaptive stats</span>
+                        <span class="badge badge-file">📄 src/plancheck/vocr/candidates/</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Targeted VOCR -->
+            <div class="step" style="--dot-color: #f97316;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">STAGE 3.5b</span>
+                        <span class="step-title">Targeted VOCR — Patch-by-Patch OCR</span>
+                    </div>
+                    <p class="step-summary">
+                        When candidates exist, VOCR runs in <strong>targeted mode</strong>: each candidate's bounding box
+                        is cropped from the full-page image and OCR is run on just that small patch. Much faster than
+                        full-page OCR, and each candidate's outcome is tracked for adaptive learning.
+                    </p>
+                    <ul class="detail-list">
+                        <li>Crop each candidate's bbox (with padding) from the page image</li>
+                        <li>Run PaddleOCR on the small crop (typically 50–200px wide)</li>
+                        <li>Update candidate with <code>outcome</code>: "hit" if symbol found, "miss" otherwise</li>
+                        <li>Store found text for reconciliation</li>
+                        <li>If no candidates exist, fall back to full-page OCR</li>
+                    </ul>
+                    <div class="badge-row">
+                        <span class="badge badge-input">VocrCandidate patches</span>
+                        <span class="badge badge-output">OCR tokens per patch</span>
+                        <span class="badge badge-lib">PaddleOCR</span>
+                        <span class="badge badge-file">📄 src/plancheck/vocr/targeted.py</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════════ -->
         <div class="phase-divider"><span>Between Stages — Quick Cleanup</span></div>
         <!-- ════════════════════════════════════════════════════════════════ -->
 
@@ -582,50 +936,68 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 4</span>
-                        <span class="step-title">RECONCILE — Merge OCR Symbols into Text</span>
+                        <span class="step-title">RECONCILE — Multi-Phase Symbol Injection</span>
                     </div>
                     <p class="step-summary">
-                        This is where the two worlds meet. TOCR gave us the words from the PDF text layer.
-                        VOCR gave us what the OCR engine saw in the image. RECONCILE compares them,
-                        finds symbols that the text layer missed, and carefully injects them into the right positions.
-                        It uses a multi-phase approach to avoid false positives.
+                        The dual-source reconciliation engine compares TOCR tokens (PDF text layer) with VOCR tokens
+                        (visual OCR) and injects only the missing special characters. A sophisticated multi-phase
+                        approach prevents false positives while maximizing recall for symbols like <strong>/ % ° ±</strong>.
                     </p>
-                    <ul class="detail-list">
-                        <li><strong>Match OCR tokens to PDF tokens</strong> — for each OCR detection, find the closest
-                            PDF text box using spatial overlap (IoU) or center proximity</li>
-                        <li><strong>Phase 0: Numeric context gate</strong> — only consider symbols that appear near
-                            numbers (e.g., "12/4" or "45%"). Random slashes in headings are ignored.</li>
-                        <li><strong>Case C: Composite match</strong> (tried first) — the OCR token spans multiple PDF
-                            tokens. Use digit anchoring and slot-based placement to figure out exactly where the symbol
-                            goes between words.</li>
-                        <li><strong>Case A: Matched extra symbols</strong> — the OCR token overlaps a PDF token but
-                            contains symbols the PDF token doesn't have. Place the extra symbol right after the existing
-                            word.</li>
-                        <li><strong>Case B: Unmatched symbol</strong> — the OCR found a symbol in empty space (no PDF
-                            token nearby). Check if a digit neighbour exists to the left; if so, inject it.</li>
-                        <li><strong>Phase 2: Composite deferral</strong> — if the OCR text looks like "12/4" (digits
-                            separated by symbols), defer to the smarter Case C logic instead of blindly appending.</li>
-                        <li><strong>Overlap guard</strong> — before injecting any symbol, check it doesn't overlap an
-                            existing token. If it does, reject it.</li>
-                        <li>Accepted symbols become new GlyphBox tokens with <code>origin = "ocr"</code></li>
-                        <li>After injection, run NMS prune again to catch any new overlaps</li>
-                        <li>Build a detailed debug log showing every OCR token, which path it took, and why it was
-                            accepted or rejected</li>
-                    </ul>
+
                     <details>
-                        <summary>What symbols does it look for?</summary>
-                        <ul class="detail-list">
-                            <li>Configured via <code>ocr_reconcile_allowed_symbols</code> — default is: <strong>/ % °
-                                    ±</strong></li>
-                            <li>These are the characters most commonly lost when CAD software converts drawings to PDF
-                            </li>
+                        <summary>Phase 0: Numeric Context Gate ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li>Only consider symbols appearing near numbers (e.g., "12/4", "45%")</li>
+                            <li>Rejects random slashes in headings or standalone percent signs</li>
+                            <li>Uses regex: <code>has_numeric_symbol_context()</code></li>
                         </ul>
                     </details>
+
+                    <details>
+                        <summary>Phase 1: Spatial Alignment ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li>Build spatial index of all PDF tokens for fast neighbor lookup</li>
+                            <li>For each OCR token, find best-matching PDF token by IoU or center proximity</li>
+                            <li>Classify each match into Case A, B, or C</li>
+                        </ul>
+                    </details>
+
+                    <details>
+                        <summary>Phase 2: Symbol Injection Cases ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li><strong>Case C (Composite)</strong> — OCR spans multiple PDF tokens. Use digit anchoring
+                                and slot-based placement to determine symbol position between tokens.</li>
+                            <li><strong>Case A (Extra Symbols)</strong> — OCR overlaps PDF token but contains extra
+                                symbol. Place symbol adjacent to existing word.</li>
+                            <li><strong>Case B (Unmatched)</strong> — OCR found symbol in whitespace. Check for digit
+                                neighbor to the left; inject if confirmed.</li>
+                        </ul>
+                    </details>
+
+                    <details>
+                        <summary>Phase 3: Overlap Guard ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li>Before injecting any symbol, verify it doesn't overlap existing tokens</li>
+                            <li>After all injections, run NMS prune again to catch any new overlaps</li>
+                            <li>Accepted symbols become GlyphBox tokens with <code>origin="ocr"</code></li>
+                        </ul>
+                    </details>
+
+                    <details>
+                        <summary>Candidate Stats Feedback ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li>After reconciliation, compute hit/miss rates per detection method</li>
+                            <li>Update <code>candidate_method_stats.json</code> (Level 1 adaptive)</li>
+                            <li>Update <code>producer_method_stats.json</code> (Level 3 per-vendor)</li>
+                            <li>Optionally save outcomes to CorrectionStore for classifier training</li>
+                        </ul>
+                    </details>
+
                     <div class="badge-row">
-                        <span class="badge badge-input">TOCR tokens + VOCR tokens + page image</span>
-                        <span class="badge badge-output">Merged token list + injection log</span>
+                        <span class="badge badge-input">TOCR + VOCR tokens</span>
+                        <span class="badge badge-output">Merged tokens + injection log</span>
                         <span class="badge badge-lib">NumPy · Regex</span>
-                        <span class="badge badge-file">📄 src/plancheck/reconcile/reconcile.py</span>
+                        <span class="badge badge-file">📄 src/plancheck/reconcile/</span>
                     </div>
                 </div>
             </div>
@@ -641,53 +1013,45 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 5</span>
-                        <span class="step-title">GROUPING — Organize Words into Structure</span>
+                        <span class="step-title">GROUPING — Geometry-First Clustering</span>
                     </div>
                     <p class="step-summary">
-                        At this point we have a flat pile of word boxes. Grouping turns that pile into something
-                        structured —
-                        rows, lines, paragraphs, tables, and note sections — purely based on the geometry (positions and
-                        spacing)
-                        of the words on the page.
+                        Transform a flat pile of word boxes into structured layout: rows → lines → spans → blocks → notes columns.
+                        Pure geometry-based (no ML) — uses positions, spacing, and font analysis.
                     </p>
-                    <ul class="detail-list">
-                        <li><strong>Group rows</strong> — sort words by vertical position and cluster them into
-                            horizontal rows (words that sit on the same line)</li>
-                        <li><strong>Split wide rows</strong> — if a row stretches too far across the page, it probably
-                            spans multiple columns; split it at the largest horizontal gaps</li>
-                        <li><strong>Detect columns</strong> — look for consistent vertical gaps (gutters) across many
-                            rows to identify page columns. Uses histogram analysis.</li>
-                        <li><strong>Build lines</strong> — within each column, combine rows into structured lines with
-                            proper left-to-right reading order</li>
-                        <li><strong>Split line spans</strong> — break lines into sub-groups (spans) when there are large
-                            gaps between words (like table columns)</li>
-                        <li><strong>Group blocks</strong> — stack nearby lines into blocks (think: paragraphs or table
-                            sections) based on vertical spacing</li>
-                        <li><strong>Mark tables</strong> — look at each block and flag it as a table if its rows have
-                            evenly-spaced columns (low variation in alignment)</li>
-                        <li><strong>Mark headers</strong> — identify block-level headers (bold or larger text at the top
-                            of a block)</li>
-                        <li><strong>Mark notes</strong> — detect numbered-note blocks (e.g., "1. Do this…", "2. Do
-                            that…")</li>
-                        <li><strong>Group notes columns</strong> — combine consecutive note blocks under a shared header
-                            into a notes column</li>
-                        <li><strong>Link continued columns</strong> — connect notes that continue from one area of the
-                            page to another (e.g., "NOTES" → "NOTES (CONT'D)")</li>
-                    </ul>
+
                     <details>
-                        <summary>What comes out?</summary>
-                        <ul class="detail-list">
-                            <li><strong>BlockCluster[]</strong> — a list of blocks, each containing rows, lines, and
-                                spans</li>
-                            <li>Each block knows if it's a table, a notes section, or a header</li>
-                            <li><strong>NotesColumn[]</strong> — groups of note blocks with their headers and
-                                continuation links</li>
+                        <summary>Clustering pipeline ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li><strong>group_rows()</strong> — sort by Y, cluster into horizontal rows</li>
+                            <li><strong>split_wide_lines()</strong> — break lines spanning multiple columns at largest gaps</li>
+                            <li><strong>build_lines()</strong> — combine nearby rows into Line objects with reading order</li>
+                            <li><strong>split_line_spans()</strong> — break lines into Span groups at large horizontal gaps</li>
+                            <li><strong>group_blocks()</strong> — stack nearby lines vertically into BlockCluster objects</li>
+                            <li><strong>mark_tables()</strong> — flag blocks with columnar alignment as tables</li>
+                            <li><strong>mark_headers()</strong> — identify header rows (bold, larger font, top of block)</li>
+                            <li><strong>mark_notes()</strong> — detect numbered-note patterns (1. ..., 2. ..., etc.)</li>
+                            <li><strong>group_notes_columns()</strong> — combine consecutive note blocks under shared headers</li>
+                            <li><strong>link_continued_columns()</strong> — connect "NOTES" to "NOTES (CONT'D)"</li>
                         </ul>
                     </details>
+
+                    <details>
+                        <summary>Output data structures ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li><strong>GlyphBox</strong> — single token with bbox, text, font, origin</li>
+                            <li><strong>Span</strong> — sequence of tokens on same baseline</li>
+                            <li><strong>Line</strong> — one or more spans forming a logical line</li>
+                            <li><strong>RowBand</strong> — horizontal slice containing tokens at similar Y</li>
+                            <li><strong>BlockCluster</strong> — group of lines forming a paragraph/table/section</li>
+                            <li><strong>NotesColumn</strong> — notes blocks with header and continuation links</li>
+                        </ul>
+                    </details>
+
                     <div class="badge-row">
                         <span class="badge badge-input">Merged token list</span>
-                        <span class="badge badge-output">Blocks · Lines · Spans · Notes columns</span>
-                        <span class="badge badge-lib">NumPy · custom algorithms</span>
+                        <span class="badge badge-output">Blocks · Lines · NotesColumns</span>
+                        <span class="badge badge-lib">NumPy</span>
                         <span class="badge badge-file">📄 src/plancheck/grouping/clustering.py</span>
                     </div>
                 </div>
@@ -695,7 +1059,7 @@
         </div>
 
         <!-- ════════════════════════════════════════════════════════════════ -->
-        <div class="phase-divider"><span>Stage 6 — ZONING &amp; REGION DETECTION</span></div>
+        <div class="phase-divider"><span>Stage 6 — ANALYSIS</span></div>
         <!-- ════════════════════════════════════════════════════════════════ -->
 
         <div class="timeline">
@@ -705,15 +1069,20 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 6a</span>
-                        <span class="step-title">Extract Graphics</span>
+                        <span class="step-title">Extract PDF Graphics</span>
                     </div>
                     <p class="step-summary">
-                        Pull all drawn shapes (rectangles, lines, paths) from the PDF's vector graphics layer.
-                        These are the boxes and borders that surround legends, title blocks, revision tables, etc.
-                        They help the detectors below figure out which areas of the page are enclosed in boxes.
+                        Extract all vector graphics from the PDF: rectangles, lines, curves, paths. These form the
+                        structural boxes around legends, title blocks, revision tables, and other enclosed regions.
                     </p>
+                    <ul class="detail-list">
+                        <li>pdfplumber extracts: <code>rects</code>, <code>lines</code>, <code>curves</code></li>
+                        <li>Converted to <code>GraphicElement</code> objects with bbox + stroke info</li>
+                        <li>Large rectangles → <code>StructuralBox</code> candidates</li>
+                    </ul>
                     <div class="badge-row">
                         <span class="badge badge-lib">pdfplumber</span>
+                        <span class="badge badge-file">📄 src/plancheck/analysis/graphics.py</span>
                     </div>
                 </div>
             </div>
@@ -723,14 +1092,16 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 6b</span>
-                        <span class="step-title">Structural Box & Semantic Region Detection</span>
+                        <span class="step-title">Structural Box Classification</span>
                     </div>
                     <p class="step-summary">
-                        Find large enclosing rectangles on the page (boxes drawn around groups of text) and classify
-                        them
-                        as title blocks, legend boxes, etc. Also identify semantic regions — meaningful areas anchored
-                        by header text.
+                        Classify large enclosing rectangles by their content and position: title_block, legend_box,
+                        notes_box, abbreviations_box, revision_box, drawing_border, etc.
                     </p>
+                    <div class="badge-row">
+                        <span class="badge badge-file">📄 src/plancheck/analysis/structural_boxes.py</span>
+                        <span class="badge badge-file">📄 src/plancheck/analysis/box_classifier.py</span>
+                    </div>
                 </div>
             </div>
 
@@ -739,29 +1110,27 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 6c</span>
-                        <span class="step-title">Region Detectors (run in sequence)</span>
+                        <span class="step-title">Region Detectors (Sequential Pipeline)</span>
                     </div>
                     <p class="step-summary">
-                        A series of specialized detectors run one after another. Each detector finds a specific type of
-                        content
-                        on the page and adds its area to an "exclusion zone" so later detectors don't double-count the
-                        same region.
+                        Specialized detectors run in sequence. Each detector adds its area to an exclusion mask so
+                        subsequent detectors don't double-count regions.
                     </p>
                     <ul class="detail-list">
-                        <li><strong>① Abbreviation regions</strong> — find two-column lists of abbreviations (e.g.,
-                            "CONC = CONCRETE"). Pure text pattern, no graphics needed.</li>
-                        <li><strong>② Misc title regions</strong> — detect page-level titles like "OKLAHOMA DEPARTMENT
-                            OF TRANSPORTATION." Added to exclusion zones.</li>
-                        <li><strong>③ Revision regions</strong> — find revision tables (title block elements with
-                            revision numbers, dates, and descriptions). Added to exclusion zones.</li>
-                        <li><strong>④ Filter graphics</strong> — remove any drawn shapes that fall inside
-                            already-detected regions (abbreviations, revisions) to avoid confusing the legend detector.
-                        </li>
-                        <li><strong>⑤ Legend regions</strong> — detect map/drawing legends that pair graphic symbols
-                            with text descriptions. Uses filtered graphics + exclusion zones.</li>
-                        <li><strong>⑥ Standard detail regions</strong> — find sheet-number / description tables (like
-                            abbreviations but listing drawing references).</li>
+                        <li><strong>① AbbreviationRegion</strong> — two-column lists (CODE = MEANING). Returns parsed entries.</li>
+                        <li><strong>② MiscTitleRegion</strong> — page-level titles ("OKLAHOMA DEPARTMENT OF TRANSPORTATION")</li>
+                        <li><strong>③ RevisionRegion</strong> — revision tables with number, description, date per row</li>
+                        <li><strong>④ Filter Graphics</strong> — remove shapes inside already-detected regions</li>
+                        <li><strong>⑤ LegendRegion</strong> — symbol + description pairs; scans remaining graphics</li>
+                        <li><strong>⑥ StandardDetailRegion</strong> — sheet-number / description reference tables</li>
+                        <li><strong>⑦ TitleBlockInfo</strong> — parse title block fields (project name, sheet number, etc.)</li>
+                        <li><strong>⑧ SemanticRegion</strong> — header-anchored content areas with confidence scores</li>
                     </ul>
+                    <div class="badge-row">
+                        <span class="badge badge-file">📄 src/plancheck/analysis/abbreviations.py</span>
+                        <span class="badge badge-file">📄 src/plancheck/analysis/legends.py</span>
+                        <span class="badge badge-file">📄 src/plancheck/analysis/revisions.py</span>
+                    </div>
                 </div>
             </div>
 
@@ -770,16 +1139,20 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 6d</span>
-                        <span class="step-title">Page Zoning & Block Classification</span>
+                        <span class="step-title">Page Zoning</span>
                     </div>
                     <p class="step-summary">
-                        Divide the page into named zones (e.g., "notes area", "legend area", "title block area",
-                        "drawing area")
-                        based on where all the detected regions and notes columns are. Then tag every block with the
-                        zone it belongs to.
+                        Divide the page into named zones based on detected regions. Each block is tagged with its zone
+                        (ZoneTag enum). Provides spatial context for ML classification and checks.
                     </p>
+                    <ul class="detail-list">
+                        <li>ZoneTags: <code>border</code>, <code>drawing</code>, <code>notes</code>, <code>title_block</code>, 
+                            <code>legend</code>, <code>abbreviations</code>, <code>revisions</code>, <code>details</code>, <code>page</code></li>
+                        <li>Blocks are classified by zone with <code>classify_blocks()</code></li>
+                        <li>Zone summary provides page layout statistics</li>
+                    </ul>
                     <div class="badge-row">
-                        <span class="badge badge-file">📄 src/plancheck/analysis/</span>
+                        <span class="badge badge-file">📄 src/plancheck/analysis/zoning.py</span>
                     </div>
                 </div>
             </div>
@@ -787,7 +1160,7 @@
         </div>
 
         <!-- ════════════════════════════════════════════════════════════════ -->
-        <div class="phase-divider"><span>Stage 7 — SEMANTIC CHECKS</span></div>
+        <div class="phase-divider"><span>Stage 7 — CHECKS</span></div>
         <!-- ════════════════════════════════════════════════════════════════ -->
 
         <div class="timeline">
@@ -796,21 +1169,22 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 7</span>
-                        <span class="step-title">Semantic Checks — Validate Content</span>
+                        <span class="step-title">Semantic Checks — Automated QA</span>
                     </div>
                     <p class="step-summary">
-                        Now that we know what's on the page and where everything is, run a battery of automated checks.
-                        These look at the detected notes, abbreviations, revisions, legends, and other regions to see if
-                        anything
-                        looks wrong or incomplete — like a "NOTES" header with no notes underneath.
+                        Run a battery of automated quality checks on detected content. Each check produces structured
+                        "findings" with severity levels (info, warning, error).
                     </p>
                     <ul class="detail-list">
-                        <li>Each check produces "findings" — structured records describing what was found and its
-                            severity</li>
-                        <li>Findings are saved to a JSON file for downstream review</li>
+                        <li>Empty notes sections (header without content)</li>
+                        <li>Missing required abbreviations for discipline</li>
+                        <li>Incomplete revision history</li>
+                        <li>Legend entries without descriptions</li>
+                        <li>Title block field validation</li>
+                        <li>Cross-reference validation (sheet references exist)</li>
                     </ul>
                     <div class="badge-row">
-                        <span class="badge badge-file">📄 src/plancheck/checks/</span>
+                        <span class="badge badge-file">📄 src/plancheck/checks/semantic_checks.py</span>
                     </div>
                 </div>
             </div>
@@ -827,33 +1201,22 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 8a</span>
-                        <span class="step-title">Save JSON Artifacts</span>
+                        <span class="step-title">JSON Artifacts</span>
                     </div>
                     <p class="step-summary">
-                        All the structured data produced by earlier stages is serialized to JSON files in the run
-                        folder.
-                        Each file captures a different aspect of what was found on the page.
+                        All structured data is serialized to JSON files in the run folder's <code>artifacts/</code> directory.
                     </p>
                     <ul class="detail-list">
-                        <li><strong>boxes.json</strong> — every word/token with its position, text, and origin</li>
-                        <li><strong>blocks.json</strong> — the grouped blocks with their rows, lines, spans, labels, and
-                            table/notes flags</li>
-                        <li><strong>columns.json</strong> — notes columns with header text, continuation links, and
-                            bounding boxes</li>
-                        <li><strong>abbreviations.json</strong> — detected abbreviation regions with their parsed code →
-                            meaning entries</li>
-                        <li><strong>legends.json</strong> — legend regions with symbol → description entries</li>
-                        <li><strong>revisions.json</strong> — revision tables with number, description, and date per row
-                        </li>
-                        <li><strong>misc_titles.json</strong> — page-level title text detections</li>
-                        <li><strong>standard_details.json</strong> — sheet reference tables</li>
-                        <li><strong>structural_boxes.json</strong> — large enclosing rectangles and their classification
-                        </li>
-                        <li><strong>semantic_regions.json</strong> — labeled content regions with confidence scores</li>
-                        <li><strong>zones.json</strong> — the page zone map</li>
-                        <li><strong>findings.json</strong> — semantic check results (if any findings)</li>
-                        <li><strong>extraction.json</strong> — unified per-page snapshot of tokens, blocks, and notes
-                            columns with page dimensions (consumed by sheet recreation)</li>
+                        <li><strong>boxes.json</strong> — all tokens with position, text, origin</li>
+                        <li><strong>blocks.json</strong> — clustered blocks with structure metadata</li>
+                        <li><strong>columns.json</strong> — notes columns with headers and links</li>
+                        <li><strong>abbreviations.json</strong> — parsed CODE → MEANING entries</li>
+                        <li><strong>legends.json</strong> — symbol → description entries</li>
+                        <li><strong>revisions.json</strong> — revision table rows</li>
+                        <li><strong>structural_boxes.json</strong> — classified enclosing rectangles</li>
+                        <li><strong>semantic_regions.json</strong> — header-anchored regions</li>
+                        <li><strong>zones.json</strong> — page zone assignments</li>
+                        <li><strong>extraction.json</strong> — unified per-page snapshot for sheet recreation</li>
                     </ul>
                     <div class="badge-row">
                         <span class="badge badge-output">📁 runs/…/artifacts/</span>
@@ -866,22 +1229,17 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 8b</span>
-                        <span class="step-title">Generate Debug Overlays</span>
+                        <span class="step-title">Debug Overlays</span>
                     </div>
                     <p class="step-summary">
-                        Visual debug images are drawn on top of the original page rendering. These let you visually
-                        verify
-                        what the pipeline detected — colored boxes around lines, blocks, columns, and injected symbols.
+                        Visual debug images overlaid on the original page rendering for verification.
                     </p>
                     <ul class="detail-list">
-                        <li><strong>Lines overlay</strong> — shows every detected line and span with colored boxes on
-                            the page image</li>
-                        <li><strong>Columns overlay</strong> — shows blocks colored by type: header, notes, table,
-                            regular</li>
-                        <li><strong>OCR reconcile overlay</strong> — shows accepted and rejected symbol injections
-                            (green = accepted, red = rejected)</li>
-                        <li><strong>Symbol overlay</strong> — highlights just the symbol-bearing tokens with green boxes
-                            (when debug mode is on)</li>
+                        <li><strong>Lines overlay</strong> — colored boxes for detected lines/spans</li>
+                        <li><strong>Columns overlay</strong> — blocks colored by type (header, notes, table)</li>
+                        <li><strong>Reconcile overlay</strong> — green=accepted, red=rejected injections</li>
+                        <li><strong>Candidates overlay</strong> — VOCR candidate patches with outcomes</li>
+                        <li><strong>Regions overlay</strong> — detected regions with labels</li>
                     </ul>
                     <div class="badge-row">
                         <span class="badge badge-output">📁 runs/…/overlays/</span>
@@ -895,26 +1253,18 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 8c</span>
-                        <span class="step-title">Compute Quality Score & Build Manifest</span>
+                        <span class="step-title">Quality Score & Manifest</span>
                     </div>
                     <p class="step-summary">
-                        A page-level quality score (0 to 1) is calculated by combining token density, region coverage,
-                        and error signals.
-                        Then all results — stage timings, counts, artifacts, zones, quality score, and findings — are
-                        assembled into
-                        a page result dictionary that gets written into the run's <strong>manifest.json</strong>.
+                        Compute a 0–1 quality score from density, region coverage, and error signals. Assemble all
+                        results into the run's <code>manifest.json</code>.
                     </p>
                     <ul class="detail-list">
-                        <li><strong>Density score</strong> — how many words per square inch (2+ tokens/sq-in = full
-                            score)</li>
-                        <li><strong>Region score</strong> — how many types of structured content were detected (3+ =
-                            full score)</li>
-                        <li><strong>Error penalty</strong> — encoding issues (garbled text) reduce the score</li>
-                        <li><strong>Stage health flags</strong> — notes if VOCR was degraded (0 tokens after 30+
-                            seconds) or if reconcile found no candidates</li>
-                        <li><strong>Region confidences</strong> — per-region confidence scores for all detected areas
-                        </li>
-                        <li>Structured CSV exports of key data are also generated</li>
+                        <li>Density score: tokens per square inch</li>
+                        <li>Region score: count of detected region types</li>
+                        <li>Error penalty: encoding issues, low confidence tokens</li>
+                        <li>Stage timings and counts</li>
+                        <li>Per-region confidence scores</li>
                     </ul>
                     <div class="badge-row">
                         <span class="badge badge-output">📄 manifest.json</span>
@@ -927,50 +1277,283 @@
                 <div class="step-card">
                     <div class="step-header">
                         <span class="step-number">STAGE 8d</span>
-                        <span class="step-title">Sheet Recreation (On-Demand)</span>
+                        <span class="step-title">Sheet Recreation PDF</span>
                     </div>
                     <p class="step-summary">
-                        An optional post-pipeline step that reads the <strong>extraction.json</strong> artifacts and
-                        produces a text-only searchable PDF that mirrors the spatial layout of the original plan sheet.
-                        Every detected token is placed at its original (x, y) position on a blank page — serving as
-                        both a visual integration test for coordinate fidelity and a useful artifact for downstream
-                        consumers.
+                        Optional post-pipeline step that produces a text-only searchable PDF mirroring the original
+                        spatial layout. Every token at its (x, y) position on a blank page.
                     </p>
-                    <details>
-                        <summary>Rendering features</summary>
-                        <ul class="detail-list">
-                            <li><strong>Font mapping</strong> — PDF-internal font names (including CAD/SHX fonts) are
-                                mapped to ReportLab built-in fonts (Helvetica, Courier, Times) with bold/italic
-                                detection</li>
-                            <li><strong>Width fitting</strong> — each word is horizontally scaled (50–200%) via
-                                <code>setHorizScale</code> so its rendered width matches the original bounding box
-                            </li>
-                            <li><strong>State isolation</strong> — every token is wrapped in
-                                <code>saveState/restoreState</code> so font, colour, and scale changes stay isolated
-                            </li>
-                            <li><strong>Block boundaries</strong> — light colour-coded rectangles around grouped blocks
-                                (blue-gray = header, green-gray = notes, orange-gray = table, light gray = regular)
-                            </li>
-                            <li><strong>Semantic labels</strong> — small [HEADER], [NOTES], [TABLE] tags drawn at the
-                                top-left of classified blocks</li>
-                            <li><strong>Origin colour mode</strong> — tokens can be colour-coded by source: black for
-                                TOCR, blue for VOCR, red for reconcile-injected</li>
-                            <li><strong>PDF layers</strong> — when enabled, content is organised into togglable Optional
-                                Content Groups per token origin, plus separate layers for block structure, labels, and
-                                watermark</li>
-                            <li><strong>Watermark</strong> — a faint background image of the original page can be
-                                rendered behind the text for visual comparison (configurable opacity)</li>
-                            <li><strong>Page footer</strong> — each page gets a centred footer with page number, PDF
-                                stem, run name, and token count breakdown (TOCR / VOCR / reconcile)</li>
-                            <li><strong>PDF metadata</strong> — title, subject, author, and creator fields are set on
-                                the output PDF</li>
-                        </ul>
-                    </details>
+                    <ul class="detail-list">
+                        <li>Font mapping: CAD fonts → ReportLab fonts</li>
+                        <li>Width fitting: horizontal scaling to match original bbox</li>
+                        <li>Block boundaries with color coding</li>
+                        <li>Origin color mode: black=TOCR, blue=VOCR, red=reconcile</li>
+                        <li>PDF layers for togglable content groups</li>
+                        <li>Watermark: optional faint background from original</li>
+                    </ul>
                     <div class="badge-row">
-                        <span class="badge badge-input">📄 extraction.json</span>
                         <span class="badge badge-output">📄 *_recreation.pdf</span>
                         <span class="badge badge-lib">ReportLab</span>
-                        <span class="badge badge-file">🛠️ run_sheet_recreation.py</span>
+                        <span class="badge badge-file">📄 src/plancheck/export/sheet_recreation.py</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════════ -->
+        <div class="phase-divider"><span>ML Feedback & Corrections System</span></div>
+        <!-- ════════════════════════════════════════════════════════════════ -->
+
+        <div class="timeline">
+
+            <div class="step" style="--dot-color: #f472b6;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">ML LOOP</span>
+                        <span class="step-title">CorrectionStore — SQLite Training Database</span>
+                    </div>
+                    <p class="step-summary">
+                        A persistent SQLite database (<code>data/corrections.db</code>) stores all pipeline detections,
+                        human corrections, and training examples. Forms the foundation for continuous learning.
+                    </p>
+
+                    <details>
+                        <summary>Database schema ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li><strong>documents</strong> — PDF metadata (doc_id, filename, page_count, dimensions)</li>
+                            <li><strong>detections</strong> — pipeline detections (bbox, element_type, confidence, features_json)</li>
+                            <li><strong>corrections</strong> — user corrections (relabel, reshape, delete, accept)</li>
+                            <li><strong>training_examples</strong> — labeled examples for classifier training</li>
+                            <li><strong>candidate_outcomes</strong> — VOCR candidate hit/miss records</li>
+                            <li><strong>feature_cache</strong> — precomputed feature vectors</li>
+                            <li><strong>training_runs</strong> — experiment metadata and metrics</li>
+                        </ul>
+                    </details>
+
+                    <details>
+                        <summary>Mixin architecture ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li><code>FeatureCacheMixin</code> — feature vector caching</li>
+                            <li><code>CandidateOutcomesMixin</code> — VOCR candidate tracking</li>
+                            <li><code>SnapshotMixin</code> — database backup/restore</li>
+                            <li><code>BoxGroupMixin</code> — detection grouping</li>
+                            <li><code>TrainingDataMixin</code> — training set export</li>
+                            <li><code>TrainingRunsMixin</code> — experiment tracking</li>
+                            <li><code>DbHelpersMixin</code> — summary queries</li>
+                        </ul>
+                    </details>
+
+                    <div class="badge-row">
+                        <span class="badge badge-db">🗄️ data/corrections.db</span>
+                        <span class="badge badge-file">📄 src/plancheck/corrections/store.py</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step" style="--dot-color: #f472b6;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">ML LOOP</span>
+                        <span class="step-title">ElementClassifier — Block Type Classification</span>
+                    </div>
+                    <p class="step-summary">
+                        A GradientBoostingClassifier trained on corrected examples to predict block element types
+                        (header, notes, table, legend, abbreviations, etc.). Uses 40+ engineered features.
+                    </p>
+
+                    <details>
+                        <summary>Feature categories ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li><strong>Geometric</strong> — x/y position, width/height, aspect ratio, zone position</li>
+                            <li><strong>Text</strong> — font size, is_bold, is_all_caps, token count, avg word length</li>
+                            <li><strong>Content</strong> — keyword patterns (NOTES, LEGEND, etc.), digit presence</li>
+                            <li><strong>Relational</strong> — below header?, header distance, sibling count</li>
+                            <li><strong>OCR</strong> — mean/min token confidence</li>
+                        </ul>
+                    </details>
+
+                    <details>
+                        <summary>Training & calibration ▸</summary>
+                        <ul class="detail-list" style="margin-top: 8px;">
+                            <li>Balanced class weighting via sample_weight</li>
+                            <li>Ensemble mode: GBM + HistGradientBoosting (optional LightGBM/XGBoost)</li>
+                            <li>Post-training isotonic calibration for well-calibrated probabilities</li>
+                            <li>Model stored in <code>data/element_classifier.pkl</code></li>
+                        </ul>
+                    </details>
+
+                    <div class="badge-row">
+                        <span class="badge badge-ml">📊 GradientBoostingClassifier</span>
+                        <span class="badge badge-file">📄 src/plancheck/corrections/classifier.py</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step" style="--dot-color: #f472b6;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">ML LOOP</span>
+                        <span class="step-title">CandidateClassifier — VOCR Patch Filtering</span>
+                    </div>
+                    <p class="step-summary">
+                        A secondary classifier specifically for VOCR candidate patches. Filters out low-probability
+                        candidates before expensive OCR runs. Uses spatial + context features.
+                    </p>
+                    <div class="badge-row">
+                        <span class="badge badge-ml">📊 GradientBoostingClassifier</span>
+                        <span class="badge badge-file">📄 src/plancheck/corrections/candidate_classifier.py</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step" style="--dot-color: #f472b6;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">ML LOOP</span>
+                        <span class="step-title">ML Feedback Application</span>
+                    </div>
+                    <p class="step-summary">
+                        On each pipeline run, apply prior corrections and ML predictions. Three-pass approach: prior
+                        corrections → ML relabeling → confidence scoring.
+                    </p>
+                    <ul class="detail-list">
+                        <li><strong>Pass 1</strong> — Match prior corrections to new detections by bbox IoU</li>
+                        <li><strong>Pass 2</strong> — ML relabeling: if model disagrees with rule-based label and confidence ≥ threshold, update</li>
+                        <li><strong>Pass 3</strong> — Write model confidence to all detections</li>
+                        <li><strong>Pass 4</strong> — Drift detection (optional): flag feature vectors outside training distribution</li>
+                    </ul>
+                    <div class="badge-row">
+                        <span class="badge badge-file">📄 src/plancheck/ml_feedback.py</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step" style="--dot-color: #f472b6;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">ML LOOP</span>
+                        <span class="step-title">Active Learning</span>
+                    </div>
+                    <p class="step-summary">
+                        Rank pages by model uncertainty to prioritize annotation. Pages with high mean uncertainty
+                        (1 - max confidence) should be reviewed first for maximum training value.
+                    </p>
+                    <ul class="detail-list">
+                        <li><code>rank_pages_by_uncertainty()</code> — returns (doc_id, page, uncertainty) tuples</li>
+                        <li><code>suggest_next_page()</code> — highest-uncertainty uncorrected page</li>
+                    </ul>
+                    <div class="badge-row">
+                        <span class="badge badge-file">📄 src/plancheck/corrections/active_learning.py</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════════ -->
+        <div class="phase-divider"><span>Advanced Features</span></div>
+        <!-- ════════════════════════════════════════════════════════════════ -->
+
+        <div class="timeline">
+
+            <div class="step" style="--dot-color: #a855f7;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">ADVANCED</span>
+                        <span class="step-title">LLM Integration</span>
+                    </div>
+                    <p class="step-summary">
+                        Unified LLM client supporting Ollama (local), OpenAI, and Anthropic providers. Used for semantic
+                        checks, entity extraction, and query answering with built-in token tracking and budget enforcement.
+                    </p>
+                    <ul class="detail-list">
+                        <li><strong>LLMClient</strong> — unified interface with policy enforcement</li>
+                        <li><strong>CostTracker</strong> — token counting and cost estimation</li>
+                        <li><strong>Entity extraction</strong> — structured data extraction from notes</li>
+                        <li><strong>Query engine</strong> — natural language questions about drawings</li>
+                        <li>Budget limits documented in <code>docs/LLM_BUDGET.md</code></li>
+                    </ul>
+                    <div class="badge-row">
+                        <span class="badge badge-lib">ollama · openai · anthropic</span>
+                        <span class="badge badge-file">📄 src/plancheck/llm/client.py</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step" style="--dot-color: #a855f7;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">ADVANCED</span>
+                        <span class="step-title">GNN Cross-Page Reasoning</span>
+                    </div>
+                    <p class="step-summary">
+                        Graph Neural Network for document-level understanding. Builds a graph where nodes are blocks/regions
+                        and edges represent spatial or semantic relationships across pages.
+                    </p>
+                    <ul class="detail-list">
+                        <li><strong>DocumentGNN</strong> — Graph Attention Network architecture</li>
+                        <li><strong>build_document_graph()</strong> — constructs graph from PageResults</li>
+                        <li>Node types: block, region, page</li>
+                        <li>Edge types: spatial_adjacent, same_page, cross_reference, continuation</li>
+                        <li>Requires optional <code>torch_geometric</code> dependency</li>
+                    </ul>
+                    <div class="badge-row">
+                        <span class="badge badge-ml">📊 GNN/GAT</span>
+                        <span class="badge badge-lib">torch_geometric</span>
+                        <span class="badge badge-file">📄 src/plancheck/analysis/gnn/</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step" style="--dot-color: #a855f7;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">ADVANCED</span>
+                        <span class="step-title">Vision Feature Extraction</span>
+                    </div>
+                    <p class="step-summary">
+                        Optional CNN-based image feature extraction for block classification. Crops each detection's
+                        region from the page image and extracts embeddings using a configurable backbone.
+                    </p>
+                    <ul class="detail-list">
+                        <li>Configurable backbone (ResNet, EfficientNet, etc.)</li>
+                        <li>Features appended to geometric/text feature vectors</li>
+                        <li>Requires optional vision dependencies: <code>torchvision</code></li>
+                    </ul>
+                    <div class="badge-row">
+                        <span class="badge badge-ml">📊 CNN embeddings</span>
+                        <span class="badge badge-file">📄 src/plancheck/corrections/image_features.py</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step" style="--dot-color: #a855f7;">
+                <div class="step-dot"></div>
+                <div class="step-card">
+                    <div class="step-header">
+                        <span class="step-number">ADVANCED</span>
+                        <span class="step-title">Drift Detection</span>
+                    </div>
+                    <p class="step-summary">
+                        Monitor feature distributions to detect when new documents deviate significantly from training
+                        data. Flags pages where ML predictions may be unreliable.
+                    </p>
+                    <ul class="detail-list">
+                        <li>Per-feature statistical bounds from training set</li>
+                        <li>Runtime comparison against bounds</li>
+                        <li>Drift warnings included in stage results</li>
+                    </ul>
+                    <div class="badge-row">
+                        <span class="badge badge-file">📄 src/plancheck/corrections/drift_detection.py</span>
                     </div>
                 </div>
             </div>
@@ -980,7 +1563,8 @@
         <!-- ════════════════════════════════════════════════════════════════ -->
 
         <div class="footer">
-            Advanced Plans Parser · Pipeline Detail Diagram · Generated February 2026
+            Advanced Plans Parser · Pipeline Detail Reference · March 2026<br>
+            <span style="color: #64748b;">Python 3.10+ · pdfplumber · PaddleOCR · scikit-learn · NumPy · OpenCV · ReportLab</span>
         </div>
     </div>
 </body>

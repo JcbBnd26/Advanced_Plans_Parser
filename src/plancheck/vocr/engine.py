@@ -42,9 +42,10 @@ def clear_ocr_cache() -> int:
 def _engine_key(cfg: "GroupingConfig | None") -> tuple:
     """Derive a hashable cache key from the VOCR-relevant config fields."""
     if cfg is None:
-        return ("mobile", False, False, False)
+        return ("mobile", "gpu", False, False, False)
     return (
         cfg.vocr_model_tier,
+        getattr(cfg, "vocr_device", "gpu"),
         cfg.vocr_use_orientation_classify,
         cfg.vocr_use_doc_unwarping,
         cfg.vocr_use_textline_orientation,
@@ -76,13 +77,15 @@ def _get_ocr(cfg: "GroupingConfig | None" = None):
 
     tier = key[0] if key[0] in _MODEL_TIERS else "mobile"
     det_model, rec_model = _MODEL_TIERS[tier]
+    device = key[1] if key[1] in ("gpu", "cpu") else "gpu"
 
     _ocr_cache[key] = PaddleOCR(
         text_detection_model_name=det_model,
         text_recognition_model_name=rec_model,
-        use_doc_orientation_classify=key[1],
-        use_doc_unwarping=key[2],
-        use_textline_orientation=key[3],
+        use_doc_orientation_classify=key[2],
+        use_doc_unwarping=key[3],
+        use_textline_orientation=key[4],
+        device=device,
     )
     # Evict oldest entry if cache exceeds max size
     while len(_ocr_cache) > _MAX_CACHE:

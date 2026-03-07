@@ -126,35 +126,3 @@ class AnnotationStoreMixin(LabelRegistryMixin, FilterControlsMixin, ModelTrainin
         self._suggest_btn.pack_forget()
         self._type_var.set(new_label)
         self._status.configure(text=f"Applied suggestion: {old_label} → {new_label}")
-
-        listbox = tk.Listbox(win, width=55, height=10)
-        listbox.pack(padx=10, fill="both", expand=True)
-
-        for s in snaps:
-            ts = s.get("timestamp", "?")
-            tag = s.get("tag", "")
-            size = s.get("size_kb", 0)
-            listbox.insert("end", f"{ts}  [{tag}]  ({size:.0f} KB)")
-
-        def on_restore():
-            sel = listbox.curselection()
-            if not sel:
-                return
-            idx = sel[0]
-            snap_path = snaps[idx]["path"]
-            if messagebox.askyesno(
-                "Restore",
-                "This will overwrite the current database. Continue?",
-                parent=win,
-            ):
-                try:
-                    self._store.restore_snapshot(snap_path)
-                    self._status.configure(text="Snapshot restored")
-                    win.destroy()
-                    # Reload current view
-                    if self._pdf_path:
-                        self._navigate_to_page()
-                except Exception as exc:
-                    messagebox.showerror("Restore Error", str(exc), parent=win)
-
-        ttk.Button(win, text="Restore", command=on_restore).pack(padx=10, pady=8)

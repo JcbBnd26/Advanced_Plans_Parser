@@ -59,6 +59,9 @@ class PipelineTab:
 
         self._build_ui()
 
+        # Subscribe to load_config event (fired by Runs tab)
+        self.state.subscribe("load_config", self._on_load_config)
+
     # ------------------------------------------------------------------
     # Build UI
     # ------------------------------------------------------------------
@@ -172,8 +175,11 @@ class PipelineTab:
         stages_frame.grid(row=row, column=0, sticky="ew", **pad)
         stages_frame.columnconfigure(1, weight=1)
 
+        # Get defaults from GroupingConfig (single source of truth)
+        _defaults = GroupingConfig()
+
         # TOCR
-        self.tocr_var = tk.BooleanVar(value=True)
+        self.tocr_var = tk.BooleanVar(value=_defaults.enable_tocr)
         ttk.Checkbutton(
             stages_frame,
             text="TOCR (pdfplumber text extraction)",
@@ -186,7 +192,7 @@ class PipelineTab:
         ).grid(row=0, column=1, sticky="w", padx=(10, 0))
 
         # VOCRPP
-        self.ocr_preprocess_var = tk.BooleanVar(value=True)
+        self.ocr_preprocess_var = tk.BooleanVar(value=_defaults.enable_ocr_preprocess)
         ttk.Checkbutton(
             stages_frame,
             text="VOCRPP (Image Preprocessing)",
@@ -199,7 +205,7 @@ class PipelineTab:
         ).grid(row=1, column=1, sticky="w", padx=(10, 0))
 
         # VOCR
-        self.vocr_var = tk.BooleanVar(value=True)
+        self.vocr_var = tk.BooleanVar(value=_defaults.enable_vocr)
         ttk.Checkbutton(
             stages_frame,
             text="VOCR (PaddleOCR extraction)",
@@ -212,7 +218,7 @@ class PipelineTab:
         ).grid(row=2, column=1, sticky="w", padx=(10, 0))
 
         # Reconcile
-        self.ocr_reconcile_var = tk.BooleanVar(value=True)
+        self.ocr_reconcile_var = tk.BooleanVar(value=_defaults.enable_ocr_reconcile)
         ttk.Checkbutton(
             stages_frame,
             text="Reconcile (Symbol injection)",
@@ -228,7 +234,7 @@ class PipelineTab:
         dpi_row = ttk.Frame(stages_frame)
         dpi_row.grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 2))
         ttk.Label(dpi_row, text="OCR/Preprocess DPI:").pack(side="left")
-        self.ocr_dpi_var = tk.StringVar(value="300")
+        self.ocr_dpi_var = tk.StringVar(value=str(_defaults.ocr_reconcile_resolution))
         ttk.Spinbox(
             dpi_row,
             textvariable=self.ocr_dpi_var,
@@ -247,6 +253,37 @@ class PipelineTab:
             width=8,
             state="readonly",
         ).pack(side="left", padx=(8, 0))
+
+        # Separator
+        ttk.Separator(stages_frame, orient="horizontal").grid(
+            row=5, column=0, columnspan=2, sticky="ew", pady=(8, 4)
+        )
+
+        # Skew correction
+        self.skew_var = tk.BooleanVar(value=_defaults.enable_skew)
+        ttk.Checkbutton(
+            stages_frame,
+            text="Deskew (Rotation correction)",
+            variable=self.skew_var,
+        ).grid(row=6, column=0, sticky="w", pady=2)
+        ttk.Label(
+            stages_frame,
+            text="Correct tilted/rotated scans (slower)",
+            foreground="gray",
+        ).grid(row=6, column=1, sticky="w", padx=(10, 0))
+
+        # LLM checks
+        self.llm_checks_var = tk.BooleanVar(value=_defaults.enable_llm_checks)
+        ttk.Checkbutton(
+            stages_frame,
+            text="LLM Checks (Semantic analysis)",
+            variable=self.llm_checks_var,
+        ).grid(row=7, column=0, sticky="w", pady=2)
+        ttk.Label(
+            stages_frame,
+            text="AI-powered code compliance checks (requires API)",
+            foreground="gray",
+        ).grid(row=7, column=1, sticky="w", padx=(10, 0))
 
         row += 1
 
@@ -285,16 +322,26 @@ class PipelineTab:
 
         row += 1
 
-        # ── Stage Progress Bar ───────────────────────────────────────
-        self.stage_bar = StageProgressBar(self.frame)
-        self.stage_bar.grid(
-            row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(4, 2)
+        # ── Stage Progress Bar with Copy Button ─────────────────────
+        stage_frame = ttk.Frame(self.frame)
+        stage_frame.grid(row=1, column=0, sticky="ew", padx=(10, 25), pady=(4, 2))
+        stage_frame.columnconfigure(0, weight=1)
+
+        self.stage_bar = StageProgressBar(stage_frame)
+        self.stage_bar.grid(row=0, column=0, sticky="ew")
+
+        copy_btn = ttk.Button(
+            stage_frame,
+            text="📋",
+            width=3,
+            command=self._copy_stage_times,
         )
+        copy_btn.grid(row=0, column=1, padx=(6, 0), sticky="ns")
 
         # ── Embedded Log Console ─────────────────────────────────────
         self.log_panel = LogPanel(self.frame, height=10)
         self.log_panel.grid(
-            row=2, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 6)
+            row=2, column=0, sticky="nsew", padx=10, pady=(0, 6)
         )
 
     # ------------------------------------------------------------------
@@ -309,6 +356,8 @@ class PipelineTab:
         cfg.enable_vocr = self.vocr_var.get()
         cfg.enable_ocr_reconcile = self.ocr_reconcile_var.get()
         cfg.enable_ocr_preprocess = self.ocr_preprocess_var.get()
+        cfg.enable_skew = self.skew_var.get()
+        cfg.enable_llm_checks = self.llm_checks_var.get()
 
         try:
             cfg.ocr_reconcile_resolution = int(self.ocr_dpi_var.get())
@@ -323,7 +372,18 @@ class PipelineTab:
         self.vocr_var.set(cfg.enable_vocr)
         self.ocr_reconcile_var.set(cfg.enable_ocr_reconcile)
         self.ocr_preprocess_var.set(cfg.enable_ocr_preprocess)
+        self.skew_var.set(cfg.enable_skew)
+        self.llm_checks_var.set(cfg.enable_llm_checks)
         self.ocr_dpi_var.set(str(cfg.ocr_reconcile_resolution))
+
+    def _on_load_config(self) -> None:
+        """Handle load_config event from Runs tab."""
+        config_dict = getattr(self.state, "pending_config", None)
+        if not config_dict:
+            return
+        cfg = GroupingConfig.from_dict(config_dict)
+        self._apply_config(cfg)
+        self.state.pending_config = None  # Clear after applying
 
     # ------------------------------------------------------------------
     # PDF / Page selection (preserved from original)
@@ -410,6 +470,9 @@ class PipelineTab:
         self.run_button.config(state="disabled")
         self.cancel_button.config(state="normal")
 
+        # Notify other tabs to close their database connections
+        self.state.notify("pipeline_starting")
+
         self._worker = PipelineWorker(
             self.root, self.log_panel, self.stage_bar, self.error_panel
         )
@@ -454,3 +517,7 @@ class PipelineTab:
     def _cancel_processing(self) -> None:
         if self._worker:
             self._worker.cancel()
+
+    def _copy_stage_times(self) -> None:
+        """Copy all stage times to clipboard."""
+        self.stage_bar.copy_times()

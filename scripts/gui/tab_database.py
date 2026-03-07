@@ -65,8 +65,28 @@ class DatabaseTab:
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed, add="+")
 
         # Auto-refresh when a pipeline run finishes or PDF changes
-        self.state.subscribe("run_completed", self._refresh)
+        self.state.subscribe("run_completed", self._on_run_completed)
         self.state.subscribe("pdf_changed", self._refresh)
+        self.state.subscribe("pipeline_starting", self._close_store)
+
+    def _close_store(self) -> None:
+        """Close the database connection while the pipeline runs."""
+        if self._store is not None:
+            try:
+                self._store.close()
+            except Exception:  # noqa: BLE001 — best effort
+                pass
+            self._store = None
+
+    def _reopen_store(self) -> None:
+        """Reopen the database connection after pipeline finishes."""
+        if self._store is None:
+            self._store = CorrectionStore()
+
+    def _on_run_completed(self) -> None:
+        """Reopen store and refresh after pipeline finishes."""
+        self._reopen_store()
+        self._refresh()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -198,6 +218,10 @@ class DatabaseTab:
 
     def _refresh(self) -> None:
         """Reload everything from the database."""
+        # Ensure store is open (may have been closed for pipeline)
+        self._reopen_store()
+        # Ensure we see latest data from pipeline runs in other threads/connections
+        self._store.refresh()
         self._populate_doc_tree()
         self._populate_overview()
         now = datetime.now().strftime("%H:%M:%S")

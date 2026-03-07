@@ -124,6 +124,14 @@ class PdfLoaderMixin:
                     text="Run the pipeline first to enable word overlay"
                 )
                 return
+            # Only allow word overlay on pages that have detections
+            if not self._canvas_boxes:
+                self._word_overlay_var.set(False)
+                self._word_overlay_on = False
+                self._status.configure(
+                    text="Word overlay only available on processed pages"
+                )
+                return
             self._draw_word_overlay()
         else:
             self._clear_word_overlay()
@@ -190,6 +198,8 @@ class PdfLoaderMixin:
         self._multi_selected.clear()
 
         if self._pipeline_ran_for_doc:
+            # Refresh to see latest data from pipeline runs in other threads/connections
+            self._store.refresh()
             dets = self._store.get_latest_detections_for_page(self._doc_id, self._page)
             for d in dets:
                 self._canvas_boxes.append(
@@ -221,7 +231,13 @@ class PdfLoaderMixin:
         if n > 0:
             self._status.configure(text=f"{page_label} — {n} detections")
         elif self._pipeline_ran_for_doc:
-            self._status.configure(text=f"{page_label} — no detections on this page")
+            # This page was NOT processed in the latest run — clear word overlay
+            if self._word_overlay_on:
+                self._word_overlay_var.set(False)
+                self._word_overlay_on = False
+                self._clear_word_overlay()
+            self._status.configure(text=f"{page_label} — not processed in latest run")
+            self._draw_pipeline_prompt()
         else:
             self._status.configure(
                 text=f"{page_label} — run pipeline to load detections"

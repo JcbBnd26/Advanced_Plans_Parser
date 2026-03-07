@@ -28,12 +28,9 @@ from plancheck.corrections.store import CorrectionStore
 
 # ── Re-exports for backward compatibility ──────────────────────────────
 from .annotation_state import HANDLE_SIZE  # noqa: F401
-from .annotation_state import (
-    HANDLE_POSITIONS,
-    CanvasBox,
-    _reshape_bbox_from_handle,
-    _scale_polygon_to_bbox,
-)
+from .annotation_state import (HANDLE_POSITIONS, CanvasBox,
+                               _reshape_bbox_from_handle,
+                               _scale_polygon_to_bbox)
 from .annotation_store import AnnotationStoreMixin
 from .canvas_renderer import CanvasRendererMixin
 from .context_menu import ContextMenuMixin
@@ -161,6 +158,9 @@ class AnnotationTab(
         self._filter_frame: ttk.Frame | None = None
         self._active_filter_color_type: str | None = None
         self._filter_color_btn: ttk.Button | None = None
+        self._filter_row_widgets: dict[
+            str, tuple[tk.Frame, tk.Checkbutton, tk.Label]
+        ] = {}
 
         # Model metrics cache
         self._last_metrics: dict | None = None
@@ -177,6 +177,23 @@ class AnnotationTab(
         # Subscribe to GuiState events
         self.state.subscribe("pdf_changed", self._on_pdf_changed)
         self.state.subscribe("run_completed", self._on_run_completed)
+        self.state.subscribe("pipeline_starting", self._close_store)
+
+    def _close_store(self) -> None:
+        """Close the database connection while the pipeline runs."""
+        if self._store is not None:
+            try:
+                self._store.close()
+            except Exception:  # noqa: BLE001 — best effort
+                pass
+            self._store = None
+
+    def _reopen_store(self) -> None:
+        """Reopen the database connection after pipeline finishes."""
+        if self._store is None:
+            from plancheck.corrections.store import CorrectionStore
+
+            self._store = CorrectionStore()
 
     def request_cancel(self) -> None:
         """Best-effort cancel of background model training."""
@@ -249,7 +266,8 @@ class AnnotationTab(
 
             def _create() -> None:
                 nonlocal tip_win
-                if tip_win is not None:
+                # Guard: widget may have been destroyed before callback fires
+                if tip_win is not None or not widget.winfo_exists():
                     return
                 x = event.x_root + 12
                 y = event.y_root + 10
@@ -964,6 +982,10 @@ class AnnotationTab(
         The pipeline now persists detections to the correction store,
         so refreshing the page will pick up the fresh results.
         """
+        # Reopen store if it was closed for the pipeline
+        self._reopen_store()
+        # Ensure our connection sees the latest data from the pipeline's commits
+        self._store.refresh()
         self._pipeline_ran_for_doc = True
         if self._pdf_path:
             self._navigate_to_page()

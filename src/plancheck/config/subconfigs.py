@@ -37,7 +37,7 @@ class TOCRConfig:
 class VOCRConfig:
     """Visual OCR (PaddleOCR) and image-preprocessing settings."""
 
-    enable_vocr: bool = False
+    enable_vocr: bool = True
     vocr_model_tier: str = "mobile"
     vocr_use_orientation_classify: bool = False
     vocr_use_doc_unwarping: bool = False
@@ -70,7 +70,7 @@ class VOCRConfig:
     vocr_cand_gnn_prior_path: str = "data/gnn_candidate_prior.pt"
     vocr_cand_gnn_prior_blend: float = 0.25
     # VOCR image preprocessing
-    enable_ocr_preprocess: bool = False
+    enable_ocr_preprocess: bool = True
     vocrpp_grayscale: bool = True
     vocrpp_autocontrast: bool = False
     vocrpp_clahe: bool = True
@@ -90,7 +90,7 @@ class VOCRConfig:
 class ReconcileConfig:
     """OCR reconciliation (merge VOCR tokens into TOCR) settings."""
 
-    enable_ocr_reconcile: bool = False
+    enable_ocr_reconcile: bool = True
     ocr_reconcile_allowed_symbols: str = "%/°±Ø×'\"#@"
     ocr_reconcile_resolution: int = 300
     ocr_reconcile_confidence: float = 0.6

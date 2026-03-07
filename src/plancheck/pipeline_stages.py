@@ -434,7 +434,7 @@ def _run_analysis_stage(
         extract_graphics_from_data,
         filter_graphics_outside_regions,
     )
-    from .analysis.structural_boxes import detect_semantic_regions
+    from .analysis.semantic_regions import detect_semantic_regions
     from .analysis.title_block import extract_title_blocks
     from .analysis.zoning import detect_zones
 

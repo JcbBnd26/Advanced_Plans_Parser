@@ -388,11 +388,20 @@ class TrainingProgressSection(CollapsibleFrame):
         root: tk.Tk,
         **kwargs: Any,
     ) -> None:
-        super().__init__(parent, "Training Progress", **kwargs)
+        super().__init__(parent, "Training Progress (ML Charts)", **kwargs)
         self._log = log_panel
         self._state = state
         self._root = root
+        self._charts_loaded = False
         self._build()
+
+    def expand(self) -> None:
+        """Override expand to auto-refresh charts on first expand."""
+        super().expand()
+        if not self._charts_loaded:
+            self._charts_loaded = True
+            # Schedule refresh after UI settles
+            self._root.after(100, self._refresh_all)
 
     def _build(self) -> None:
         cc = self.content

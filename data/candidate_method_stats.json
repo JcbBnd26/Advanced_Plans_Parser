@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "total_runs": 4,
+  "version": 2,
+  "total_runs": 5,
   "methods": {
     "baseline_style_gap": {
       "flagged": 200,
@@ -43,9 +43,9 @@
       "misses": 7
     },
     "vocab_trigger": {
-      "flagged": 2,
+      "flagged": 4,
       "hits": 0,
-      "misses": 2
+      "misses": 4
     },
     "vector_circle_near_number": {
       "flagged": 6,
@@ -67,11 +67,11 @@
       "miss": 6
     },
     "\u00b0": {
-      "predicted": 8,
+      "predicted": 10,
       "correct": 0,
       "wrong_symbol": 0,
-      "miss": 8
+      "miss": 10
     }
   },
-  "updated_at": "2026-03-03T18:27:21.991673+00:00"
+  "updated_at": "2026-03-07T16:03:26.771846+00:00"
 }

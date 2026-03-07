@@ -30,6 +30,7 @@ class FilterControlsMixin:
         _canvas: tk.Canvas
         _status: ttk.Label
         root: tk.Tk
+        _filter_row_widgets: dict[str, tuple[tk.Frame, tk.Checkbutton, tk.Label]]
     """
 
     # ── Filter UI rebuilding ─────────────────────────────────────
@@ -41,6 +42,11 @@ class FilterControlsMixin:
 
         for child in self._filter_frame.winfo_children():
             child.destroy()
+
+        # Initialize widget storage if missing
+        if not hasattr(self, "_filter_row_widgets"):
+            self._filter_row_widgets = {}
+        self._filter_row_widgets.clear()
 
         if self._active_filter_color_type not in self.ELEMENT_TYPES:
             self._active_filter_color_type = (
@@ -87,14 +93,32 @@ class FilterControlsMixin:
                 lambda _e, label=etype: self._set_active_filter_color_type(label),
             )
 
+            # Store references for in-place updates
+            self._filter_row_widgets[etype] = (row_frame, cb, lbl)
+
         self._update_filter_color_button_label()
 
     def _set_active_filter_color_type(self, element_type: str) -> None:
         """Set the active element type target for the shared color picker."""
         if element_type not in self.ELEMENT_TYPES:
             return
+        old_active = self._active_filter_color_type
         self._active_filter_color_type = element_type
-        self._rebuild_filter_controls()
+
+        # Update colors in-place instead of full rebuild to avoid flicker
+        if hasattr(self, "_filter_row_widgets") and self._filter_row_widgets:
+            default_bg = self._filter_frame.winfo_toplevel().cget("bg")
+            for etype, (row_frame, cb, lbl) in self._filter_row_widgets.items():
+                is_active = etype == element_type
+                row_bg = "SystemHighlight" if is_active else default_bg
+                row_fg = "SystemHighlightText" if is_active else "SystemWindowText"
+                row_frame.configure(bg=row_bg)
+                cb.configure(bg=row_bg, activebackground=row_bg)
+                lbl.configure(bg=row_bg, fg=row_fg)
+            self._update_filter_color_button_label()
+        else:
+            # Fallback to full rebuild if widgets not tracked yet
+            self._rebuild_filter_controls()
 
     def _update_filter_color_button_label(self) -> None:
         """Refresh shared color button text for the active element type."""

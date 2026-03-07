@@ -86,6 +86,12 @@ def main() -> None:
         default=300,
         help="DPI for OCR page render (default 300)",
     )
+    parser.add_argument(
+        "--vocr-device",
+        choices=["gpu", "cpu"],
+        default="gpu",
+        help="Device for VOCR inference (default: gpu). Use 'cpu' if GPU fails.",
+    )
     args = parser.parse_args()
 
     # Build GroupingConfig from OCR-related flags.
@@ -99,6 +105,7 @@ def main() -> None:
         enable_ocr_preprocess=args.ocr_preprocess,
         ocr_reconcile_debug=args.ocr_debug,
         ocr_reconcile_resolution=args.ocr_resolution,
+        vocr_device=args.vocr_device,
     )
 
     # Parse color overrides from file

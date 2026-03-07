@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Any
+from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
 # CollapsibleFrame
@@ -281,6 +281,7 @@ class StageProgressBar(ttk.Frame):
     """Horizontal stage indicator showing pipeline progress.
 
     Each stage lights up as it completes: grey → blue (running) → green (done) / red (error).
+    A timer label beneath each stage shows elapsed time (counting up while running).
     """
 
     STAGES = [
@@ -298,6 +299,9 @@ class StageProgressBar(ttk.Frame):
     def __init__(self, parent: tk.Widget, **kwargs: Any) -> None:
         super().__init__(parent, **kwargs)
         self._labels: dict[str, ttk.Label] = {}
+        self._timer_labels: dict[str, tk.Label] = {}
+        self._stage_start_times: dict[str, float] = {}
+        self._timer_after_id: Optional[str] = None
         self._stage_styles = {
             "pending": {"background": "#3c3c3c", "foreground": "#888888"},
             "running": {"background": "#264f78", "foreground": "#ffffff"},
@@ -307,6 +311,7 @@ class StageProgressBar(ttk.Frame):
         }
 
         for i, stage in enumerate(self.STAGES):
+            # Stage name label (row 0)
             lbl = tk.Label(
                 self,
                 text=stage,
@@ -321,15 +326,94 @@ class StageProgressBar(ttk.Frame):
             self.columnconfigure(i, weight=1)
             self._labels[stage] = lbl
 
+            # Timer label beneath (row 1) - centered under stage box
+            timer_lbl = tk.Label(
+                self,
+                text="--:--.-",
+                font=("Consolas", 7),
+                bg="#1e1e1e",
+                fg="#888888",
+                anchor="center",
+            )
+            timer_lbl.grid(row=1, column=i, padx=1, sticky="ew")
+            self._timer_labels[stage] = timer_lbl
+
+    def _format_time(self, seconds: float) -> str:
+        """Format elapsed seconds as M:SS.m (with tenths of a second)."""
+        mins, remainder = divmod(seconds, 60)
+        secs = int(remainder)
+        tenths = int((remainder - secs) * 10)
+        if mins < 10:
+            return f"{int(mins)}:{secs:02d}.{tenths}"
+        return f"{int(mins):02d}:{secs:02d}.{tenths}"
+
+    def _update_timers(self) -> None:
+        """Update all running stage timers (called every 100ms for smooth millisecond display)."""
+        import time
+
+        now = time.perf_counter()
+        has_running = False
+        for stage, start_time in self._stage_start_times.items():
+            if start_time is not None and stage in self._timer_labels:
+                elapsed = now - start_time
+                self._timer_labels[stage].config(
+                    text=self._format_time(elapsed),
+                    fg="#ffffff",  # Bright white for active timer
+                )
+                has_running = True
+
+        # Continue polling if any stage is still running (100ms for smooth updates)
+        if has_running:
+            self._timer_after_id = self.after(100, self._update_timers)
+        else:
+            self._timer_after_id = None
+
     def set_stage(self, stage: str, status: str) -> None:
         """Set *stage* to *status* ('pending'|'running'|'done'|'skipped'|'error')."""
+        import time
+
         if stage not in self._labels:
             return
         style = self._stage_styles.get(status, self._stage_styles["pending"])
         self._labels[stage].config(**style)
 
+        # Timer management
+        if status == "running":
+            # Start timing this stage
+            self._stage_start_times[stage] = time.perf_counter()
+            self._timer_labels[stage].config(text="0:00.0", fg="#ffffff")
+            # Start the polling loop if not already running (100ms for smooth updates)
+            if self._timer_after_id is None:
+                self._timer_after_id = self.after(100, self._update_timers)
+        elif status in ("done", "error", "skipped"):
+            # Freeze the timer if we were tracking this stage
+            if stage in self._stage_start_times:
+                start_time = self._stage_start_times.pop(stage, None)
+                if start_time is not None:
+                    elapsed = time.perf_counter() - start_time
+                    final_time = self._format_time(elapsed)
+                    # Color based on status
+                    if status == "done":
+                        fg_color = "#98c379"  # Green
+                    elif status == "error":
+                        fg_color = "#e06c75"  # Red
+                    else:
+                        fg_color = "#666666"  # Dim for skipped
+                    self._timer_labels[stage].config(text=final_time, fg=fg_color)
+        elif status == "pending":
+            # Reset timer for this stage
+            self._stage_start_times.pop(stage, None)
+            self._timer_labels[stage].config(text="--:--.-", fg="#888888")
+
     def reset(self) -> None:
-        """Reset all stages to pending."""
+        """Reset all stages to pending and clear timers."""
+        # Cancel any pending timer update
+        if self._timer_after_id is not None:
+            self.after_cancel(self._timer_after_id)
+            self._timer_after_id = None
+        # Clear start times
+        self._stage_start_times.clear()
+        # Reset all stage labels and timers
         for stage in self.STAGES:
             self.set_stage(stage, "pending")
 
@@ -342,6 +426,22 @@ class StageProgressBar(ttk.Frame):
             elif i == idx:
                 self.set_stage(s, "running")
             # Leave later stages as-is
+
+    def get_times_text(self) -> str:
+        """Return all stage names and their displayed times as formatted text."""
+        lines = []
+        for stage in self.STAGES:
+            if stage in self._timer_labels:
+                time_text = self._timer_labels[stage].cget("text")
+                if time_text and time_text != "--:--.-":
+                    lines.append(f"{stage}: {time_text}")
+        return "\n".join(lines) if lines else "No times recorded"
+
+    def copy_times(self) -> None:
+        """Copy all stage times to clipboard."""
+        text = self.get_times_text()
+        self.clipboard_clear()
+        self.clipboard_append(text)
 
 
 # ---------------------------------------------------------------------------
@@ -444,10 +544,15 @@ class ErrorPanel(ttk.Frame):
         )
         self._copy_btn.grid(row=0, column=3, padx=(8, 0))
 
+        self._copy_all_btn = ttk.Button(
+            nav_frame, text="📋 Copy All", width=10, command=self._copy_all_errors
+        )
+        self._copy_all_btn.grid(row=0, column=4, padx=(4, 0))
+
         self._dismiss_btn = ttk.Button(
             nav_frame, text="✕ Dismiss", width=10, command=self.hide
         )
-        self._dismiss_btn.grid(row=0, column=4, padx=(4, 0))
+        self._dismiss_btn.grid(row=0, column=5, padx=(4, 0))
 
         # Error text display (read-only, selectable)
         self._text = tk.Text(
@@ -566,6 +671,15 @@ class ErrorPanel(ttk.Frame):
             return
         message, level = self._errors[self._current_index]
         full_text = f"[{level}] {message}"
+        self._text.clipboard_clear()
+        self._text.clipboard_append(full_text)
+
+    def _copy_all_errors(self) -> None:
+        """Copy all error messages to clipboard."""
+        if not self._errors:
+            return
+        lines = [f"[{level}] {message}" for message, level in self._errors]
+        full_text = "\n".join(lines)
         self._text.clipboard_clear()
         self._text.clipboard_append(full_text)
 
