@@ -35,13 +35,12 @@ class TOCRConfig:
 
 @dataclass
 class VOCRConfig:
-    """Visual OCR (PaddleOCR) and image-preprocessing settings."""
+    """Visual OCR (Surya) and image-preprocessing settings."""
 
     enable_vocr: bool = True
-    vocr_model_tier: str = "mobile"
-    vocr_use_orientation_classify: bool = False
-    vocr_use_doc_unwarping: bool = False
-    vocr_use_textline_orientation: bool = False
+    vocr_backend: str = "surya"
+    vocr_device: str = "cpu"
+    surya_languages: str = "en"  # Comma-separated language codes
     vocr_resolution: int = 0
     vocr_min_confidence: float = 0.6
     vocr_max_tile_px: int = 3800

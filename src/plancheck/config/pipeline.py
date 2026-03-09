@@ -7,16 +7,10 @@ from pathlib import Path
 
 from .constants import DEFAULT_DRIFT_STATS, DEFAULT_GNN_MODEL, DEFAULT_ML_MODEL
 from .exceptions import ConfigLoadError, ConfigValidationError
-from .subconfigs import (
-    AnalysisConfig,
-    ExportConfig,
-    GroupingStageConfig,
-    MLConfig,
-    ReconcileConfig,
-    TOCRConfig,
-    VOCRConfig,
-)
-from .validation import _check_non_negative, _check_odd, _check_positive, _check_range
+from .subconfigs import (AnalysisConfig, ExportConfig, GroupingStageConfig,
+                         MLConfig, ReconcileConfig, TOCRConfig, VOCRConfig)
+from .validation import (_check_non_negative, _check_odd, _check_positive,
+                         _check_range)
 
 
 @dataclass
@@ -88,13 +82,11 @@ class PipelineConfig:
     tocr_use_text_flow: bool = False
     tocr_keep_blank_chars: bool = False
 
-    # ── Visual OCR (PaddleOCR full-page extraction) ────────────────────
+    # ── Visual OCR (Surya full-page extraction) ────────────────────────
     enable_vocr: bool = True
-    vocr_model_tier: str = "mobile"
-    vocr_device: str = "gpu"  # "gpu", "cpu", or "auto"
-    vocr_use_orientation_classify: bool = False
-    vocr_use_doc_unwarping: bool = False
-    vocr_use_textline_orientation: bool = False
+    vocr_backend: str = "surya"  # OCR backend: "surya"
+    vocr_device: str = "cpu"  # "gpu" or "cpu"
+    surya_languages: str = "en"  # Comma-separated language codes
     vocr_resolution: int = 0
     vocr_min_confidence: float = 0.6
     vocr_max_tile_px: int = 3800
@@ -390,10 +382,10 @@ class PipelineConfig:
                 "vocrpp_binarize_block_size", self.vocrpp_binarize_block_size, floor=3
             )
 
-        # -- VOCR model tier must be known --
-        if self.vocr_model_tier not in ("mobile", "server"):
+        # -- VOCR backend must be known --
+        if self.vocr_backend not in ("surya",):
             raise ConfigValidationError(
-                f"vocr_model_tier={self.vocr_model_tier!r} must be 'mobile' or 'server'"
+                f"vocr_backend={self.vocr_backend!r} must be 'surya'"
             )
 
         # -- content_band ordering --

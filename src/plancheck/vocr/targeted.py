@@ -1,4 +1,4 @@
-"""Targeted VOCR — crop individual candidate patches and run PaddleOCR.
+"""Targeted VOCR — crop individual candidate patches and run OCR.
 
 Instead of scanning the full page, this module crops the page image to
 each :class:`~plancheck.models.VocrCandidate` bounding box (with padding),
@@ -7,7 +7,7 @@ runs OCR on the small crop, and updates the candidate's ``outcome``,
 
 Public API
 ----------
-extract_vocr_targeted  — run PaddleOCR on each candidate patch
+extract_vocr_targeted  — run OCR on each candidate patch
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from PIL import Image
 
 from ..config import GroupingConfig
 from ..models import GlyphBox, VocrCandidate
+from .backends import get_ocr_backend
 
 log = logging.getLogger(__name__)
 
@@ -59,43 +60,26 @@ def _crop_patch(
 
 
 def _ocr_crop(
-    ocr,
+    backend,
     crop_array: np.ndarray,
     min_conf: float,
 ) -> List[Tuple[str, float, List[float]]]:
-    """Run PaddleOCR on a small crop; return [(text, conf, [x0,y0,x1,y1]), …].
+    """Run OCR backend on a small crop; return [(text, conf, [x0,y0,x1,y1]), …].
 
     Coordinates are in *crop-local* pixels.
     """
     results: List[Tuple[str, float, List[float]]] = []
-    # PaddleX/PaddleOCR predict() expects either a single image *or* a batch.
-    # Some versions treat a NumPy array as an iterable (yielding rows), which
-    # turns an H×W×C image into W×C slices and crashes downstream. Always pass
-    # a 1-item batch to be unambiguous.
-    for page_result in ocr.predict([crop_array]):
-        polys = (
-            page_result.get("dt_polys")
-            if hasattr(page_result, "get")
-            else getattr(page_result, "dt_polys", None)
-        )
-        texts = (
-            page_result.get("rec_texts")
-            if hasattr(page_result, "get")
-            else getattr(page_result, "rec_texts", None)
-        )
-        scores = (
-            page_result.get("rec_scores")
-            if hasattr(page_result, "get")
-            else getattr(page_result, "rec_scores", None)
-        )
-        if polys is None or texts is None or scores is None:
+
+    # Use the backend's predict method which returns List[TextBox]
+    text_boxes = backend.predict(crop_array)
+
+    for box in text_boxes:
+        if not box.text or box.confidence < min_conf:
             continue
-        for poly, text, conf in zip(polys, texts, scores):
-            if not text or conf < min_conf:
-                continue
-            xs = [p[0] for p in poly]
-            ys = [p[1] for p in poly]
-            results.append((text, float(conf), [min(xs), min(ys), max(xs), max(ys)]))
+        # Get bounding box from polygon
+        x0, y0, x1, y1 = box.bbox
+        results.append((box.text, float(box.confidence), [x0, y0, x1, y1]))
+
     return results
 
 
@@ -107,7 +91,7 @@ def extract_vocr_targeted(
     page_height: float,
     cfg: GroupingConfig,
 ) -> Tuple[List[GlyphBox], List[float], List[VocrCandidate]]:
-    """Run PaddleOCR on each candidate patch and collect results.
+    """Run OCR on each candidate patch and collect results.
 
     Parameters
     ----------
@@ -130,12 +114,10 @@ def extract_vocr_targeted(
         *updated_candidates*: input candidates with ``outcome`` /
         ``found_text`` / ``found_symbol`` populated.
     """
-    from .engine import _get_ocr  # lazy — avoids paddleocr import at module level
-
     if not candidates:
         return [], [], candidates
 
-    ocr = _get_ocr(cfg)
+    backend = get_ocr_backend(cfg)
 
     all_tokens: List[GlyphBox] = []
     all_confs: List[float] = []
@@ -151,7 +133,7 @@ def extract_vocr_targeted(
             cand.outcome = "miss"
             continue
 
-        hits = _ocr_crop(ocr, crop, min_conf)
+        hits = _ocr_crop(backend, crop, min_conf)
 
         if not hits:
             cand.outcome = "miss"

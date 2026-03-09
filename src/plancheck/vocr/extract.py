@@ -1,105 +1,42 @@
-"""VOCR Stage – full-page PaddleOCR token extraction (with tiling).
+"""VOCR Stage – full-page OCR token extraction (with tiling).
 
-Extracts OCR tokens from a full-page render using PaddleOCR, tiling the
-image when it exceeds PaddleOCR's internal size limit.
+Extracts OCR tokens from a full-page render using the configured OCR
+backend (Surya by default), tiling the image when it exceeds the
+backend's recommended size limit.
 
 Public API
 ----------
-extract_vocr_tokens  – run full-page PaddleOCR and return raw tokens
+extract_vocr_tokens  – run full-page OCR and return raw tokens
 """
 
 from __future__ import annotations
 
 import logging
-import threading
+import time
 from typing import List, Tuple
 
+import numpy as np
 from PIL import Image
 
 from ..config import GroupingConfig
 from ..models import GlyphBox
 from ..models.geometry import glyph_iou as iou  # backward-compat alias
+from .backends import get_ocr_backend
 
 log = logging.getLogger(__name__)
 
-# Flag to force subprocess mode (useful for testing/debugging)
-_FORCE_SUBPROCESS = False
-
-# PaddleOCR's internal limit: images wider/taller than this get silently
-# downscaled, destroying small CAD text.  We tile the image so each tile
-# stays within this limit.  The default is overridden by cfg.vocr_max_tile_px.
-_PADDLE_MAX_SIDE_DEFAULT = 3800
-_TILE_OVERLAP_FRAC_DEFAULT = 0.05  # 5 % overlap between adjacent tiles
-
-
-def _is_main_thread() -> bool:
-    """Check if current thread is the main thread."""
-    return threading.current_thread() is threading.main_thread()
-
-
-def _should_use_subprocess() -> bool:
-    """Determine if we should use subprocess mode for OCR.
-
-    Subprocess mode is used when:
-    - _FORCE_SUBPROCESS is True (for testing)
-    - OR we're running from a background thread (PaddlePaddle threading bug)
-    """
-    if _FORCE_SUBPROCESS:
-        return True
-    return not _is_main_thread()
-
-
-def _subprocess_ocr(
-    page_image: Image.Image,
-    page_num: int,
-    page_width: float,
-    page_height: float,
-    cfg: GroupingConfig,
-) -> Tuple[List[GlyphBox], List[float]]:
-    """Run OCR via subprocess client to avoid threading issues.
-
-    The subprocess worker handles all tiling internally and returns
-    tokens in PDF-point space.
-    """
-    from .subprocess_client import get_vocr_client
-
-    client = get_vocr_client()
-
-    # The subprocess returns token dicts and confidences
-    token_dicts, confs = client.ocr_image(page_image, page_num, cfg)
-
-    # Convert dicts to GlyphBox objects
-    # Subprocess returns tokens with coords already in pixel space,
-    # we need to convert to PDF points
-    img_w, img_h = page_image.size
-    sx = img_w / page_width  # pixels per PDF point (x)
-    sy = img_h / page_height  # pixels per PDF point (y)
-
-    tokens: List[GlyphBox] = []
-    for td in token_dicts:
-        # Token dict has: page, x0, y0, x1, y1, text, confidence (in pixels)
-        tokens.append(
-            GlyphBox(
-                page=td["page"],
-                x0=td["x0"] / sx,
-                y0=td["y0"] / sy,
-                x1=td["x1"] / sx,
-                y1=td["y1"] / sy,
-                text=td["text"],
-                origin="ocr_full",
-                confidence=td.get("confidence", 1.0),
-            )
-        )
-
-    return tokens, confs
+# Default tiling configuration
+# Images larger than this will be tiled to avoid memory issues
+_DEFAULT_MAX_TILE_PX = 4096
+_TILE_OVERLAP_FRAC_DEFAULT = 0.05  # 5% overlap between adjacent tiles
 
 
 # ── Stage 1: Extract OCR tokens from full page (with tiling) ──────────
 
 
 def _ocr_one_tile(
-    ocr,
-    tile_array,
+    backend,
+    tile_array: np.ndarray,
     offset_x: int,
     offset_y: int,
     sx: float,
@@ -107,64 +44,35 @@ def _ocr_one_tile(
     page_num: int,
     min_conf: float,
 ) -> Tuple[List[GlyphBox], List[float]]:
-    """Run PaddleOCR on a single tile and return tokens in PDF-point space."""
+    """Run OCR backend on a single tile and return tokens in PDF-point space."""
     tokens: List[GlyphBox] = []
     confidences: List[float] = []
 
-    for page_result in ocr.predict(tile_array):
-        # Dict-like OCRResult
-        polys = (
-            page_result.get("dt_polys")
-            if hasattr(page_result, "get")
-            else getattr(page_result, "dt_polys", None)
-        )
-        texts = (
-            page_result.get("rec_texts")
-            if hasattr(page_result, "get")
-            else getattr(page_result, "rec_texts", None)
-        )
-        scores = (
-            page_result.get("rec_scores")
-            if hasattr(page_result, "get")
-            else getattr(page_result, "rec_scores", None)
-        )
+    # Use the backend's predict method which returns List[TextBox]
+    text_boxes = backend.predict(tile_array)
 
-        if polys is None or texts is None or scores is None:
+    for box in text_boxes:
+        if not box.text or box.confidence < min_conf:
             continue
 
-        # Validate equal length to prevent silent data truncation from zip()
-        if not (len(polys) == len(texts) == len(scores)):
-            log.warning(
-                "OCR result length mismatch on page %d: polys=%d, texts=%d, scores=%d",
-                page_num,
-                len(polys),
-                len(texts),
-                len(scores),
+        # Get polygon corners and apply tile offset
+        xs = [p[0] + offset_x for p in box.polygon]
+        ys = [p[1] + offset_y for p in box.polygon]
+
+        # Convert image pixels → PDF points
+        tokens.append(
+            GlyphBox(
+                page=page_num,
+                x0=min(xs) / sx,
+                y0=min(ys) / sy,
+                x1=max(xs) / sx,
+                y1=max(ys) / sy,
+                text=box.text,
+                origin="ocr_full",
+                confidence=float(box.confidence),
             )
-            continue
-
-        for poly, text, conf in zip(polys, texts, scores):
-            if not text or conf < min_conf:
-                continue
-
-            # poly is [[x0,y0],[x1,y1],[x2,y2],[x3,y3]] in tile-local pixels
-            xs = [p[0] + offset_x for p in poly]
-            ys = [p[1] + offset_y for p in poly]
-
-            # Convert image pixels → PDF points
-            tokens.append(
-                GlyphBox(
-                    page=page_num,
-                    x0=min(xs) / sx,
-                    y0=min(ys) / sy,
-                    x1=max(xs) / sx,
-                    y1=max(ys) / sy,
-                    text=text,
-                    origin="ocr_full",
-                    confidence=float(conf),
-                )
-            )
-            confidences.append(conf)
+        )
+        confidences.append(box.confidence)
 
     return tokens, confidences
 
@@ -220,7 +128,7 @@ def extract_ocr_tokens(
     page_height: float,
     cfg: GroupingConfig,
 ) -> Tuple[List[GlyphBox], List[float]]:
-    """Run PaddleOCR on the full page image, tiling if needed.
+    """Run OCR on the full page image, tiling if needed.
 
     Returns
     -------
@@ -229,26 +137,12 @@ def extract_ocr_tokens(
     confidences : list[float]
         Parallel list of per-token confidence scores.
     """
-    # === SUBPROCESS PATH ===
-    # When running from a background thread (e.g., GUI worker), PaddleOCR's
-    # native C++ code has threading issues. Use subprocess to isolate OCR.
-    if _should_use_subprocess():
-        log.info("  OCR running in subprocess mode (background thread detected)")
-        return _subprocess_ocr(page_image, page_num, page_width, page_height, cfg)
-
-    # === DIRECT PATH ===
-    # Main thread: run PaddleOCR directly (faster, no IPC overhead)
-    import time
-
-    import numpy as np
-
-    from .engine import _get_ocr
-
-    ocr = _get_ocr(cfg)
+    # Get the configured OCR backend (thread-safe, no subprocess needed)
+    backend = get_ocr_backend(cfg)
 
     # Resolve effective knobs
     max_tile_px = (
-        cfg.vocr_max_tile_px if cfg.vocr_max_tile_px > 0 else _PADDLE_MAX_SIDE_DEFAULT
+        cfg.vocr_max_tile_px if cfg.vocr_max_tile_px > 0 else _DEFAULT_MAX_TILE_PX
     )
     tile_overlap_frac = cfg.vocr_tile_overlap
     min_conf = cfg.vocr_min_confidence
@@ -257,7 +151,7 @@ def extract_ocr_tokens(
     min_text_len = cfg.vocr_min_text_length
     strip_ws = cfg.vocr_strip_whitespace
 
-    # Ensure RGB mode (pdfplumber may return RGBA; PaddleOCR needs 3 channels)
+    # Ensure RGB mode (pdfplumber may return RGBA; OCR needs 3 channels)
     if page_image.mode != "RGB":
         page_image = page_image.convert("RGB")
 
@@ -297,7 +191,8 @@ def extract_ocr_tokens(
         n_tiles = 1
 
     log.info(
-        "  OCR Stage 1: image %dx%d px (%.0f eff. DPI), %s",
+        "  OCR Stage 1 (%s): image %dx%d px (%.0f eff. DPI), %s",
+        backend.name,
         img_w,
         img_h,
         eff_dpi,
@@ -309,8 +204,8 @@ def extract_ocr_tokens(
     all_confs: List[float] = []
 
     def _run_ocr_with_heartbeat(func, *args, label="OCR"):
-        """Run a blocking OCR call in a thread, printing heartbeat dots
-        every 15 s so terminals / CI don't consider the process idle."""
+        """Run a blocking OCR call, printing heartbeat logs periodically
+        so terminals / CI don't consider the process idle."""
         import sys
         import threading
 
@@ -327,11 +222,9 @@ def extract_ocr_tokens(
 
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
-        beat = 0
         while t.is_alive():
             t.join(timeout=heartbeat_sec)
             if t.is_alive():
-                beat += 1
                 elapsed = time.perf_counter() - t0
                 log.info("    %s ... %.0fs", label, elapsed)
         if exc_box:
@@ -342,11 +235,11 @@ def extract_ocr_tokens(
 
     try:
         if not need_tile:
-            # Single-pass: image fits within Paddle's limit
+            # Single-pass: image fits within tile limit
             img_array = np.array(page_image)
             all_tokens, all_confs = _run_ocr_with_heartbeat(
                 _ocr_one_tile,
-                ocr,
+                backend,
                 img_array,
                 0,
                 0,
@@ -363,13 +256,11 @@ def extract_ocr_tokens(
             for y0, y1 in tiles_y:
                 for x0, x1 in tiles_x:
                     tile_idx += 1
-                    # Copy is required: PaddleOCR may modify the input array
-                    # in-place during preprocessing, which would corrupt
-                    # overlapping regions in subsequent tiles.
+                    # Copy tile to avoid potential array mutation issues
                     tile = img_array[y0:y1, x0:x1].copy()
                     t_tokens, t_confs = _run_ocr_with_heartbeat(
                         _ocr_one_tile,
-                        ocr,
+                        backend,
                         tile,
                         x0,
                         y0,
@@ -454,12 +345,12 @@ def extract_vocr_tokens(
     page_height: float,
     cfg: GroupingConfig,
 ) -> tuple[List[GlyphBox], List[float]]:
-    """Run full-page PaddleOCR and return raw tokens + confidences.
+    """Run full-page OCR and return raw tokens + confidences.
 
     This is the **VOCR stage** — visual OCR extraction only, no
-    reconciliation.  The returned tokens can be passed to
-    :func:`reconcile_ocr` via its *ocr_tokens* / *ocr_confs* parameters
-    to complete the pipeline.
+    reconciliation. Uses Surya OCR by default. The returned tokens can
+    be passed to :func:`reconcile_ocr` via its *ocr_tokens* / *ocr_confs*
+    parameters to complete the pipeline.
 
     Parameters
     ----------
@@ -470,7 +361,7 @@ def extract_vocr_tokens(
     page_width, page_height : float
         Page dimensions in PDF points.
     cfg : GroupingConfig
-        Configuration (``ocr_reconcile_*`` fields used).
+        Configuration (``vocr_*`` fields used).
 
     Returns
     -------
