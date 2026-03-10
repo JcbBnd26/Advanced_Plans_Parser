@@ -144,6 +144,65 @@ class SuryaOCRBackend(OCRBackend):
 
         return results
 
+    def predict_batch(self, images: List[np.ndarray]) -> List[List[TextBox]]:
+        """Run OCR on multiple images in a single Surya call.
+
+        Surya natively supports batching, so this is more efficient than
+        calling predict() sequentially for each image.
+
+        Parameters
+        ----------
+        images : List[np.ndarray]
+            List of RGB images as HxWx3 numpy arrays (uint8).
+
+        Returns
+        -------
+        List[List[TextBox]]
+            List of results, one per input image.
+        """
+        if not images:
+            return []
+
+        self._ensure_initialized()
+
+        from PIL import Image
+
+        # Convert all images to PIL
+        pil_images = []
+        for image in images:
+            if image.dtype != np.uint8:
+                image = image.astype(np.uint8)
+            pil_images.append(Image.fromarray(image))
+
+        # Run batch detection + recognition
+        predictions = self._rec_predictor(
+            pil_images,
+            [self._languages] * len(pil_images),
+            self._det_predictor,
+        )
+
+        batch_results: List[List[TextBox]] = []
+
+        for page_result in predictions:
+            results: List[TextBox] = []
+            for text_line in page_result.text_lines:
+                text = text_line.text.strip() if text_line.text else ""
+                if not text:
+                    continue
+
+                confidence = getattr(text_line, "confidence", 1.0)
+                bbox = text_line.bbox
+                polygon = self._bbox_to_polygon(bbox)
+
+                results.append(TextBox(
+                    polygon=polygon,
+                    text=text,
+                    confidence=float(confidence),
+                ))
+            batch_results.append(results)
+
+        return batch_results
+
     @staticmethod
     def _bbox_to_polygon(bbox: List[float]) -> List[List[float]]:
         """Convert [x0, y0, x1, y1] bbox to 4-point polygon.

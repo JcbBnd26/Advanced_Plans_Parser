@@ -22,11 +22,11 @@ class TestGroupingConfig:
 
     def test_vars_round_trip(self):
         """vars(cfg) should produce a dict that can reconstruct the config."""
-        cfg = GroupingConfig(enable_vocr=True, vocr_model_tier="server")
+        cfg = GroupingConfig(enable_vocr=True, vocr_backend="surya")
         d = vars(cfg)
         cfg2 = GroupingConfig(**d)
         assert cfg2.enable_vocr is True
-        assert cfg2.vocr_model_tier == "server"
+        assert cfg2.vocr_backend == "surya"
         assert vars(cfg) == vars(cfg2)
 
     def test_ocr_reconcile_allowed_symbols(self):
@@ -122,15 +122,15 @@ class TestConfigValidation:
         with pytest.raises(ConfigValidationError, match="vocrpp_binarize_block_size"):
             GroupingConfig(vocrpp_adaptive_binarize=True, vocrpp_binarize_block_size=10)
 
-    # ── Model tier ────────────────────────────────────────────────────
+    # ── OCR backend ────────────────────────────────────────────────────
 
-    def test_invalid_model_tier(self):
-        with pytest.raises(ConfigValidationError, match="vocr_model_tier"):
-            GroupingConfig(vocr_model_tier="turbo")
+    def test_invalid_vocr_backend(self):
+        with pytest.raises(ConfigValidationError, match="vocr_backend"):
+            GroupingConfig(vocr_backend="paddle")
 
-    def test_valid_model_tiers(self):
-        GroupingConfig(vocr_model_tier="mobile")
-        GroupingConfig(vocr_model_tier="server")
+    def test_valid_vocr_backend(self):
+        cfg = GroupingConfig(vocr_backend="surya")
+        assert cfg.vocr_backend == "surya"
 
     # ── Content band ordering ─────────────────────────────────────────
 
@@ -272,15 +272,10 @@ class TestSubconfigSync:
         import dataclasses
 
         from plancheck.config import PipelineConfig
-        from plancheck.config.subconfigs import (
-            AnalysisConfig,
-            ExportConfig,
-            GroupingStageConfig,
-            MLConfig,
-            ReconcileConfig,
-            TOCRConfig,
-            VOCRConfig,
-        )
+        from plancheck.config.subconfigs import (AnalysisConfig, ExportConfig,
+                                                 GroupingStageConfig, MLConfig,
+                                                 ReconcileConfig, TOCRConfig,
+                                                 VOCRConfig)
 
         pipeline_fields = {f.name for f in dataclasses.fields(PipelineConfig)}
         subconfigs = [

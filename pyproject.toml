@@ -21,7 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ocr = [
-    "surya-ocr>=0.6.0",
+    "surya-ocr>=0.6.0,<0.7.0",
 ]
 vision = [
     "torch>=2.0.0",

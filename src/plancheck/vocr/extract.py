@@ -147,7 +147,6 @@ def extract_ocr_tokens(
     tile_overlap_frac = cfg.vocr_tile_overlap
     min_conf = cfg.vocr_min_confidence
     tile_dedup_iou = cfg.vocr_tile_dedup_iou
-    heartbeat_sec = cfg.vocr_heartbeat_interval
     min_text_len = cfg.vocr_min_text_length
     strip_ws = cfg.vocr_strip_whitespace
 
@@ -203,42 +202,11 @@ def extract_ocr_tokens(
     all_tokens: List[GlyphBox] = []
     all_confs: List[float] = []
 
-    def _run_ocr_with_heartbeat(func, *args, label="OCR"):
-        """Run a blocking OCR call, printing heartbeat logs periodically
-        so terminals / CI don't consider the process idle."""
-        import sys
-        import threading
-
-        result_box: list = []
-        exc_box: list = []  # Stores (type, value, traceback) tuples
-
-        def _worker():
-            """Thread target that executes the OCR function."""
-            try:
-                result_box.append(func(*args))
-            except Exception:  # noqa: BLE001 — capture any worker exception
-                # Capture full exception info including traceback
-                exc_box.append(sys.exc_info())
-
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-        while t.is_alive():
-            t.join(timeout=heartbeat_sec)
-            if t.is_alive():
-                elapsed = time.perf_counter() - t0
-                log.info("    %s ... %.0fs", label, elapsed)
-        if exc_box:
-            # Re-raise with original traceback preserved
-            exc_type, exc_value, exc_tb = exc_box[0]
-            raise exc_value.with_traceback(exc_tb)
-        return result_box[0]
-
     try:
         if not need_tile:
             # Single-pass: image fits within tile limit
             img_array = np.array(page_image)
-            all_tokens, all_confs = _run_ocr_with_heartbeat(
-                _ocr_one_tile,
+            all_tokens, all_confs = _ocr_one_tile(
                 backend,
                 img_array,
                 0,
@@ -247,7 +215,6 @@ def extract_ocr_tokens(
                 sy,
                 page_num,
                 min_conf,
-                label="single-pass OCR",
             )
         else:
             # Tile-based OCR
@@ -258,8 +225,7 @@ def extract_ocr_tokens(
                     tile_idx += 1
                     # Copy tile to avoid potential array mutation issues
                     tile = img_array[y0:y1, x0:x1].copy()
-                    t_tokens, t_confs = _run_ocr_with_heartbeat(
-                        _ocr_one_tile,
+                    t_tokens, t_confs = _ocr_one_tile(
                         backend,
                         tile,
                         x0,
@@ -268,7 +234,6 @@ def extract_ocr_tokens(
                         sy,
                         page_num,
                         min_conf,
-                        label=f"tile {tile_idx}/{n_tiles}",
                     )
                     log.info(
                         "    tile %d/%d (%d,%d)-(%d,%d): %d tokens",

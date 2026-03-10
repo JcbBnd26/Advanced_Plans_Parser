@@ -63,12 +63,12 @@ def main() -> None:
     parser.add_argument(
         "--vocr",
         action="store_true",
-        help="Run PaddleOCR full-page visual token extraction",
+        help="Run Surya full-page visual token extraction",
     )
     parser.add_argument(
         "--ocr-preprocess",
         action="store_true",
-        help="Preprocess OCR image (grayscale + CLAHE contrast) before PaddleOCR",
+        help="Preprocess OCR image (grayscale + CLAHE contrast) before Surya OCR",
     )
     parser.add_argument(
         "--ocr-full-reconcile",

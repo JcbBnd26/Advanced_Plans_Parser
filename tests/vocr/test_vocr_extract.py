@@ -9,6 +9,7 @@ from PIL import Image
 
 from plancheck.config import GroupingConfig
 from plancheck.models import GlyphBox
+from plancheck.vocr.backends import TextBox
 from plancheck.vocr.extract import _dedup_tiles, _ocr_one_tile, iou
 
 # ── IoU helper ─────────────────────────────────────────────────────────
@@ -287,7 +288,7 @@ class TestOcrOneTile:
 
 
 class TestExtractVocrTokens:
-    """Test the public entry point with a mocked PaddleOCR engine."""
+    """Test the public entry point with a mocked OCR backend."""
 
     def _make_cfg(self, **overrides):
         defaults = dict(
@@ -298,16 +299,18 @@ class TestExtractVocrTokens:
             vocr_tile_dedup_iou=0.5,
             vocr_min_text_length=0,
             vocr_strip_whitespace=True,
-            vocr_heartbeat_interval=60,
         )
         defaults.update(overrides)
         return GroupingConfig(**defaults)
 
     def _fake_predict(self, polys, texts, scores):
-        """Return a callable that yields one page result dict."""
+        """Return a callable that yields TextBox results."""
 
         def predict(img_array):
-            return [{"dt_polys": polys, "rec_texts": texts, "rec_scores": scores}]
+            return [
+                TextBox(polygon=p, text=t, confidence=s)
+                for p, t, s in zip(polys, texts, scores)
+            ]
 
         return predict
 
@@ -322,8 +325,8 @@ class TestExtractVocrTokens:
         extract_vocr_tokens(img, 0, 100.0, 100.0, cfg)
         mock_inner.assert_called_once()
 
-    @patch("plancheck.vocr.engine._get_ocr")
-    def test_single_pass_no_tiling(self, mock_get_ocr):
+    @patch("plancheck.vocr.extract.get_ocr_backend")
+    def test_single_pass_no_tiling(self, mock_get_backend):
         """Small image should run in single pass (no tiling)."""
         from plancheck.vocr.extract import extract_vocr_tokens
 
@@ -331,9 +334,9 @@ class TestExtractVocrTokens:
         texts = ["HELLO"]
         scores = [0.9]
 
-        mock_ocr = MagicMock()
-        mock_ocr.predict.side_effect = self._fake_predict(polys, texts, scores)
-        mock_get_ocr.return_value = mock_ocr
+        mock_backend = MagicMock()
+        mock_backend.predict.side_effect = self._fake_predict(polys, texts, scores)
+        mock_get_backend.return_value = mock_backend
 
         img = Image.new("RGB", (200, 100))
         cfg = self._make_cfg(vocr_max_tile_px=5000)
@@ -342,8 +345,8 @@ class TestExtractVocrTokens:
         assert len(tokens) >= 1
         assert tokens[0].text == "HELLO"
 
-    @patch("plancheck.vocr.engine._get_ocr")
-    def test_whitespace_tokens_stripped(self, mock_get_ocr):
+    @patch("plancheck.vocr.extract.get_ocr_backend")
+    def test_whitespace_tokens_stripped(self, mock_get_backend):
         """Whitespace-only tokens should be removed when strip_ws=True."""
         from plancheck.vocr.extract import extract_vocr_tokens
 
@@ -354,9 +357,9 @@ class TestExtractVocrTokens:
         texts = ["   ", "REAL"]
         scores = [0.9, 0.9]
 
-        mock_ocr = MagicMock()
-        mock_ocr.predict.side_effect = self._fake_predict(polys, texts, scores)
-        mock_get_ocr.return_value = mock_ocr
+        mock_backend = MagicMock()
+        mock_backend.predict.side_effect = self._fake_predict(polys, texts, scores)
+        mock_get_backend.return_value = mock_backend
 
         img = Image.new("RGB", (100, 100))
         cfg = self._make_cfg(vocr_strip_whitespace=True)
@@ -366,8 +369,8 @@ class TestExtractVocrTokens:
         assert "   " not in texts_out
         assert "REAL" in texts_out
 
-    @patch("plancheck.vocr.engine._get_ocr")
-    def test_min_text_length_filter(self, mock_get_ocr):
+    @patch("plancheck.vocr.extract.get_ocr_backend")
+    def test_min_text_length_filter(self, mock_get_backend):
         """Tokens shorter than min_text_length should be dropped."""
         from plancheck.vocr.extract import extract_vocr_tokens
 
@@ -378,9 +381,9 @@ class TestExtractVocrTokens:
         texts = ["A", "HELLO"]
         scores = [0.9, 0.9]
 
-        mock_ocr = MagicMock()
-        mock_ocr.predict.side_effect = self._fake_predict(polys, texts, scores)
-        mock_get_ocr.return_value = mock_ocr
+        mock_backend = MagicMock()
+        mock_backend.predict.side_effect = self._fake_predict(polys, texts, scores)
+        mock_get_backend.return_value = mock_backend
 
         img = Image.new("RGB", (100, 100))
         cfg = self._make_cfg(vocr_min_text_length=3)
@@ -388,14 +391,14 @@ class TestExtractVocrTokens:
 
         assert all(len(t.text) >= 3 for t in tokens)
 
-    @patch("plancheck.vocr.engine._get_ocr")
-    def test_rgba_image_converted(self, mock_get_ocr):
+    @patch("plancheck.vocr.extract.get_ocr_backend")
+    def test_rgba_image_converted(self, mock_get_backend):
         """RGBA input should be converted to RGB without error."""
         from plancheck.vocr.extract import extract_vocr_tokens
 
-        mock_ocr = MagicMock()
-        mock_ocr.predict.side_effect = self._fake_predict([], [], [])
-        mock_get_ocr.return_value = mock_ocr
+        mock_backend = MagicMock()
+        mock_backend.predict.side_effect = self._fake_predict([], [], [])
+        mock_get_backend.return_value = mock_backend
 
         img = Image.new("RGBA", (100, 100))
         cfg = self._make_cfg()
@@ -403,14 +406,14 @@ class TestExtractVocrTokens:
         # Should not raise; empty result is fine
         assert tokens == []
 
-    @patch("plancheck.vocr.engine._get_ocr")
-    def test_exception_returns_empty(self, mock_get_ocr):
-        """If PaddleOCR raises an exception, return empty lists gracefully."""
+    @patch("plancheck.vocr.extract.get_ocr_backend")
+    def test_exception_returns_empty(self, mock_get_backend):
+        """If OCR backend raises an exception, return empty lists gracefully."""
         from plancheck.vocr.extract import extract_vocr_tokens
 
-        mock_ocr = MagicMock()
-        mock_ocr.predict.side_effect = RuntimeError("GPU OOM")
-        mock_get_ocr.return_value = mock_ocr
+        mock_backend = MagicMock()
+        mock_backend.predict.side_effect = RuntimeError("GPU OOM")
+        mock_get_backend.return_value = mock_backend
 
         img = Image.new("RGB", (100, 100))
         cfg = self._make_cfg()

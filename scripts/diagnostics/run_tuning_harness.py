@@ -93,10 +93,9 @@ TOCR_KNOBS: dict[str, type] = {
 # ── All VOCR knobs and their types (for validation) ────────────────────
 
 VOCR_KNOBS: dict[str, type] = {
-    "vocr_model_tier": str,
-    "vocr_use_orientation_classify": bool,
-    "vocr_use_doc_unwarping": bool,
-    "vocr_use_textline_orientation": bool,
+    "vocr_backend": str,
+    "vocr_device": str,
+    "surya_languages": str,
     "vocr_resolution": int,
     "vocr_min_confidence": float,
     "vocr_max_tile_px": int,
@@ -104,8 +103,6 @@ VOCR_KNOBS: dict[str, type] = {
     "vocr_tile_dedup_iou": float,
     "vocr_min_text_length": int,
     "vocr_strip_whitespace": bool,
-    "vocr_max_det_skew": float,
-    "vocr_heartbeat_interval": float,
 }
 
 # Combined dict for universal knob validation.

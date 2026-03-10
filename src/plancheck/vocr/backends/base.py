@@ -6,6 +6,7 @@ plus the common data structures used to pass results between layers.
 from __future__ import annotations
 
 import logging
+import threading
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -73,6 +74,25 @@ class OCRBackend(ABC):
         """
         ...
 
+    def predict_batch(self, images: List[np.ndarray]) -> List[List[TextBox]]:
+        """Run OCR on multiple images.
+
+        Default implementation calls predict() sequentially. Backends
+        that support native batching (e.g., Surya) should override this
+        for better performance.
+
+        Parameters
+        ----------
+        images : List[np.ndarray]
+            List of RGB images as HxWx3 numpy arrays (uint8).
+
+        Returns
+        -------
+        List[List[TextBox]]
+            List of results, one per input image.
+        """
+        return [self.predict(img) for img in images]
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -82,6 +102,7 @@ class OCRBackend(ABC):
 
 # Cache: config-key → OCRBackend instance (LRU, capped)
 _MAX_CACHE = 2
+_cache_lock = threading.Lock()
 _backend_cache: OrderedDict[tuple, OCRBackend] = OrderedDict()
 
 
@@ -90,8 +111,9 @@ def clear_backend_cache() -> int:
 
     Returns the number of entries that were evicted.
     """
-    n = len(_backend_cache)
-    _backend_cache.clear()
+    with _cache_lock:
+        n = len(_backend_cache)
+        _backend_cache.clear()
     log.info("Cleared %d cached OCR backend(s)", n)
     return n
 
@@ -110,7 +132,8 @@ def get_ocr_backend(cfg: "GroupingConfig | None" = None) -> OCRBackend:
     """Return a lazily-initialized OCR backend.
 
     Instances are cached by configuration key so that a new backend
-    is created only when settings actually change.
+    is created only when settings actually change. Thread-safe via
+    double-check locking.
 
     Parameters
     ----------
@@ -129,10 +152,13 @@ def get_ocr_backend(cfg: "GroupingConfig | None" = None) -> OCRBackend:
     """
     key = _backend_key(cfg)
 
-    if key in _backend_cache:
-        _backend_cache.move_to_end(key)
-        return _backend_cache[key]
+    # Fast path: check cache without lock
+    with _cache_lock:
+        if key in _backend_cache:
+            _backend_cache.move_to_end(key)
+            return _backend_cache[key]
 
+    # Slow path: create backend outside lock to avoid blocking
     backend_type = key[0]
     device = key[1]
 
@@ -145,16 +171,23 @@ def get_ocr_backend(cfg: "GroupingConfig | None" = None) -> OCRBackend:
             f"Available backends: 'surya'"
         )
 
-    _backend_cache[key] = backend
+    # Re-acquire lock for insertion (double-check pattern)
+    with _cache_lock:
+        # Another thread may have inserted while we were creating
+        if key in _backend_cache:
+            _backend_cache.move_to_end(key)
+            return _backend_cache[key]
 
-    # Evict oldest entry if cache exceeds max size
-    while len(_backend_cache) > _MAX_CACHE:
-        evicted_key, _ = _backend_cache.popitem(last=False)
-        log.info(
-            "Evicted OCR backend %s from cache (max=%d)",
-            evicted_key,
-            _MAX_CACHE,
-        )
+        _backend_cache[key] = backend
+
+        # Evict oldest entry if cache exceeds max size
+        while len(_backend_cache) > _MAX_CACHE:
+            evicted_key, _ = _backend_cache.popitem(last=False)
+            log.info(
+                "Evicted OCR backend %s from cache (max=%d)",
+                evicted_key,
+                _MAX_CACHE,
+            )
 
     log.info("Created OCR backend: %s (device=%s)", backend.name, device)
     return backend

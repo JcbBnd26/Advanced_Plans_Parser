@@ -38,10 +38,9 @@ class QueueHandler(logging.Handler):
 class StdoutCapture:
     """File-like object that captures print() output and posts to a queue."""
 
-    # PaddleOCR/PaddlePaddle messages that should not be shown as ERROR
-    _PADDLE_INFO_PATTERNS = (
+    # OCR backend / ML library messages that should not be shown as ERROR
+    _INFO_PATTERNS = (
         "Connectivity check",
-        "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK",
         "Creating model:",
         "Model files already exist",
         "Using cached files",
@@ -51,7 +50,7 @@ class StdoutCapture:
         "oneDNN",
         "InitGoogleLogging",
     )
-    _PADDLE_WARN_PATTERNS = (
+    _WARN_PATTERNS = (
         "GPU) is not available",
         "Switching to CPU",
         "No ccache found",
@@ -65,14 +64,14 @@ class StdoutCapture:
         self.level = level
 
     def _classify_level(self, text: str) -> str:
-        """Reclassify PaddleOCR stderr messages to appropriate levels."""
+        """Reclassify OCR/ML backend stderr messages to appropriate levels."""
         if self.level != "ERROR":
             return self.level
-        # Check if this is a PaddleOCR info message masquerading as error
-        for pattern in self._PADDLE_INFO_PATTERNS:
+        # Check if this is an OCR/ML info message masquerading as error
+        for pattern in self._INFO_PATTERNS:
             if pattern in text:
                 return "DEBUG"  # Suppress to debug level
-        for pattern in self._PADDLE_WARN_PATTERNS:
+        for pattern in self._WARN_PATTERNS:
             if pattern in text:
                 return "WARNING"
         return self.level

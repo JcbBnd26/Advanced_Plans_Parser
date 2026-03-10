@@ -52,7 +52,7 @@ def _crop_patch(
         return None
 
     crop = image.crop((px0, py0, px1, py1))
-    # PaddleX text detection expects H×W×C.  If the page image is grayscale
+    # OCR backends expect H×W×3 (RGB). If the page image is grayscale
     # (mode 'L') or palette-based, np.array(crop) becomes 2D and crashes.
     if crop.mode != "RGB":
         crop = crop.convert("RGB")
@@ -127,13 +127,38 @@ def extract_vocr_targeted(
     sx = img_w / page_width if page_width > 0 else 1.0
     sy = img_h / page_height if page_height > 0 else 1.0
 
-    for cand in candidates:
+    # Phase 1: Collect all crops and track which candidates they belong to
+    crops: List[np.ndarray] = []
+    crop_indices: List[int] = []  # Maps crop index → candidate index
+
+    for idx, cand in enumerate(candidates):
         crop = _crop_patch(page_image, cand, page_width, page_height)
         if crop is None:
             cand.outcome = "miss"
             continue
+        crops.append(crop)
+        crop_indices.append(idx)
 
-        hits = _ocr_crop(backend, crop, min_conf)
+    if not crops:
+        # All candidates had degenerate crops
+        return [], [], candidates
+
+    # Phase 2: Batch OCR — single call for all crops
+    log.debug("Targeted VOCR: running batch OCR on %d crops", len(crops))
+    batch_results = backend.predict_batch(crops)
+
+    # Phase 3: Map results back to candidates
+    for crop_idx, text_boxes in enumerate(batch_results):
+        cand_idx = crop_indices[crop_idx]
+        cand = candidates[cand_idx]
+
+        # Filter by confidence and extract hits
+        hits: List[Tuple[str, float, List[float]]] = []
+        for box in text_boxes:
+            if not box.text or box.confidence < min_conf:
+                continue
+            x0, y0, x1, y1 = box.bbox
+            hits.append((box.text, float(box.confidence), [x0, y0, x1, y1]))
 
         if not hits:
             cand.outcome = "miss"

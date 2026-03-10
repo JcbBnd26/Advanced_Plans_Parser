@@ -10,30 +10,18 @@ import json
 
 import pytest
 
-from plancheck.analysis.structural_boxes import BoxType, SemanticRegion, StructuralBox
+from plancheck.analysis.structural_boxes import (BoxType, SemanticRegion,
+                                                 StructuralBox)
 from plancheck.analysis.title_block import TitleBlockField, TitleBlockInfo
 from plancheck.analysis.zoning import PageZone, ZoneTag
 from plancheck.checks.semantic_checks import CheckResult
 from plancheck.config import GroupingConfig
-from plancheck.models import (
-    AbbreviationEntry,
-    AbbreviationRegion,
-    BlockCluster,
-    GlyphBox,
-    GraphicElement,
-    LegendEntry,
-    LegendRegion,
-    Line,
-    MiscTitleRegion,
-    NotesColumn,
-    RevisionEntry,
-    RevisionRegion,
-    RowBand,
-    Span,
-    StandardDetailEntry,
-    StandardDetailRegion,
-    SuspectRegion,
-)
+from plancheck.models import (AbbreviationEntry, AbbreviationRegion,
+                              BlockCluster, GlyphBox, GraphicElement,
+                              LegendEntry, LegendRegion, Line, MiscTitleRegion,
+                              NotesColumn, RevisionEntry, RevisionRegion,
+                              RowBand, Span, StandardDetailEntry,
+                              StandardDetailRegion, SuspectRegion)
 from plancheck.pipeline import DocumentResult, PageResult, StageResult
 from plancheck.reconcile.reconcile import MatchRecord, ReconcileResult
 
@@ -556,7 +544,7 @@ class TestStageResultRoundTrip:
             enabled=True,
             ran=True,
             status="failed",
-            error={"type": "RuntimeError", "message": "PaddleOCR failed"},
+            error={"type": "RuntimeError", "message": "OCR failed"},
         )
         restored = StageResult.from_dict(sr.to_dict())
         assert restored.status == "failed"

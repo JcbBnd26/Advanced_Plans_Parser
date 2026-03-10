@@ -8,26 +8,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from plancheck import (
-    BlockCluster,
-    GlyphBox,
-    GroupingConfig,
-    StageResult,
-    ingest_pdf,
-    zone_summary,
-)
+from plancheck import (BlockCluster, GlyphBox, GroupingConfig, StageResult,
+                       ingest_pdf, zone_summary)
 from plancheck.analysis.structural_boxes import BoxType
 from plancheck.export import export_page_results
 from plancheck.export.page_data import serialize_page
 from plancheck.export.report import generate_html_report, generate_json_report
-from plancheck.pipeline import (
-    DocumentResult,
-    PageResult,
-    _run_document_checks,
-    input_fingerprint,
-    run_pipeline,
-    stage_callback_hook,
-)
+from plancheck.pipeline import (DocumentResult, PageResult,
+                                _run_document_checks, input_fingerprint,
+                                run_pipeline, stage_callback_hook)
 
 from ..utils.box_serialization import save_boxes_json
 from ..utils.run_utils import make_run_dir
@@ -710,7 +699,7 @@ def main() -> None:
         "--ocr-preprocess",
         action="store_true",
         default=False,
-        help="Preprocess OCR image (grayscale + CLAHE contrast) before PaddleOCR",
+        help="Preprocess OCR image (grayscale + CLAHE contrast) before Surya OCR",
     )
     args = parser.parse_args()
 

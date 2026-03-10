@@ -208,12 +208,12 @@ class PipelineTab:
         self.vocr_var = tk.BooleanVar(value=_defaults.enable_vocr)
         ttk.Checkbutton(
             stages_frame,
-            text="VOCR (PaddleOCR extraction)",
+            text="VOCR (Surya OCR extraction)",
             variable=self.vocr_var,
         ).grid(row=2, column=0, sticky="w", pady=2)
         ttk.Label(
             stages_frame,
-            text="Full-page PaddleOCR visual token extraction",
+            text="Full-page Surya visual token extraction",
             foreground="gray",
         ).grid(row=2, column=1, sticky="w", padx=(10, 0))
 

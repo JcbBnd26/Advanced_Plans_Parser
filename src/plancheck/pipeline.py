@@ -22,12 +22,13 @@ import traceback
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, List, Optional
+from typing import (TYPE_CHECKING, Any, Callable, Dict, Generator, List,
+                    Optional)
 
 from .config import GroupingConfig
 from .document_checks import _run_document_checks  # noqa: F401 — re-export
-from .ml_feedback import _apply_ml_feedback, _bbox_iou  # noqa: F401 — re-export
-
+from .ml_feedback import (_apply_ml_feedback,  # noqa: F401 — re-export
+                          _bbox_iou)
 # ── Backward-compatible re-exports (moved to dedicated modules) ────────
 from .page_result import PageResult  # noqa: F401 — re-export
 from .page_result import DocumentResult, SkipReason, StageResult
@@ -62,19 +63,6 @@ def stage_callback_hook(
 
 
 # ── Dependency probes (cached at module level) ─────────────────────────
-
-
-def _has_paddleocr() -> bool:
-    """Return True if PaddleOCR is importable."""
-    try:
-        import os
-
-        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
-        import paddleocr  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
 
 
 def _has_cv2() -> bool:
@@ -160,8 +148,8 @@ def gate(
     if stage == "vocr":
         if not cfg.enable_vocr:
             return False, SkipReason.disabled_by_config.value
-        if not _has_paddleocr():
-            return False, SkipReason.missing_dependency.value
+        # Backend availability is checked lazily by get_ocr_backend()
+        # which raises ImportError with a clear message if Surya is missing.
         return True, None
 
     if stage == "reconcile":
@@ -170,8 +158,6 @@ def gate(
         if not cfg.enable_vocr:
             # Reconcile requires VOCR tokens to merge.
             return False, SkipReason.disabled_by_config.value
-        if not _has_paddleocr():
-            return False, SkipReason.missing_dependency.value
         if inputs.get("vocr_failed") and not inputs.get("tocr_tokens"):
             return False, SkipReason.upstream_failed.value
         return True, None
@@ -333,17 +319,11 @@ def run_pipeline(
     PageResult
         All artefacts produced by the pipeline.
     """
-    from .pipeline_stages import (
-        _run_analysis_stage,
-        _run_checks_stage,
-        _run_grouping_stage,
-        _run_ingest_stage,
-        _run_prune_deskew,
-        _run_reconcile_stage,
-        _run_tocr_vocrpp_stages,
-        _run_vocr_candidates_stage,
-        _run_vocr_stage,
-    )
+    from .pipeline_stages import (_run_analysis_stage, _run_checks_stage,
+                                  _run_grouping_stage, _run_ingest_stage,
+                                  _run_prune_deskew, _run_reconcile_stage,
+                                  _run_tocr_vocrpp_stages,
+                                  _run_vocr_candidates_stage, _run_vocr_stage)
 
     if cfg is None:
         cfg = GroupingConfig()
@@ -627,11 +607,8 @@ def run_document(
     graph = None
     if cfg.ml_gnn_enabled:
         try:
-            from .analysis.gnn import (
-                build_document_graph,
-                is_gnn_available,
-                predict_with_gnn,
-            )
+            from .analysis.gnn import (build_document_graph, is_gnn_available,
+                                       predict_with_gnn)
 
             if is_gnn_available():
                 graph = build_document_graph(
@@ -655,10 +632,8 @@ def run_document(
     if cfg.vocr_cand_gnn_prior_enabled and graph is not None:
         try:
             from .analysis.gnn.model import is_gnn_available, load_gnn
-            from .vocr.gnn_candidate_prior import (
-                apply_gnn_prior,
-                load_gnn_candidate_prior,
-            )
+            from .vocr.gnn_candidate_prior import (apply_gnn_prior,
+                                                   load_gnn_candidate_prior)
 
             if is_gnn_available():
                 gnn_model = load_gnn(cfg.ml_gnn_model_path)

@@ -48,8 +48,6 @@ class VOCRConfig:
     vocr_tile_dedup_iou: float = 0.5
     vocr_min_text_length: int = 0
     vocr_strip_whitespace: bool = True
-    vocr_max_det_skew: float = 0.0
-    vocr_heartbeat_interval: float = 15.0
     # VOCR candidate detection
     enable_vocr_candidates: bool = True
     vocr_cand_gap_multiplier: float = 2.0

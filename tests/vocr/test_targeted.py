@@ -10,6 +10,7 @@ from PIL import Image
 
 from plancheck.config import GroupingConfig
 from plancheck.models import GlyphBox, VocrCandidate
+from plancheck.vocr.backends import TextBox
 from plancheck.vocr.targeted import _crop_patch, _ocr_crop
 
 # ── _crop_patch ────────────────────────────────────────────────────────
@@ -66,19 +67,17 @@ class TestCropPatch:
 
 class TestOcrCrop:
     def test_extracts_results(self):
-        mock_ocr = MagicMock()
-        mock_ocr.predict.return_value = [
-            {
-                "dt_polys": [[[0, 0], [20, 0], [20, 10], [0, 10]]],
-                "rec_texts": ["45°"],
-                "rec_scores": [0.95],
-            }
+        mock_backend = MagicMock()
+        mock_backend.predict.return_value = [
+            TextBox(
+                polygon=[[0, 0], [20, 0], [20, 10], [0, 10]],
+                text="45°",
+                confidence=0.95,
+            )
         ]
         crop = np.zeros((20, 40, 3), dtype=np.uint8)
-        results = _ocr_crop(mock_ocr, crop, 0.5)
-        args, _kwargs = mock_ocr.predict.call_args
-        assert isinstance(args[0], list)
-        assert len(args[0]) == 1
+        results = _ocr_crop(mock_backend, crop, 0.5)
+        mock_backend.predict.assert_called_once()
         assert len(results) == 1
         text, conf, bbox = results[0]
         assert text == "45°"
@@ -86,38 +85,36 @@ class TestOcrCrop:
         assert bbox == [0, 0, 20, 10]
 
     def test_filters_low_confidence(self):
-        mock_ocr = MagicMock()
-        mock_ocr.predict.return_value = [
-            {
-                "dt_polys": [[[0, 0], [20, 0], [20, 10], [0, 10]]],
-                "rec_texts": ["noise"],
-                "rec_scores": [0.1],
-            }
+        mock_backend = MagicMock()
+        mock_backend.predict.return_value = [
+            TextBox(
+                polygon=[[0, 0], [20, 0], [20, 10], [0, 10]],
+                text="noise",
+                confidence=0.1,
+            )
         ]
         crop = np.zeros((20, 40, 3), dtype=np.uint8)
-        results = _ocr_crop(mock_ocr, crop, 0.5)
+        results = _ocr_crop(mock_backend, crop, 0.5)
         assert results == []
 
     def test_filters_empty_text(self):
-        mock_ocr = MagicMock()
-        mock_ocr.predict.return_value = [
-            {
-                "dt_polys": [[[0, 0], [20, 0], [20, 10], [0, 10]]],
-                "rec_texts": [""],
-                "rec_scores": [0.95],
-            }
+        mock_backend = MagicMock()
+        mock_backend.predict.return_value = [
+            TextBox(
+                polygon=[[0, 0], [20, 0], [20, 10], [0, 10]],
+                text="",
+                confidence=0.95,
+            )
         ]
         crop = np.zeros((20, 40, 3), dtype=np.uint8)
-        results = _ocr_crop(mock_ocr, crop, 0.5)
+        results = _ocr_crop(mock_backend, crop, 0.5)
         assert results == []
 
     def test_empty_prediction(self):
-        mock_ocr = MagicMock()
-        mock_ocr.predict.return_value = [
-            {"dt_polys": None, "rec_texts": None, "rec_scores": None}
-        ]
+        mock_backend = MagicMock()
+        mock_backend.predict.return_value = []
         crop = np.zeros((20, 40, 3), dtype=np.uint8)
-        results = _ocr_crop(mock_ocr, crop, 0.5)
+        results = _ocr_crop(mock_backend, crop, 0.5)
         assert results == []
 
 
@@ -125,18 +122,21 @@ class TestOcrCrop:
 
 
 class TestExtractVocrTargeted:
-    @patch("plancheck.vocr.engine._get_ocr")
-    def test_hit_outcome(self, mock_get_ocr):
+    @patch("plancheck.vocr.targeted.get_ocr_backend")
+    def test_hit_outcome(self, mock_get_backend):
         """Candidate with OCR finding a symbol → outcome='hit'."""
-        mock_ocr = MagicMock()
-        mock_ocr.predict.return_value = [
-            {
-                "dt_polys": [[[2, 2], [18, 2], [18, 12], [2, 12]]],
-                "rec_texts": ["45°"],
-                "rec_scores": [0.92],
-            }
+        mock_backend = MagicMock()
+        # predict_batch returns a list of results (one per image)
+        mock_backend.predict_batch.return_value = [
+            [
+                TextBox(
+                    polygon=[[2, 2], [18, 2], [18, 12], [2, 12]],
+                    text="45°",
+                    confidence=0.92,
+                )
+            ]
         ]
-        mock_get_ocr.return_value = mock_ocr
+        mock_get_backend.return_value = mock_backend
 
         from plancheck.vocr.targeted import extract_vocr_targeted
 
@@ -159,14 +159,13 @@ class TestExtractVocrTargeted:
         assert updated[0].outcome == "hit"
         assert "°" in updated[0].found_symbol
 
-    @patch("plancheck.vocr.engine._get_ocr")
-    def test_miss_outcome(self, mock_get_ocr):
+    @patch("plancheck.vocr.targeted.get_ocr_backend")
+    def test_miss_outcome(self, mock_get_backend):
         """Candidate with no OCR results → outcome='miss'."""
-        mock_ocr = MagicMock()
-        mock_ocr.predict.return_value = [
-            {"dt_polys": [], "rec_texts": [], "rec_scores": []}
-        ]
-        mock_get_ocr.return_value = mock_ocr
+        mock_backend = MagicMock()
+        # predict_batch returns empty list for each image
+        mock_backend.predict_batch.return_value = [[]]
+        mock_get_backend.return_value = mock_backend
 
         from plancheck.vocr.targeted import extract_vocr_targeted
 
@@ -183,8 +182,8 @@ class TestExtractVocrTargeted:
         _, _, updated = extract_vocr_targeted(img, [cand], 0, 612.0, 792.0, cfg)
         assert updated[0].outcome == "miss"
 
-    @patch("plancheck.vocr.engine._get_ocr")
-    def test_empty_candidates(self, mock_get_ocr):
+    @patch("plancheck.vocr.targeted.get_ocr_backend")
+    def test_empty_candidates(self, mock_get_backend):
         """No candidates → empty output, OCR never called."""
         from plancheck.vocr.targeted import extract_vocr_targeted
 
@@ -194,12 +193,12 @@ class TestExtractVocrTargeted:
         assert tokens == []
         assert confs == []
         assert updated == []
-        mock_get_ocr.assert_not_called()
+        mock_get_backend.assert_not_called()
 
-    @patch("plancheck.vocr.engine._get_ocr")
-    def test_degenerate_patch_is_miss(self, mock_get_ocr):
+    @patch("plancheck.vocr.targeted.get_ocr_backend")
+    def test_degenerate_patch_is_miss(self, mock_get_backend):
         """Tiny candidate whose crop is degenerate → miss."""
-        mock_get_ocr.return_value = MagicMock()
+        mock_get_backend.return_value = MagicMock()
 
         from plancheck.vocr.targeted import extract_vocr_targeted
 
