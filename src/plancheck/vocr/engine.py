@@ -3,8 +3,8 @@
 This module provides the main entry point for obtaining an OCR backend.
 The actual implementations live in the `backends` subpackage.
 
-The old PaddleOCR-specific `_get_ocr` function is preserved for backward
-compatibility but simply delegates to the new backend system.
+The legacy `_get_ocr` function is preserved for backward compatibility
+but simply delegates to the new backend system.
 """
 
 from __future__ import annotations

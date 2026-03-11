@@ -693,7 +693,7 @@ def main() -> None:
         "--ocr-resolution",
         type=int,
         default=300,
-        help="DPI for OCR page render (default 300; use 120 to avoid Paddle resize)",
+        help="DPI for OCR page render (default 300)",
     )
     parser.add_argument(
         "--ocr-preprocess",

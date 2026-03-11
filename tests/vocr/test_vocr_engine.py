@@ -7,8 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from plancheck.config import GroupingConfig
-from plancheck.vocr.backends.base import (_backend_cache, _backend_key,
-                                          clear_backend_cache, get_ocr_backend)
+from plancheck.vocr.backends.base import (
+    _backend_cache,
+    _backend_key,
+    clear_backend_cache,
+    get_ocr_backend,
+)
 
 
 class TestBackendKey:
@@ -60,21 +64,19 @@ class TestBackendCache:
         # Empty cache returns 0
         assert clear_backend_cache() == 0
 
-    @patch("plancheck.vocr.backends.base.SuryaOCRBackend", autospec=True)
+    @patch("plancheck.vocr.backends.surya.SuryaOCRBackend", autospec=True)
     def test_get_ocr_backend_caches_instance(self, mock_surya):
         """Same config should return cached instance."""
         mock_instance = MagicMock()
         mock_surya.return_value = mock_instance
 
-        # Import patched version
-        with patch("plancheck.vocr.backends.surya.SuryaOCRBackend", mock_surya):
-            cfg = GroupingConfig()
-            backend1 = get_ocr_backend(cfg)
-            backend2 = get_ocr_backend(cfg)
+        cfg = GroupingConfig()
+        backend1 = get_ocr_backend(cfg)
+        backend2 = get_ocr_backend(cfg)
 
-            # Should be cached - only one instantiation
-            assert mock_surya.call_count == 1
-            assert backend1 is backend2
+        # Should be cached - only one instantiation
+        assert mock_surya.call_count == 1
+        assert backend1 is backend2
 
 
 class TestBackendFactory:

@@ -53,7 +53,7 @@ class TestCropPatch:
 
     def test_grayscale_page_image_returns_rgb_array(self):
         # Regression: grayscale ('L') images produced 2D arrays (H, W)
-        # which crash PaddleX text detection.
+        # which crash OCR backends expecting H×W×3.
         img = Image.new("L", (100, 100), 255)
         cand = VocrCandidate(page=0, x0=10, y0=20, x1=50, y1=60)
         arr = _crop_patch(img, cand, 100.0, 100.0)

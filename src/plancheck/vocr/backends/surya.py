@@ -6,6 +6,7 @@ text detection and recognition.
 
 See: https://github.com/VikParuchuri/surya
 """
+
 from __future__ import annotations
 
 import logging
@@ -52,31 +53,48 @@ class SuryaOCRBackend(OCRBackend):
         if cfg is not None:
             langs_str = getattr(cfg, "surya_languages", "en")
             if langs_str:
-                self._languages = [lang.strip() for lang in langs_str.split(",") if lang.strip()]
+                self._languages = [
+                    lang.strip() for lang in langs_str.split(",") if lang.strip()
+                ]
 
     def _ensure_initialized(self) -> None:
         """Lazy-load Surya models on first use."""
         if self._initialized:
             return
 
-        log.info("Initializing Surya OCR (device=%s, langs=%s)...",
-                 self._device, self._languages)
+        # Prevent OpenBLAS memory-allocation crash on Windows when
+        # PaddlePaddle and PyTorch coexist (both link OpenBLAS).
+        import os
+
+        for var in (
+            "OPENBLAS_NUM_THREADS",
+            "OMP_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+        ):
+            os.environ.setdefault(var, "1")
+
+        log.info(
+            "Initializing Surya OCR (device=%s, langs=%s)...",
+            self._device,
+            self._languages,
+        )
 
         try:
             from surya.detection import DetectionPredictor
-            from surya.recognition import RecognitionPredictor
+            from surya.recognition import FoundationPredictor, RecognitionPredictor
         except ImportError as e:
             raise ImportError(
-                "Surya OCR is not installed. Install with: "
-                "pip install surya-ocr"
+                "Surya OCR is not installed. Install with: " "pip install surya-ocr"
             ) from e
 
         # Configure device
         device_str = "cuda" if self._device == "gpu" else "cpu"
 
-        # Initialize predictors
+        # Initialize predictors (RecognitionPredictor wraps a FoundationPredictor)
         self._det_predictor = DetectionPredictor(device=device_str)
-        self._rec_predictor = RecognitionPredictor(device=device_str)
+        foundation = FoundationPredictor(device=device_str)
+        self._rec_predictor = RecognitionPredictor(foundation)
 
         self._initialized = True
         log.info("Surya OCR initialized successfully")
@@ -109,40 +127,12 @@ class SuryaOCRBackend(OCRBackend):
         pil_image = Image.fromarray(image)
 
         # Run detection + recognition
-        # Surya's predict method takes a list of images
         predictions = self._rec_predictor(
             [pil_image],
-            [self._languages],
-            self._det_predictor,
+            det_predictor=self._det_predictor,
         )
 
-        results: List[TextBox] = []
-
-        if not predictions:
-            return results
-
-        # Process first (and only) page result
-        page_result = predictions[0]
-
-        for text_line in page_result.text_lines:
-            # Skip low-confidence or empty results
-            text = text_line.text.strip() if text_line.text else ""
-            if not text:
-                continue
-
-            confidence = getattr(text_line, "confidence", 1.0)
-
-            # Surya bbox is [x0, y0, x1, y1] - convert to polygon
-            bbox = text_line.bbox
-            polygon = self._bbox_to_polygon(bbox)
-
-            results.append(TextBox(
-                polygon=polygon,
-                text=text,
-                confidence=float(confidence),
-            ))
-
-        return results
+        return self._extract_textboxes(predictions[0]) if predictions else []
 
     def predict_batch(self, images: List[np.ndarray]) -> List[List[TextBox]]:
         """Run OCR on multiple images in a single Surya call.
@@ -177,42 +167,38 @@ class SuryaOCRBackend(OCRBackend):
         # Run batch detection + recognition
         predictions = self._rec_predictor(
             pil_images,
-            [self._languages] * len(pil_images),
-            self._det_predictor,
+            det_predictor=self._det_predictor,
         )
 
-        batch_results: List[List[TextBox]] = []
+        return [self._extract_textboxes(p) for p in predictions]
 
-        for page_result in predictions:
-            results: List[TextBox] = []
-            for text_line in page_result.text_lines:
-                text = text_line.text.strip() if text_line.text else ""
-                if not text:
-                    continue
-
-                confidence = getattr(text_line, "confidence", 1.0)
-                bbox = text_line.bbox
-                polygon = self._bbox_to_polygon(bbox)
-
-                results.append(TextBox(
-                    polygon=polygon,
-                    text=text,
-                    confidence=float(confidence),
-                ))
-            batch_results.append(results)
-
-        return batch_results
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
-    def _bbox_to_polygon(bbox: List[float]) -> List[List[float]]:
-        """Convert [x0, y0, x1, y1] bbox to 4-point polygon.
+    def _extract_textboxes(page_result) -> List[TextBox]:
+        """Convert a Surya OCRResult into a list of TextBox."""
+        results: List[TextBox] = []
+        for text_line in page_result.text_lines:
+            text = text_line.text.strip() if text_line.text else ""
+            if not text:
+                continue
 
-        Returns corners in order: top-left, top-right, bottom-right, bottom-left.
-        """
-        x0, y0, x1, y1 = bbox
-        return [
-            [x0, y0],  # top-left
-            [x1, y0],  # top-right
-            [x1, y1],  # bottom-right
-            [x0, y1],  # bottom-left
-        ]
+            confidence = getattr(text_line, "confidence", 1.0)
+
+            # Surya 0.17+ provides polygon directly on TextLine
+            polygon = text_line.polygon
+            if polygon is None:
+                # Fallback: derive from bbox [x0, y0, x1, y1]
+                x0, y0, x1, y1 = text_line.bbox
+                polygon = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+            results.append(
+                TextBox(
+                    polygon=[[float(c) for c in pt] for pt in polygon],
+                    text=text,
+                    confidence=float(confidence),
+                )
+            )
+        return results

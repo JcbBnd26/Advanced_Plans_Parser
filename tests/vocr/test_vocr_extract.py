@@ -118,7 +118,7 @@ class TestDedupTiles:
 
 class TestOcrOneTile:
     def _make_mock_ocr(self, polys, texts, scores):
-        """Build a mock PaddleOCR that yields one page result."""
+        """Build a mock OCR backend that yields one page result."""
         page_result = {
             "dt_polys": polys,
             "rec_texts": texts,
@@ -239,7 +239,7 @@ class TestOcrOneTile:
         assert tokens[0].page == 3
 
     def test_none_attributes_skipped(self):
-        """If PaddleOCR returns None for polys/texts/scores, return nothing."""
+        """If OCR returns None for polys/texts/scores, return nothing."""
         page_result = {"dt_polys": None, "rec_texts": None, "rec_scores": None}
         mock_ocr = MagicMock()
         mock_ocr.predict.return_value = [page_result]
@@ -257,7 +257,7 @@ class TestOcrOneTile:
         assert len(tokens) == 0
 
     def test_object_style_result(self):
-        """PaddleOCR may return an object with attributes instead of a dict."""
+        """OCR may return an object with attributes instead of a dict."""
 
         class FakeResult:
             dt_polys = [[[0, 0], [10, 0], [10, 10], [0, 10]]]

@@ -17,7 +17,7 @@ ingest → tocr ‖ vocrpp → vocr → reconcile → grouping → analysis → 
 | **ingest** | Validate PDF, extract metadata, render page image |
 | **tocr** | Text-layer OCR via pdfplumber (fonts, glyphs, diagnostics) |
 | **vocrpp** | Pre-process page image for visual OCR (grayscale, CLAHE, etc.) |
-| **vocr** | Visual OCR via PaddleOCR 3.x (symbols missing from text layer) |
+| **vocr** | Visual OCR via Surya (symbols missing from text layer) |
 | **reconcile** | Merge text-layer and visual-OCR tokens (symbol injection) |
 | **grouping** | Row/line/span clustering → `BlockCluster` / `NotesColumn` |
 | **analysis** | Graphics extraction, structural boxes, legends, abbreviations, revisions, zoning |
@@ -34,7 +34,7 @@ src/plancheck/          Core package
   ingest/               PDF validation & page-image rendering
   tocr/                 Text-layer extraction & preprocessing
   vocrpp/               OCR image preprocessing (CLAHE, binarize, sharpen)
-  vocr/                 PaddleOCR engine & token extraction
+  vocr/                 Surya OCR backend & token extraction
   reconcile/            Dual-source OCR reconciliation
   grouping/             Clustering, font metrics, notes/header detection
   analysis/             Legends, abbreviations, revisions, zoning, graphics
@@ -67,7 +67,7 @@ launch_gui.bat
 ## Dependencies
 
 See [requirements.txt](requirements.txt). Key runtime dependencies:
-pdfplumber, Pillow, numpy, reportlab, OpenCV (cv2), PaddleOCR 3.x.
+pdfplumber, Pillow, numpy, reportlab, OpenCV (cv2), Surya OCR 0.17.x.
 
 ## Testing
 

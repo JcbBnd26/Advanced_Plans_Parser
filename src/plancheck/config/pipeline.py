@@ -22,7 +22,7 @@ class PipelineConfig:
     * **Core geometry** – IoU pruning, skew, tolerance multipliers,
       row/block/column splitting, and table detection.
     * **Text OCR (TOCR)** – pdfplumber text-layer extraction options.
-    * **Visual OCR (VOCR)** – PaddleOCR full-page extraction options.
+    * **Visual OCR (VOCR)** – Surya OCR full-page extraction options.
     * **OCR reconciliation** – merging VOCR tokens into the TOCR layer.
     * **OCR image preprocessing (VOCRPP)** – grayscale, CLAHE, denoise,
       binarise, and sharpen the rendered page before OCR.
