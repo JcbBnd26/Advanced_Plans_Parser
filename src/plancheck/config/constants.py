@@ -13,6 +13,7 @@ DATA_DIR = Path(os.environ.get("PLANCHECK_DATA_DIR", "data"))
 # Default paths derived from DATA_DIR
 DEFAULT_CORRECTIONS_DB = DATA_DIR / "corrections.db"
 DEFAULT_ML_MODEL = DATA_DIR / "element_classifier.pkl"
+DEFAULT_SUBTYPE_MODEL = DATA_DIR / "title_subtype_classifier.pkl"
 DEFAULT_GNN_MODEL = DATA_DIR / "document_gnn.pt"
 DEFAULT_DRIFT_STATS = DATA_DIR / "drift_stats.json"
 DEFAULT_LABEL_REGISTRY = DATA_DIR / "label_registry.json"

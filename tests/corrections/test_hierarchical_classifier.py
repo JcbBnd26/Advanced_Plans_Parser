@@ -33,7 +33,11 @@ from plancheck.corrections.hierarchical_classifier import (
     STAGE2_CONFIDENCE_THRESHOLD,
     TITLE_FAMILY_LABEL,
     ClassificationResult,
+    _stage1_instances,
+    _stage2_instances,
     classify_element,
+    clear_classifier_cache,
+    normalize_family,
 )
 from plancheck.corrections.subtype_classifier import (
     TITLE_SUBTYPES,
@@ -41,7 +45,6 @@ from plancheck.corrections.subtype_classifier import (
     encode_subtype_features,
     featurize_title_subtype,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -126,12 +129,14 @@ class TestEncodeSubtypeFeatures:
     """encode_subtype_features appends extra relational keys."""
 
     def test_output_longer_than_base(self, base_features: dict) -> None:
-        from plancheck.corrections.classifier import encode_features, _NUMERIC_KEYS, ZONE_VALUES
+        from plancheck.corrections.classifier import (
+            _NUMERIC_KEYS,
+            ZONE_VALUES,
+            encode_features,
+        )
 
         base_dim = len(_NUMERIC_KEYS) + len(ZONE_VALUES)
-        extended = featurize_title_subtype(
-            base_features, near_north_arrow=True
-        )
+        extended = featurize_title_subtype(base_features, near_north_arrow=True)
         out = encode_subtype_features(extended)
         assert len(out) == base_dim + 3
 
@@ -144,29 +149,21 @@ class TestEncodeSubtypeFeatures:
         assert out[-1] == 0.0  # near_section_arrow
 
     def test_near_north_arrow_flag(self, base_features: dict) -> None:
-        extended = featurize_title_subtype(
-            base_features, near_north_arrow=True
-        )
+        extended = featurize_title_subtype(base_features, near_north_arrow=True)
         out = encode_subtype_features(extended)
         assert out[-3] == 1.0
 
     def test_near_detail_bubble_flag(self, base_features: dict) -> None:
-        extended = featurize_title_subtype(
-            base_features, near_detail_bubble=True
-        )
+        extended = featurize_title_subtype(base_features, near_detail_bubble=True)
         out = encode_subtype_features(extended)
         assert out[-2] == 1.0
 
     def test_near_section_arrow_flag(self, base_features: dict) -> None:
-        extended = featurize_title_subtype(
-            base_features, near_section_arrow=True
-        )
+        extended = featurize_title_subtype(base_features, near_section_arrow=True)
         out = encode_subtype_features(extended)
         assert out[-1] == 1.0
 
-    def test_featurize_title_subtype_preserves_base(
-        self, base_features: dict
-    ) -> None:
+    def test_featurize_title_subtype_preserves_base(self, base_features: dict) -> None:
         extended = featurize_title_subtype(base_features, near_north_arrow=True)
         assert extended["font_size_pt"] == base_features["font_size_pt"]
         assert extended["near_north_arrow"] == 1
@@ -537,9 +534,7 @@ class TestClassifyElement:
 
 
 class TestLlmClassifyTitleSubtype:
-    def test_returns_empty_when_provider_unavailable(
-        self, base_features: dict
-    ) -> None:
+    def test_returns_empty_when_provider_unavailable(self, base_features: dict) -> None:
         from plancheck.checks.llm_checks import llm_classify_title_subtype
 
         label, conf = llm_classify_title_subtype(
@@ -583,9 +578,7 @@ class TestLlmClassifyTitleSubtype:
         )
 
         with (
-            patch(
-                "plancheck.checks.llm_checks.is_llm_available", return_value=True
-            ),
+            patch("plancheck.checks.llm_checks.is_llm_available", return_value=True),
             patch(
                 "plancheck.checks.llm_checks.LLMClient",
                 return_value=mock_client,
@@ -611,9 +604,7 @@ class TestLlmClassifyTitleSubtype:
         )
 
         with (
-            patch(
-                "plancheck.checks.llm_checks.is_llm_available", return_value=True
-            ),
+            patch("plancheck.checks.llm_checks.is_llm_available", return_value=True),
             patch(
                 "plancheck.checks.llm_checks.LLMClient",
                 return_value=mock_client,
@@ -636,9 +627,7 @@ class TestLlmClassifyTitleSubtype:
         mock_client.chat_structured.side_effect = RuntimeError("LLM timeout")
 
         with (
-            patch(
-                "plancheck.checks.llm_checks.is_llm_available", return_value=True
-            ),
+            patch("plancheck.checks.llm_checks.is_llm_available", return_value=True),
             patch(
                 "plancheck.checks.llm_checks.LLMClient",
                 return_value=mock_client,
@@ -653,3 +642,165 @@ class TestLlmClassifyTitleSubtype:
 
         assert label == ""
         assert conf == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Family normalisation
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeFamily:
+    """normalize_family maps pipeline labels to coarse families."""
+
+    def test_title_block_maps_to_title(self) -> None:
+        assert normalize_family("title_block") == "title"
+
+    def test_title_passes_through(self) -> None:
+        assert normalize_family("title") == "title"
+
+    def test_unmapped_label_passes_through(self) -> None:
+        assert normalize_family("notes") == "notes"
+        assert normalize_family("legend") == "legend"
+        assert normalize_family("details") == "details"
+
+
+# ---------------------------------------------------------------------------
+# Cache management
+# ---------------------------------------------------------------------------
+
+
+class TestClassifierCache:
+    """Cache clearing and bounding."""
+
+    def test_clear_classifier_cache(self) -> None:
+        _stage1_instances["dummy"] = "value"
+        _stage2_instances["dummy"] = "value"
+        clear_classifier_cache()
+        assert len(_stage1_instances) == 0
+        assert len(_stage2_instances) == 0
+
+
+# ---------------------------------------------------------------------------
+# Stage-1 title_block triggers Stage-2 via family normalisation
+# ---------------------------------------------------------------------------
+
+
+class TestTitleBlockRoutesToStage2:
+    """Prove that a Stage-1 label of 'title_block' triggers Stage 2."""
+
+    def test_title_block_triggers_stage2_confident(
+        self, base_features: dict, tmp_path: Path
+    ) -> None:
+        """When Stage 1 emits 'title_block' with high confidence, Stage 2 runs."""
+        s1_path = tmp_path / "s1.pkl"
+        s2_path = tmp_path / "s2.pkl"
+        # Stage 1 returns "title_block" (the real pipeline label)
+        mock_s1 = _make_s1_mock("title_block", 0.90)
+        mock_s2 = _make_s2_mock([("page_title", 0.85), ("plan_title", 0.10)])
+
+        with (
+            patch(
+                "plancheck.corrections.hierarchical_classifier._get_stage1",
+                return_value=mock_s1,
+            ),
+            patch(
+                "plancheck.corrections.hierarchical_classifier._get_stage2",
+                return_value=mock_s2,
+            ),
+        ):
+            result = classify_element(
+                base_features,
+                stage1_model_path=s1_path,
+                stage2_model_path=s2_path,
+            )
+
+        # Family should be normalised to "title"
+        assert result.family == TITLE_FAMILY_LABEL
+        # Stage 2 ran and returned a subtype
+        assert result.label == "page_title"
+        assert result.subtype == "page_title"
+        assert result.stage2_skipped is False
+
+    def test_title_block_low_confidence_flags_review(
+        self, base_features: dict, tmp_path: Path
+    ) -> None:
+        """Low-confidence 'title_block' should still normalise family."""
+        s1_path = tmp_path / "s1.pkl"
+        # Stage 1 returns "title_block" with low confidence
+        mock_s1 = _make_s1_mock("title_block", 0.4)
+
+        with patch(
+            "plancheck.corrections.hierarchical_classifier._get_stage1",
+            return_value=mock_s1,
+        ):
+            result = classify_element(
+                base_features,
+                stage1_model_path=s1_path,
+            )
+
+        assert result.low_confidence is True
+        assert result.family == "title"
+        # Label preserves the raw pipeline label
+        assert result.label == "title_block"
+
+    def test_non_title_label_preserves_raw_label(
+        self, base_features: dict, tmp_path: Path
+    ) -> None:
+        """Non-title labels should be returned as-is."""
+        s1_path = tmp_path / "s1.pkl"
+        mock_s1 = _make_s1_mock("notes", 0.92)
+
+        with patch(
+            "plancheck.corrections.hierarchical_classifier._get_stage1",
+            return_value=mock_s1,
+        ):
+            result = classify_element(
+                base_features,
+                stage1_model_path=s1_path,
+            )
+
+        assert result.label == "notes"
+        assert result.family == "notes"
+        assert result.stage2_skipped is True
+
+
+# ---------------------------------------------------------------------------
+# Stage-2 label validation
+# ---------------------------------------------------------------------------
+
+
+class TestSubtypeLabelValidation:
+    """Stage-2 training rejects invalid labels."""
+
+    def test_rejects_non_subtype_labels(
+        self, tmp_path: Path, base_features: dict
+    ) -> None:
+        """Training with labels outside TITLE_SUBTYPES should raise."""
+        jsonl_path = tmp_path / "bad_labels.jsonl"
+        import json
+
+        lines = []
+        for i in range(20):
+            feats = dict(base_features)
+            feats["near_north_arrow"] = 0
+            feats["near_detail_bubble"] = 0
+            feats["near_section_arrow"] = 0
+            # Mix valid and invalid labels
+            label = "notes" if i < 10 else "page_title"
+            lines.append(
+                json.dumps({"features": feats, "label": label, "split": "train"})
+            )
+        jsonl_path.write_text("\n".join(lines), encoding="utf-8")
+
+        clf = TitleSubtypeClassifier(model_path=tmp_path / "bad.pkl")
+        with pytest.raises(ValueError, match="TITLE_SUBTYPES"):
+            clf.train(jsonl_path)
+
+    def test_accepts_valid_subtype_labels(
+        self, tmp_path: Path, training_jsonl_subtype: Path
+    ) -> None:
+        """Training with only valid TITLE_SUBTYPES should succeed."""
+        model_path = tmp_path / "ok.pkl"
+        clf = TitleSubtypeClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl_subtype)
+        assert "accuracy" in metrics

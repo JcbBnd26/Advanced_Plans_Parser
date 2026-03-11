@@ -119,8 +119,12 @@ class GraphNode:
         if include_embedding and self.text_embedding is not None:
             parts.append(self.text_embedding.astype(np.float32))
         elif include_embedding:
-            # zero-pad if no embedding available
-            parts.append(np.zeros(384, dtype=np.float32))
+            # No embedding available — log once and fall back to the
+            # compact feature path instead of silently zero-padding.
+            log.debug(
+                "GraphNode.to_feature_vector: include_embedding=True but "
+                "no text_embedding available — returning 14-d features only."
+            )
 
         return np.concatenate(parts)
 

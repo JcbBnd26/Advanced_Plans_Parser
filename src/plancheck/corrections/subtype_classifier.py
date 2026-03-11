@@ -33,12 +33,7 @@ from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import numpy as np
 
-from .classifier import (
-    ZONE_VALUES,
-    ElementClassifier,
-    _NUMERIC_KEYS,
-    encode_features,
-)
+from .classifier import _NUMERIC_KEYS, ZONE_VALUES, ElementClassifier, encode_features
 
 log = logging.getLogger(__name__)
 
@@ -166,9 +161,7 @@ class TitleSubtypeClassifier:
         ``data/title_subtype_classifier.pkl``.
     """
 
-    def __init__(
-        self, model_path: Path = _DEFAULT_SUBTYPE_MODEL_PATH
-    ) -> None:
+    def __init__(self, model_path: Path = _DEFAULT_SUBTYPE_MODEL_PATH) -> None:
         self.model_path = Path(model_path)
         self._model = None
         self._raw_model = None
@@ -228,7 +221,7 @@ class TitleSubtypeClassifier:
         :meth:`~plancheck.corrections.store.CorrectionStore.export_training_jsonl`
         **already filtered** to ``family == "title"`` by the caller, or it
         may contain all families — rows where the label is not in
-        :data:`TITLE_SUBTYPES` are silently dropped.
+        :data:`TITLE_SUBTYPES` are rejected.
 
         Parameters
         ----------
@@ -244,7 +237,33 @@ class TitleSubtypeClassifier:
         dict
             Training metrics dict (same schema as
             :meth:`~plancheck.corrections.classifier.ElementClassifier.train`).
+
+        Raises
+        ------
+        ValueError
+            If any example has a label not in :data:`TITLE_SUBTYPES`.
         """
+        import json as _json
+
+        # ── Validate labels before training ──────────────────────
+        allowed = set(TITLE_SUBTYPES)
+        bad_labels: set[str] = set()
+        with open(jsonl_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                lbl = _json.loads(line).get("label", "")
+                if lbl not in allowed:
+                    bad_labels.add(lbl)
+
+        if bad_labels:
+            raise ValueError(
+                f"Stage-2 training data contains labels not in TITLE_SUBTYPES: "
+                f"{sorted(bad_labels)}.  Filter the JSONL to title subtypes "
+                f"before calling train()."
+            )
+
         from .training_loop import train_classifier
 
         metrics, raw_model, fitted_model, n_features = train_classifier(

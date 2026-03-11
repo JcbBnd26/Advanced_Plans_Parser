@@ -113,7 +113,7 @@ class TestGraphNode:
         assert sum(vec[:9]) == 1.0
 
     def test_feature_vector_embedding_pad_zeros(self):
-        """If include_embedding but no embedding set, pads with zeros."""
+        """If include_embedding but no embedding set, falls back to 14-d."""
         node = GraphNode(
             node_type=GraphNodeType.NOTES,
             page=0,
@@ -121,8 +121,9 @@ class TestGraphNode:
             text_embedding=None,
         )
         vec = node.to_feature_vector(include_embedding=True)
-        assert vec.shape == (398,)
-        assert np.allclose(vec[14:], 0.0)
+        # After the fix, missing embeddings should NOT zero-pad;
+        # the vector stays at 14-d (compact path).
+        assert vec.shape == (14,)
 
 
 # ── Entity extraction ─────────────────────────────────────────────────

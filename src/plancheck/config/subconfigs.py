@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .constants import DEFAULT_DRIFT_STATS, DEFAULT_GNN_MODEL, DEFAULT_ML_MODEL
+from .constants import (
+    DEFAULT_DRIFT_STATS,
+    DEFAULT_GNN_MODEL,
+    DEFAULT_ML_MODEL,
+    DEFAULT_SUBTYPE_MODEL,
+)
 
 
 @dataclass
@@ -204,6 +209,8 @@ class MLConfig:
     """ML classifier, LLM, GNN, drift, and retraining settings."""
 
     ml_model_path: str = str(DEFAULT_ML_MODEL)
+    ml_stage2_model_path: str = str(DEFAULT_SUBTYPE_MODEL)
+    ml_hierarchical_enabled: bool = False
     ml_relabel_confidence: float = 0.8
     ml_enabled: bool = True
     ml_min_training_examples: int = 10

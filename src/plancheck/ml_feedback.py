@@ -130,6 +130,9 @@ def _apply_ml_feedback(
         if not cfg.ml_enabled:
             return drift_warnings
 
+        # Choose between hierarchical router and direct Stage-1 classifier.
+        use_hierarchical = getattr(cfg, "ml_hierarchical_enabled", False)
+
         from .corrections.classifier import ElementClassifier
 
         clf = ElementClassifier(model_path=Path(cfg.ml_model_path))
@@ -206,6 +209,40 @@ def _apply_ml_feedback(
 
                 vec = _np.array(cached_vec, dtype=_np.float64)
                 pred_label, pred_conf = clf.predict_from_vector(vec)
+            elif use_hierarchical:
+                # Hierarchical: Stage 1 → family normalisation → Stage 2 → LLM
+                from .corrections.hierarchical_classifier import classify_element
+
+                det_text = det.get("text", "")
+                if not det_text and det["features"]:
+                    det_text = str(det["features"].get("_text", ""))
+
+                img_feat = None
+                if img_extractor is not None:
+                    bbox = det["bbox"]
+                    if bbox:
+                        img_feat = img_extractor.extract(page_image, tuple(bbox))
+
+                text_emb = None
+                if text_embedder is not None and det_text:
+                    text_emb = text_embedder.embed(det_text)
+
+                result = classify_element(
+                    det["features"],
+                    text=det_text,
+                    stage1_model_path=Path(cfg.ml_model_path),
+                    stage2_model_path=Path(cfg.ml_stage2_model_path),
+                    enable_llm=getattr(cfg, "enable_llm_checks", False),
+                    llm_provider=getattr(cfg, "llm_provider", "ollama"),
+                    llm_model=getattr(cfg, "llm_model", "llama3.1:8b"),
+                    llm_api_key=getattr(cfg, "llm_api_key", ""),
+                    llm_api_base=getattr(cfg, "llm_api_base", "http://localhost:11434"),
+                    llm_policy=getattr(cfg, "llm_policy", "local_only"),
+                    image_features=img_feat,
+                    text_embedding=text_emb,
+                )
+                pred_label = result.label
+                pred_conf = result.confidence
             else:
                 # Extract image features when vision is enabled
                 img_feat = None

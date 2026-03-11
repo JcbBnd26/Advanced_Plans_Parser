@@ -13,6 +13,9 @@ feature dict and optional raw text, returning a :class:`ClassificationResult`.
 
 Routing contract
 ----------------
+Before routing, the raw Stage-1 label is normalised to a coarse family via
+:func:`normalize_family` (e.g. ``"title_block"`` → ``"title"``).
+
 The routing table, as specified in the architecture plan, is:
 
 | Condition | Action |
@@ -55,6 +58,24 @@ STAGE2_CONFIDENCE_THRESHOLD: float = 0.6
 
 #: The Stage-1 family label that triggers Stage-2 refinement.
 TITLE_FAMILY_LABEL: str = "title"
+
+#: Map pipeline element-type labels to coarse family labels for routing.
+#: Labels not listed here pass through unchanged.
+_FAMILY_MAP: Dict[str, str] = {
+    "title_block": "title",
+}
+
+
+def normalize_family(label: str) -> str:
+    """Normalize a Stage-1 label to a coarse family for routing.
+
+    The pipeline stores detections with fine-grained labels like
+    ``'title_block'``, but the hierarchical router uses coarse family
+    labels (e.g. ``'title'``).  This function bridges that gap.
+
+    Labels not present in the mapping pass through unchanged.
+    """
+    return _FAMILY_MAP.get(label, label)
 
 
 # ── Result dataclass ──────────────────────────────────────────────────
@@ -102,6 +123,12 @@ class ClassificationResult:
 
 
 # ── Classifier singletons (lazy-loaded per model path) ───────────────
+#
+# Bounded to *_CACHE_MAX* entries to prevent unbounded memory growth in
+# long-running processes.  Use :func:`clear_classifier_cache` in tests
+# or when classifier pickles are retrained.
+
+_CACHE_MAX: int = 4
 
 _stage1_instances: Dict[Path, Any] = {}
 _stage2_instances: Dict[Path, Any] = {}
@@ -110,6 +137,8 @@ _stage2_instances: Dict[Path, Any] = {}
 def _get_stage1(model_path: Path) -> Any:
     """Return a cached :class:`~plancheck.corrections.classifier.ElementClassifier`."""
     if model_path not in _stage1_instances:
+        if len(_stage1_instances) >= _CACHE_MAX:
+            _stage1_instances.pop(next(iter(_stage1_instances)))
         from .classifier import ElementClassifier
 
         _stage1_instances[model_path] = ElementClassifier(model_path=model_path)
@@ -119,10 +148,21 @@ def _get_stage1(model_path: Path) -> Any:
 def _get_stage2(model_path: Path) -> Any:
     """Return a cached :class:`~plancheck.corrections.subtype_classifier.TitleSubtypeClassifier`."""
     if model_path not in _stage2_instances:
+        if len(_stage2_instances) >= _CACHE_MAX:
+            _stage2_instances.pop(next(iter(_stage2_instances)))
         from .subtype_classifier import TitleSubtypeClassifier
 
         _stage2_instances[model_path] = TitleSubtypeClassifier(model_path=model_path)
     return _stage2_instances[model_path]
+
+
+def clear_classifier_cache() -> None:
+    """Clear both Stage-1 and Stage-2 singleton caches.
+
+    Call after retraining or from test setup to ensure deterministic state.
+    """
+    _stage1_instances.clear()
+    _stage2_instances.clear()
 
 
 # ── Main entry point ──────────────────────────────────────────────────
@@ -207,11 +247,15 @@ def classify_element(
             stage2_skipped=True,
         )
 
-    family_label, family_conf = s1.predict(
+    raw_label, family_conf = s1.predict(
         feature_dict,
         image_features=image_features,
         text_embedding=text_embedding,
     )
+
+    # Normalize the raw pipeline label to a coarse family for routing.
+    # e.g. "title_block" → "title"
+    family_label = normalize_family(raw_label)
 
     # ── Low-confidence Stage-1: flag for review ───────────────────
     if family_conf < stage1_confidence_threshold:
@@ -221,7 +265,7 @@ def classify_element(
             family_label,
         )
         return ClassificationResult(
-            label=family_label,
+            label=raw_label,
             confidence=family_conf,
             family=family_label,
             family_confidence=family_conf,
@@ -232,7 +276,7 @@ def classify_element(
     # ── Non-title families: Stage-1 result is final ───────────────
     if family_label != TITLE_FAMILY_LABEL:
         return ClassificationResult(
-            label=family_label,
+            label=raw_label,
             confidence=family_conf,
             family=family_label,
             family_confidence=family_conf,

@@ -350,3 +350,84 @@ class TestLayoutModelSaveLoad:
             m = LayoutModel.load("/some/path")
         assert isinstance(m, LayoutModel)
         assert m.model_name == "/some/path"
+
+
+# ── Base checkpoint gate ───────────────────────────────────────────────
+
+
+class TestBaseCheckpointGate:
+    """Default base model should be rejected as unfine-tuned."""
+
+    def test_ensure_model_rejects_base_checkpoint(self):
+        """_ensure_model returns False for the default base model name."""
+        model = LayoutModel()  # uses _DEFAULT_MODEL_NAME
+        assert model._ensure_model() is False
+
+    def test_ensure_model_allows_custom_path(self):
+        """A non-default model path should NOT be blocked."""
+        model = LayoutModel(model_name_or_path="/my/finetuned/checkpoint")
+        # Will still fail (can't load), but shouldn't be blocked by the gate
+        with patch(
+            "plancheck.analysis.layout_model.is_layout_available", return_value=False
+        ):
+            assert model._ensure_model() is False
+
+
+# ── word_ids aggregation ──────────────────────────────────────────────
+
+
+class TestWordIdAggregation:
+    """_aggregate_predictions uses word_ids() when encoding is provided."""
+
+    def test_subword_majority_vote(self):
+        """When a word is split into 2 subwords, majority label wins."""
+        model = LayoutModel()
+        tokens = _make_tokens([(10, 10, 50, 30), (60, 10, 100, 30)])
+        boxes = [[10, 10, 50, 30], [60, 10, 100, 30]]
+
+        # Simulate: CLS + 2 subwords for word0 + 1 subword for word1 + SEP
+        # word_ids: [None, 0, 0, 1, None]
+        pred_ids = np.array([0, 2, 3, 1, 0])  # CLS, notes, title_block, drawing, SEP
+        pred_confs = np.array([0.0, 0.8, 0.9, 0.7, 0.0])
+
+        mock_encoding = MagicMock()
+        mock_encoding.word_ids.return_value = [None, 0, 0, 1, None]
+
+        results = model._aggregate_predictions(
+            pred_ids,
+            pred_confs,
+            tokens,
+            boxes,
+            1000.0,
+            1000.0,
+            encoding=mock_encoding,
+        )
+        # Word 0: subwords predicted notes(2) and title_block(3) → vote
+        # Both appear once → first one wins in Counter.most_common
+        assert len(results) >= 1
+        # Word 1: drawing(1)
+        assert any(r.label == "drawing" for r in results)
+
+    def test_fallback_when_word_ids_unavailable(self):
+        """Falls back to CLS offset when encoding.word_ids() fails."""
+        model = LayoutModel()
+        tokens = _make_tokens([(10, 10, 50, 30)])
+        boxes = [[10, 10, 50, 30]]
+
+        pred_ids = np.array([0, 2])  # CLS, notes
+        pred_confs = np.array([0.0, 0.85])
+
+        mock_encoding = MagicMock()
+        mock_encoding.word_ids.side_effect = AttributeError("no word_ids")
+
+        results = model._aggregate_predictions(
+            pred_ids,
+            pred_confs,
+            tokens,
+            boxes,
+            1000.0,
+            1000.0,
+            encoding=mock_encoding,
+        )
+        assert len(results) == 1
+        assert results[0].label == "notes"

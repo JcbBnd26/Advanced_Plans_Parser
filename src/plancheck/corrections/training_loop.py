@@ -20,41 +20,50 @@ log = logging.getLogger(__name__)
 
 def _calibrate(
     clf,
-    X_train: np.ndarray,
-    y_train: list[str],
+    X_cal: np.ndarray,
+    y_cal: list[str],
     *,
     calibrate: bool = True,
 ):
-    """Wrap *clf* with isotonic calibration.
+    """Wrap *clf* with isotonic calibration without refitting.
+
+    Uses :class:`~sklearn.frozen.FrozenEstimator` (sklearn ≥ 1.6) so that
+    the underlying estimator is **never** cloned or retrained — only the
+    calibration mapping is learned from *X_cal* / *y_cal*.
 
     Returns the calibrated estimator, or *None* if calibration is
-    skipped or fails (e.g. too few examples per class for CV).
+    skipped or fails (e.g. too few examples per class).
     """
     if not calibrate:
         return None
     try:
         from sklearn.calibration import CalibratedClassifierCV
+        from sklearn.frozen import FrozenEstimator
 
-        n_unique = len(set(y_train))
-        n_samples = len(y_train)
-        # Need enough samples for cross-validation folds
-        cv_folds = min(5, max(2, n_samples // max(n_unique, 1)))
-        if n_samples < cv_folds * n_unique:
+        n_unique = len(set(y_cal))
+        n_samples = len(y_cal)
+        if n_samples < max(n_unique * 2, 4):
             log.warning(
-                "Too few samples (%d) for calibration CV — skipping.",
+                "Too few calibration samples (%d) — skipping.",
                 n_samples,
             )
             return None
 
+        # FrozenEstimator prevents CalibratedClassifierCV from cloning
+        # or refitting the estimator during cross-validation.  The CV
+        # folds are only used to learn the isotonic mapping.
+        cv_folds = min(5, max(2, n_samples // max(n_unique, 1)))
         cal = CalibratedClassifierCV(
-            estimator=clf,
+            estimator=FrozenEstimator(clf),
             method="isotonic",
             cv=cv_folds,
         )
-        cal.fit(X_train, y_train)
+        cal.fit(X_cal, y_cal)
         log.info(
-            "Model calibrated with isotonic regression (cv=%d).",
+            "Model calibrated with isotonic regression "
+            "(FrozenEstimator, cv=%d, %d samples).",
             cv_folds,
+            n_samples,
         )
         return cal
     except Exception:  # noqa: BLE001 — calibration is optional enhancement
@@ -113,7 +122,8 @@ def train_classifier(
     # Lazy imports avoid circular dependencies at module load time
     from sklearn.utils.class_weight import compute_sample_weight
 
-    from .classifier import _NUMERIC_KEYS, FEATURE_VERSION, ZONE_VALUES, encode_features as _default_encode
+    from .classifier import _NUMERIC_KEYS, FEATURE_VERSION, ZONE_VALUES
+    from .classifier import encode_features as _default_encode
     from .metrics import compute_metrics
 
     _encode = encode_fn if encode_fn is not None else _default_encode
@@ -160,28 +170,30 @@ def train_classifier(
         clf.fit(X_train, y_train, sample_weight=sample_weights)
         raw_model = clf
 
-    # ── Confidence calibration (isotonic regression) ──────────────
-    # Use validation data if available AND sufficiently large for more honest
-    # calibration. Fall back to training data if validation set is too small.
+    # ── Confidence calibration (isotonic regression, cv='prefit') ──
+    # Use validation data if available AND sufficiently large.
+    # Fall back to training data if validation set is too small.
+    # With cv='prefit' the fitted estimator is wrapped, not refit.
     calibrated_clf = None
+    calibrated_on: str = ""
     if val_ex and X_val is not None and y_val is not None:
-        # Check if validation set is large enough for calibration CV
-        n_unique_val = len(set(y_val))
-        n_samples_val = len(y_val)
-        cv_folds_val = min(5, max(2, n_samples_val // max(n_unique_val, 1)))
-        if n_samples_val >= cv_folds_val * n_unique_val:
-            # Validation set is large enough - calibrate on it
-            calibrated_clf = _calibrate(clf, X_val, y_val, calibrate=calibrate)
-            if calibrated_clf is not None:
-                log.info("Calibrated on validation data (%d samples).", n_samples_val)
+        calibrated_clf = _calibrate(clf, X_val, y_val, calibrate=calibrate)
+        if calibrated_clf is not None:
+            calibrated_on = "val"
+            log.info("Calibrated on validation data (%d samples).", len(y_val))
     # Fall back to training data if we don't have calibration yet
     if calibrated_clf is None and calibrate:
         calibrated_clf = _calibrate(clf, X_train, y_train, calibrate=calibrate)
         if calibrated_clf is not None:
+            calibrated_on = "train"
             log.info("Calibrated on training data (validation set too small).")
 
     # ── Evaluate on validation set (or training set if no val) ────
+    # IMPORTANT: when calibration consumed val data and no separate test
+    # split exists, metrics are computed on the calibration data itself
+    # and should be treated as optimistic.
     eval_on_train = not bool(val_ex)
+    eval_on_cal = calibrated_on == "val"  # val used for both cal and eval
     if eval_on_train:
         log.warning(
             "No validation data available — metrics computed on "
@@ -212,7 +224,9 @@ def train_classifier(
     metrics["n_train"] = len(train_ex)
     metrics["n_val"] = len(val_ex)
     metrics["eval_on_train"] = eval_on_train
+    metrics["eval_on_calibration_data"] = eval_on_cal
     metrics["calibrated"] = calibrated_clf is not None
+    metrics["calibrated_on"] = calibrated_on
     metrics["ensemble"] = ensemble
     metrics["ensemble_members"] = ensemble_members
     metrics["holdout_predictions"] = holdout_predictions
@@ -235,13 +249,25 @@ def train_classifier(
             "calibrated": calibrated_clf is not None,
         }
     metrics["hyperparams"] = hyperparams
-    metrics["feature_set"] = {
-        "numeric_keys": len(_NUMERIC_KEYS),
-        "zone_values": len(ZONE_VALUES),
-        "base_dim": len(_NUMERIC_KEYS) + len(ZONE_VALUES),
-        "total_dim": X_train.shape[1],
-        "feature_version": FEATURE_VERSION,
-    }
+
+    # Feature-set metadata: report actual encoder dimensions.
+    # When a custom encode_fn is supplied (e.g. Stage-2 subtype encoder)
+    # the base_dim comes from X_train, not from Stage-1 constants.
+    is_custom_encoder = encode_fn is not None
+    if is_custom_encoder:
+        metrics["feature_set"] = {
+            "total_dim": X_train.shape[1],
+            "feature_version": FEATURE_VERSION,
+            "custom_encoder": True,
+        }
+    else:
+        metrics["feature_set"] = {
+            "numeric_keys": len(_NUMERIC_KEYS),
+            "zone_values": len(ZONE_VALUES),
+            "base_dim": len(_NUMERIC_KEYS) + len(ZONE_VALUES),
+            "total_dim": X_train.shape[1],
+            "feature_version": FEATURE_VERSION,
+        }
     metrics["feature_version"] = FEATURE_VERSION
 
     # ── Persist ───────────────────────────────────────────────────

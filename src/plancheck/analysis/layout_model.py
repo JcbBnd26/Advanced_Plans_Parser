@@ -139,6 +139,19 @@ class LayoutModel:
             log.debug("transformers/torch not installed — layout model disabled")
             return False
 
+        # Guard against using the unfine-tuned base checkpoint.  The base
+        # model has a random classification head and produces meaningless
+        # token-level layout labels.
+        if self.model_name == _DEFAULT_MODEL_NAME:
+            log.warning(
+                "LayoutModel: '%s' is an unfine-tuned base checkpoint with "
+                "a random classification head.  Layout predictions will be "
+                "meaningless.  Supply a fine-tuned checkpoint path via "
+                "ml_layout_model_path to enable layout detection.",
+                self.model_name,
+            )
+            return False
+
         import torch
         from transformers import LayoutLMv3ForTokenClassification, LayoutLMv3Processor
 
@@ -262,7 +275,9 @@ class LayoutModel:
         pred_confs = probs.max(dim=-1).values.cpu().numpy()
 
         # Map back to original tokens (skip special tokens)
-        # LayoutLMv3 adds [CLS] at start, [SEP] at end, plus subword tokens
+        # LayoutLMv3 adds [CLS] at start, [SEP] at end, plus subword tokens.
+        # Use word_ids() to correctly align subword predictions back to
+        # original words rather than assuming a 1:1 offset.
         predictions = self._aggregate_predictions(
             pred_ids,
             pred_confs,
@@ -270,6 +285,7 @@ class LayoutModel:
             boxes,
             page_width,
             page_height,
+            encoding=encoding,
         )
 
         return predictions
@@ -282,17 +298,72 @@ class LayoutModel:
         boxes: list[list[int]],
         page_width: float,
         page_height: float,
+        encoding: Any = None,
     ) -> list[LayoutPrediction]:
         """Aggregate per-subword predictions into per-region predictions.
+
+        Uses ``word_ids()`` from the tokenizer encoding to correctly map
+        subword tokens back to the original words, handling multi-piece
+        tokenisation.  Falls back to a fixed CLS offset of 1 when
+        ``word_ids()`` is unavailable (e.g. when *encoding* is ``None``).
 
         Groups contiguous tokens with the same label into a single
         LayoutPrediction with a merged bounding box.
         """
         n_tokens = min(len(tokens), _MAX_SEQ_LENGTH)
-        # Skip first token (CLS) and use only up to n_tokens
-        # Offset by 1 for the CLS token
-        offset = 1
 
+        # Build the subword→word mapping.  word_ids()[i] is the 0-based
+        # word index for subword position *i*, or None for special tokens.
+        word_id_map: list[int | None] | None = None
+        if encoding is not None:
+            try:
+                word_id_map = encoding.word_ids(batch_index=0)
+            except Exception:  # noqa: BLE001
+                log.debug("word_ids() unavailable, falling back to CLS offset")
+
+        # Per-word accumulator: word_idx → (label_id_sum, conf_sum, count)
+        word_labels: dict[int, tuple[list[int], float, int]] = {}
+
+        if word_id_map is not None:
+            for subword_idx, wid in enumerate(word_id_map):
+                if wid is None:
+                    continue  # special token ([CLS], [SEP], padding)
+                if wid >= n_tokens:
+                    continue
+                if subword_idx >= len(pred_ids):
+                    break
+                lid = int(pred_ids[subword_idx])
+                conf = float(pred_confs[subword_idx])
+                if wid not in word_labels:
+                    word_labels[wid] = ([lid], conf, 1)
+                else:
+                    ids, cs, cnt = word_labels[wid]
+                    ids.append(lid)
+                    word_labels[wid] = (ids, cs + conf, cnt + 1)
+
+            # Resolve each word — majority vote across its subwords
+            word_pred: dict[int, tuple[str, float]] = {}
+            for wid, (lids, cs, cnt) in word_labels.items():
+                from collections import Counter
+
+                most_common_lid = Counter(lids).most_common(1)[0][0]
+                if most_common_lid >= len(LAYOUT_LABELS):
+                    most_common_lid = len(LAYOUT_LABELS) - 1
+                word_pred[wid] = (LAYOUT_LABELS[most_common_lid], cs / cnt)
+        else:
+            # Fallback: fixed CLS offset=1 (original behaviour)
+            offset = 1
+            word_pred = {}
+            for i in range(n_tokens):
+                idx = i + offset
+                if idx >= len(pred_ids):
+                    break
+                lid = int(pred_ids[idx])
+                if lid >= len(LAYOUT_LABELS):
+                    lid = len(LAYOUT_LABELS) - 1
+                word_pred[i] = (LAYOUT_LABELS[lid], float(pred_confs[idx]))
+
+        # Group contiguous words with the same label into regions
         results: list[LayoutPrediction] = []
         current_label: str | None = None
         current_bbox: list[float] = [0, 0, 0, 0]
@@ -300,18 +371,11 @@ class LayoutModel:
         current_conf_sum: float = 0.0
 
         for i in range(n_tokens):
-            idx = i + offset
-            if idx >= len(pred_ids):
-                break
-
-            label_id = int(pred_ids[idx])
-            if label_id >= len(LAYOUT_LABELS):
-                label_id = len(LAYOUT_LABELS) - 1  # unknown
-            label = LAYOUT_LABELS[label_id]
-            conf = float(pred_confs[idx])
+            if i not in word_pred:
+                continue
+            label, conf = word_pred[i]
 
             if label != current_label and current_label is not None:
-                # Emit previous group
                 if current_indices:
                     avg_conf = current_conf_sum / len(current_indices)
                     results.append(
@@ -334,7 +398,6 @@ class LayoutModel:
                 current_indices = [i]
                 current_conf_sum = conf
             else:
-                # Expand bbox
                 t = tokens[i]
                 current_bbox[0] = min(current_bbox[0], t.x0)
                 current_bbox[1] = min(current_bbox[1], t.y0)
@@ -343,7 +406,6 @@ class LayoutModel:
                 current_indices.append(i)
                 current_conf_sum += conf
 
-        # Emit last group
         if current_label is not None and current_indices:
             avg_conf = current_conf_sum / len(current_indices)
             results.append(

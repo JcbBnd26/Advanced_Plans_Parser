@@ -22,13 +22,13 @@ import traceback
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import (TYPE_CHECKING, Any, Callable, Dict, Generator, List,
-                    Optional)
+from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, List, Optional
 
 from .config import GroupingConfig
 from .document_checks import _run_document_checks  # noqa: F401 — re-export
-from .ml_feedback import (_apply_ml_feedback,  # noqa: F401 — re-export
-                          _bbox_iou)
+from .ml_feedback import _apply_ml_feedback  # noqa: F401 — re-export
+from .ml_feedback import _bbox_iou
+
 # ── Backward-compatible re-exports (moved to dedicated modules) ────────
 from .page_result import PageResult  # noqa: F401 — re-export
 from .page_result import DocumentResult, SkipReason, StageResult
@@ -319,11 +319,17 @@ def run_pipeline(
     PageResult
         All artefacts produced by the pipeline.
     """
-    from .pipeline_stages import (_run_analysis_stage, _run_checks_stage,
-                                  _run_grouping_stage, _run_ingest_stage,
-                                  _run_prune_deskew, _run_reconcile_stage,
-                                  _run_tocr_vocrpp_stages,
-                                  _run_vocr_candidates_stage, _run_vocr_stage)
+    from .pipeline_stages import (
+        _run_analysis_stage,
+        _run_checks_stage,
+        _run_grouping_stage,
+        _run_ingest_stage,
+        _run_prune_deskew,
+        _run_reconcile_stage,
+        _run_tocr_vocrpp_stages,
+        _run_vocr_candidates_stage,
+        _run_vocr_stage,
+    )
 
     if cfg is None:
         cfg = GroupingConfig()
@@ -607,13 +613,43 @@ def run_document(
     graph = None
     if cfg.ml_gnn_enabled:
         try:
-            from .analysis.gnn import (build_document_graph, is_gnn_available,
-                                       predict_with_gnn)
+            from .analysis.gnn import (
+                build_document_graph,
+                is_gnn_available,
+                predict_with_gnn,
+            )
 
             if is_gnn_available():
+                # Only request embeddings when a text embedder is available.
+                # Without a real embedder, include_embeddings would produce
+                # zero-padded 398-d features instead of the expected 14-d.
+                _text_embedder = None
+                _include_emb = cfg.ml_embeddings_enabled
+                if _include_emb:
+                    try:
+                        from .corrections.text_embeddings import (
+                            TextEmbedder,
+                            is_embeddings_available,
+                        )
+
+                        if is_embeddings_available():
+                            _text_embedder = TextEmbedder(
+                                model_name=cfg.ml_embeddings_model
+                            )
+                        else:
+                            _include_emb = False
+                            log.info(
+                                "GNN embeddings requested but text embedder "
+                                "not available — using 14-d features."
+                            )
+                    except Exception:  # noqa: BLE001
+                        _include_emb = False
+                        log.debug("Text embedder init failed for GNN", exc_info=True)
+
                 graph = build_document_graph(
                     dr.pages,
-                    include_embeddings=cfg.ml_embeddings_enabled,
+                    include_embeddings=_include_emb,
+                    text_embedder=_text_embedder,
                 )
                 gnn_labels = predict_with_gnn(
                     graph,
@@ -632,8 +668,10 @@ def run_document(
     if cfg.vocr_cand_gnn_prior_enabled and graph is not None:
         try:
             from .analysis.gnn.model import is_gnn_available, load_gnn
-            from .vocr.gnn_candidate_prior import (apply_gnn_prior,
-                                                   load_gnn_candidate_prior)
+            from .vocr.gnn_candidate_prior import (
+                apply_gnn_prior,
+                load_gnn_candidate_prior,
+            )
 
             if is_gnn_available():
                 gnn_model = load_gnn(cfg.ml_gnn_model_path)

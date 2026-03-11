@@ -513,3 +513,60 @@ class TestElementClassifier:
 
         assert metrics["ensemble"] is False
         assert metrics["ensemble_members"] == []
+
+    # ── Calibration regression: cv='prefit' wraps, doesn't refit ──
+
+    def test_calibrated_model_wraps_fitted_estimator(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """Calibrated model should use FrozenEstimator (no refit)."""
+        import joblib
+        from sklearn.calibration import CalibratedClassifierCV
+        from sklearn.frozen import FrozenEstimator
+
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        clf.train(training_jsonl)
+
+        data = joblib.load(model_path)
+        raw = data["model"]
+        cal = data["calibrated_model"]
+
+        assert isinstance(cal, CalibratedClassifierCV)
+        # With FrozenEstimator, the calibrated wrapper's estimator is a
+        # FrozenEstimator wrapping the original fitted model (no refit).
+        assert isinstance(cal.estimator, FrozenEstimator)
+
+    def test_calibration_metadata_reports_data_source(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """Metrics should indicate which split was used for calibration."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl)
+
+        # calibrated_on should be present
+        assert "calibrated_on" in metrics
+        # With 5 val samples and 3 classes, val is too small;
+        # calibration falls back to train data.
+        if metrics["calibrated"]:
+            assert metrics["calibrated_on"] in ("train", "val")
+
+    def test_eval_on_calibration_data_flag(
+        self,
+        tmp_path: Path,
+        training_jsonl: Path,
+    ) -> None:
+        """When val is used for both calibration and evaluation, flag it."""
+        model_path = tmp_path / "model.pkl"
+        clf = ElementClassifier(model_path=model_path)
+        metrics = clf.train(training_jsonl)
+
+        assert "eval_on_calibration_data" in metrics
+        # With our fixture (5 val examples), val is used for both
+        if metrics["calibrated_on"] == "val":
+            assert metrics["eval_on_calibration_data"] is True
