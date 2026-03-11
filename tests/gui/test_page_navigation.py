@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 
 from plancheck.ingest.ingest import point_in_polygon
-from scripts.gui.annotation_state import _reshape_bbox_from_handle, _scale_polygon_to_bbox
+from scripts.gui.annotation_state import (
+    _reshape_bbox_from_handle,
+    _scale_polygon_to_bbox,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers — lightweight stand-in for AnnotationTab state logic
@@ -1474,7 +1477,6 @@ class _WordOverlayState:
         if self.extract_error:
             self.status = f"Word overlay failed: {self.extract_error}"
             return
-        eff = self._effective_scale()
         for i, w in enumerate(self.words):
             # Simulate canvas rectangle IDs
             self.overlay_ids.append(1000 + i)
