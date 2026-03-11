@@ -278,14 +278,32 @@ class MLCalibrationSection(CollapsibleFrame):
         cc = self.content
         cc.columnconfigure(0, weight=1)
 
+        self._calibration_target_var = tk.StringVar(value="stage1")
+
         ttk.Label(
             cc,
-            text="Generate a reliability diagram and ECE for the trained model.",
+            text="Generate a reliability diagram and ECE for Stage 1 or Stage 2.",
             foreground="gray",
         ).grid(row=0, column=0, sticky="w", pady=2)
 
+        target_row = ttk.Frame(cc)
+        target_row.grid(row=1, column=0, sticky="w", pady=(2, 4))
+        ttk.Label(target_row, text="Target:").pack(side="left")
+        ttk.Radiobutton(
+            target_row,
+            text="Stage 1",
+            variable=self._calibration_target_var,
+            value="stage1",
+        ).pack(side="left", padx=(8, 4))
+        ttk.Radiobutton(
+            target_row,
+            text="Stage 2",
+            variable=self._calibration_target_var,
+            value="stage2",
+        ).pack(side="left", padx=4)
+
         cal_btns = ttk.Frame(cc)
-        cal_btns.grid(row=1, column=0, sticky="w", pady=4)
+        cal_btns.grid(row=2, column=0, sticky="w", pady=4)
         ttk.Button(
             cal_btns,
             text="Generate Reliability Diagram",
@@ -293,21 +311,36 @@ class MLCalibrationSection(CollapsibleFrame):
         ).pack(side="left", padx=2)
 
         self._cal_canvas_frame = ttk.Frame(cc)
-        self._cal_canvas_frame.grid(row=2, column=0, sticky="ew", pady=2)
+        self._cal_canvas_frame.grid(row=3, column=0, sticky="ew", pady=2)
+
+    def _resolve_calibration_target(self) -> tuple[str, Path, Path]:
+        """Resolve the selected calibration target to its model and JSONL paths."""
+        cfg = self._state.config
+        if self._calibration_target_var.get() == "stage2":
+            return (
+                "Stage 2",
+                Path(cfg.ml_stage2_model_path),
+                Path("data") / "training_data_stage2.jsonl",
+            )
+        return (
+            "Stage 1",
+            Path(cfg.ml_model_path),
+            Path("data") / "training_data.jsonl",
+        )
 
     def _run_calibration_diagram(self) -> None:
-        model_path = Path("data") / "element_classifier.pkl"
-        jsonl_path = Path("data") / "training_data.jsonl"
+        target_name, model_path, jsonl_path = self._resolve_calibration_target()
 
         if not model_path.exists():
             messagebox.showwarning(
-                "No Model", "No trained model found. Run training first."
+                "No Model",
+                f"No trained {target_name} model found. Run training first.",
             )
             return
         if not jsonl_path.exists():
             messagebox.showwarning(
                 "No Data",
-                "No training_data.jsonl found. Run training first to generate it.",
+                f"No calibration data found for {target_name}. Run training first to generate it.",
             )
             return
 
@@ -315,9 +348,16 @@ class MLCalibrationSection(CollapsibleFrame):
         self._worker = PipelineWorker(self._root, self._log)
 
         def target():
-            from plancheck.corrections.classifier import ElementClassifier
+            if target_name == "Stage 2":
+                from plancheck.corrections.subtype_classifier import (
+                    TitleSubtypeClassifier,
+                )
 
-            clf = ElementClassifier(model_path=model_path)
+                clf = TitleSubtypeClassifier(model_path=model_path)
+            else:
+                from plancheck.corrections.classifier import ElementClassifier
+
+                clf = ElementClassifier(model_path=model_path)
             return clf.calibration_curve(jsonl_path)
 
         def on_done(result, error, elapsed):
@@ -325,7 +365,10 @@ class MLCalibrationSection(CollapsibleFrame):
                 return
             ece = result.get("ece", 0.0)
             curves = result.get("curves", {})
-            self._log.write(f"Expected Calibration Error (ECE): {ece:.4f}", "INFO")
+            self._log.write(
+                f"{target_name} Expected Calibration Error (ECE): {ece:.4f}",
+                "INFO",
+            )
             for cls_name, data in curves.items():
                 n_bins = len(data["mean_predicted"])
                 self._log.write(f"  {cls_name}: {n_bins} bins", "INFO")
@@ -851,24 +894,41 @@ class LayoutModelSection(CollapsibleFrame):
 
         ttk.Label(
             lm,
-            text="Run LayoutLMv3 layout detection on the current page.",
+            text="Run LayoutLMv3 layout detection on the current page with a fine-tuned checkpoint.",
             foreground="gray",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=2)
 
         ttk.Label(lm, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
-        self._layout_model_var = tk.StringVar(value="microsoft/layoutlmv3-base")
+        self._layout_model_var = tk.StringVar(value=self._initial_layout_model_value())
         ttk.Entry(lm, textvariable=self._layout_model_var, width=50).grid(
             row=1, column=1, sticky="ew", padx=4
         )
 
+        ttk.Label(
+            lm,
+            text="Leave blank until you have a fine-tuned checkpoint; the base model is not usable for layout inference.",
+            foreground="gray",
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=2)
+
         layout_btns = ttk.Frame(lm)
-        layout_btns.grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
+        layout_btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
         ttk.Button(
             layout_btns, text="Run Layout Detection", command=self._run_layout_detection
         ).pack(side="left", padx=2)
         ttk.Button(
             layout_btns, text="Check Availability", command=self._check_layout_avail
         ).pack(side="left", padx=2)
+
+    def _initial_layout_model_value(self) -> str:
+        """Prefer a configured fine-tuned layout model; otherwise start blank."""
+        configured = getattr(self._state.config, "ml_layout_model_path", "").strip()
+        if configured == "microsoft/layoutlmv3-base":
+            return ""
+        return configured
+
+    def _is_invalid_layout_model(self, model_name: str) -> bool:
+        """Return True when the selected model is the unfine-tuned base checkpoint."""
+        return model_name.strip() == "microsoft/layoutlmv3-base"
 
     def _check_layout_avail(self) -> None:
         self._log.clear()
@@ -877,10 +937,17 @@ class LayoutModelSection(CollapsibleFrame):
 
             avail = is_layout_available()
             if avail:
-                self._log.write(
-                    "LayoutLMv3 is available (transformers + torch installed).",
-                    "SUCCESS",
-                )
+                model_name = self._layout_model_var.get().strip()
+                if self._is_invalid_layout_model(model_name) or not model_name:
+                    self._log.write(
+                        "LayoutLMv3 dependencies are available, but you still need a fine-tuned checkpoint path.",
+                        "WARNING",
+                    )
+                else:
+                    self._log.write(
+                        "LayoutLMv3 is available and a checkpoint path is configured.",
+                        "SUCCESS",
+                    )
             else:
                 self._log.write(
                     "LayoutLMv3 NOT available. Install with: pip install 'plancheck[layout]'",
@@ -896,7 +963,16 @@ class LayoutModelSection(CollapsibleFrame):
             return
         model_name = self._layout_model_var.get().strip()
         if not model_name:
-            messagebox.showwarning("No Model", "Enter a LayoutLMv3 model name or path.")
+            messagebox.showwarning(
+                "No Model",
+                "Enter a fine-tuned LayoutLMv3 model name or checkpoint path.",
+            )
+            return
+        if self._is_invalid_layout_model(model_name):
+            messagebox.showwarning(
+                "Invalid Model",
+                "The LayoutLMv3 base checkpoint has a random classification head. Use a fine-tuned checkpoint instead.",
+            )
             return
 
         self._log.clear()

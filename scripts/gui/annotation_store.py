@@ -123,6 +123,7 @@ class AnnotationStoreMixin(LabelRegistryMixin, FilterControlsMixin, ModelTrainin
 
         self._model_suggestion = None
         self._suggest_label.configure(text="")
+        self._suggest_detail_label.configure(text="")
         self._suggest_btn.pack_forget()
-        self._type_var.set(new_label)
+        self._set_active_element_type(new_label)
         self._status.configure(text=f"Applied suggestion: {old_label} → {new_label}")

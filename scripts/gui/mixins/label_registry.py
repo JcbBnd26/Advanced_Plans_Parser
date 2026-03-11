@@ -12,6 +12,8 @@ from pathlib import Path
 from tkinter import simpledialog
 from typing import TYPE_CHECKING, Any
 
+from plancheck.corrections.subtype_classifier import TITLE_SUBTYPES
+
 if TYPE_CHECKING:
     from tkinter import ttk
 
@@ -29,11 +31,78 @@ class LabelRegistryMixin:
         root: tk.Tk
     """
 
+    TITLE_SUBTYPE_COLORS: dict[str, str] = {
+        "page_title": "#6f42c1",
+        "plan_title": "#8f5bd6",
+        "detail_title": "#b26ee5",
+        "section_title": "#5a8dee",
+        "graph_title": "#2b8a78",
+        "map_title": "#1f9d55",
+        "box_title": "#d97706",
+    }
+
     # ── Normalization ─────────────────────────────────────────────
 
     def _normalize_element_type_name(self, name: str) -> str:
         """Normalize element type name to lowercase_underscore format."""
         return name.strip().lower().replace(" ", "_")
+
+    def _title_subtypes(self) -> list[str]:
+        """Return the canonical Stage-2 title subtype labels."""
+        return list(TITLE_SUBTYPES)
+
+    def _is_title_family_label(self, label: str) -> bool:
+        """Return True when the label is the title family or a subtype."""
+        normalized = self._normalize_element_type_name(label) if label else ""
+        return normalized == "title_block" or normalized in self._title_subtypes()
+
+    def _ensure_title_subtype_labels(self) -> None:
+        """Register Stage-2 subtype labels with stable default colors."""
+        for label in self._title_subtypes():
+            self._register_element_type(
+                label,
+                color=self.TITLE_SUBTYPE_COLORS.get(label),
+            )
+
+    def _sync_title_subtype_controls(self, label: str) -> None:
+        """Keep the subtype selector aligned with the active element label."""
+        subtype_combo = getattr(self, "_subtype_combo", None)
+        subtype_var = getattr(self, "_subtype_var", None)
+        if subtype_combo is None or subtype_var is None:
+            return
+
+        normalized = self._normalize_element_type_name(label) if label else ""
+        subtype_value = normalized if normalized in self._title_subtypes() else ""
+        state = "readonly" if self._is_title_family_label(normalized) else "disabled"
+
+        self._syncing_title_subtype_controls = True
+        try:
+            subtype_var.set(subtype_value)
+            subtype_combo.configure(state=state)
+        finally:
+            self._syncing_title_subtype_controls = False
+
+    def _set_active_element_type(self, label: str) -> None:
+        """Set the active type field and synchronize subtype controls."""
+        self._type_var.set(label)
+        self._sync_title_subtype_controls(label)
+
+    def _on_type_selection_changed(self, *_args: Any) -> None:
+        """React to manual edits in the main type control."""
+        if getattr(self, "_syncing_title_subtype_controls", False):
+            return
+        self._sync_title_subtype_controls(self._type_var.get())
+
+    def _on_subtype_selected(self, _event: Any = None) -> None:
+        """Promote the active type to the chosen title subtype."""
+        if getattr(self, "_syncing_title_subtype_controls", False):
+            return
+        subtype_var = getattr(self, "_subtype_var", None)
+        if subtype_var is None:
+            return
+        subtype = self._normalize_element_type_name(subtype_var.get())
+        if subtype in self._title_subtypes():
+            self._set_active_element_type(subtype)
 
     # ── Registry path ────────────────────────────────────────────
 
@@ -121,6 +190,8 @@ class LabelRegistryMixin:
                 self._register_element_type(label, color=color)
             else:
                 self._register_element_type(label)
+        self._ensure_title_subtype_labels()
+        self._sync_title_subtype_controls(self._type_var.get())
 
     # ── Registration ─────────────────────────────────────────────
 
@@ -162,6 +233,9 @@ class LabelRegistryMixin:
 
         # Update combo boxes
         self._type_combo.configure(values=self.ELEMENT_TYPES)
+        subtype_combo = getattr(self, "_subtype_combo", None)
+        if subtype_combo is not None:
+            subtype_combo.configure(values=self._title_subtypes())
 
         if name not in self._filter_label_vars:
             self._filter_label_vars[name] = tk.BooleanVar(value=True)
@@ -178,7 +252,7 @@ class LabelRegistryMixin:
         )
         if name:
             self._register_element_type(name)
-            self._type_var.set(name.strip().lower().replace(" ", "_"))
+            self._set_active_element_type(name.strip().lower().replace(" ", "_"))
             self._status.configure(
                 text=f"Added element type: {name.strip().lower().replace(' ', '_')}"
             )

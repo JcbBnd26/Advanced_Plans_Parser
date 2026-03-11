@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from plancheck.corrections.retrain_trigger import RetrainResult, check_retrain_needed
+from plancheck.corrections.retrain_trigger import (
+    RetrainResult,
+    auto_retrain,
+    check_retrain_needed,
+)
 from plancheck.corrections.store import CorrectionStore
 
 # ── Fixtures ───────────────────────────────────────────────────────────
@@ -71,6 +76,33 @@ class TestRetrainResult:
         assert d["f1_weighted"] == 0.85
 
 
+class _FakeStore:
+    def __init__(self, db_path: Path, export_rows: list[dict]) -> None:
+        self._db_path = db_path
+        self._export_rows = export_rows
+        self.saved_runs: list[tuple[dict, str, str]] = []
+
+    def count_corrections_since_last_train(self) -> int:
+        return 20
+
+    def build_training_set(self) -> int:
+        return len(self._export_rows)
+
+    def export_training_jsonl(self, output_path: Path) -> int:
+        output_path.write_text(
+            "\n".join(json.dumps(row) for row in self._export_rows) + "\n",
+            encoding="utf-8",
+        )
+        return len(self._export_rows)
+
+    def save_training_run(self, metrics, model_path="", notes="", **kwargs):
+        self.saved_runs.append((metrics, model_path, notes))
+        return f"run_{len(self.saved_runs)}"
+
+    def get_training_history(self) -> list[dict]:
+        return []
+
+
 # ── check_retrain_needed ──────────────────────────────────────────────
 
 
@@ -124,3 +156,157 @@ class TestStoreRetrainHelpers:
     def test_should_retrain(self, store_with_corrections):
         assert store_with_corrections.should_retrain(threshold=50) is True
         assert store_with_corrections.should_retrain(threshold=100) is False
+
+
+class TestAutoRetrainStage2:
+    def test_trains_stage2_when_subtype_rows_are_present(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_features: dict,
+    ) -> None:
+        rows = []
+        for idx, label in enumerate(
+            [
+                "page_title",
+                "plan_title",
+                "page_title",
+                "plan_title",
+                "page_title",
+                "plan_title",
+                "page_title",
+                "plan_title",
+                "page_title",
+                "plan_title",
+            ]
+        ):
+            rows.append(
+                {
+                    "example_id": f"ex_{idx}",
+                    "label": label,
+                    "features": sample_features,
+                    "split": "train" if idx < 8 else "val",
+                }
+            )
+        rows.append(
+            {
+                "example_id": "ex_non_subtype",
+                "label": "header",
+                "features": sample_features,
+                "split": "train",
+            }
+        )
+        store = _FakeStore(tmp_path / "test.db", rows)
+
+        monkeypatch.setattr(
+            "plancheck.corrections.classifier.ElementClassifier.train",
+            lambda self, path, calibrate=True, ensemble=False: {
+                "accuracy": 0.9,
+                "f1_weighted": 0.88,
+                "n_train": 8,
+                "n_val": 2,
+                "holdout_predictions": [],
+            },
+        )
+
+        captured_stage2: dict[str, object] = {}
+
+        def _fake_stage2_train(self, path, calibrate=True, ensemble=False):
+            jsonl_path = Path(path)
+            captured_stage2["path"] = jsonl_path
+            captured_stage2["lines"] = jsonl_path.read_text(
+                encoding="utf-8"
+            ).splitlines()
+            return {
+                "accuracy": 0.8,
+                "f1_weighted": 0.77,
+                "n_train": 8,
+                "n_val": 2,
+                "holdout_predictions": [],
+            }
+
+        monkeypatch.setattr(
+            "plancheck.corrections.subtype_classifier.TitleSubtypeClassifier.train",
+            _fake_stage2_train,
+        )
+        monkeypatch.setattr(
+            "plancheck.corrections.drift_detection.DriftDetector",
+            lambda threshold=0.3: SimpleNamespace(
+                fit=lambda path: None,
+                save=lambda path: None,
+            ),
+        )
+
+        result = auto_retrain(
+            store,
+            model_path=tmp_path / "stage1.pkl",
+            stage2_model_path=tmp_path / "stage2.pkl",
+            threshold=0,
+        )
+
+        assert result.accepted is True
+        assert result.stage2_trained is True
+        assert result.stage2_metrics["f1_weighted"] == 0.77
+        assert result.stage2_skipped_reason == ""
+        assert len(store.saved_runs) == 2
+        assert store.saved_runs[1][1] == str(tmp_path / "stage2.pkl")
+        assert store.saved_runs[1][2] == "auto-retrain-stage2"
+        assert captured_stage2["path"] == tmp_path / "training_data_stage2.jsonl"
+        assert all('"label": "header"' not in line for line in captured_stage2["lines"])
+
+    def test_skips_stage2_when_subtype_data_is_insufficient(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_features: dict,
+    ) -> None:
+        rows = [
+            {
+                "example_id": f"ex_{idx}",
+                "label": "page_title",
+                "features": sample_features,
+                "split": "train",
+            }
+            for idx in range(4)
+        ]
+        rows.extend(
+            {
+                "example_id": f"ex_header_{idx}",
+                "label": "header",
+                "features": sample_features,
+                "split": "train",
+            }
+            for idx in range(6)
+        )
+        store = _FakeStore(tmp_path / "test.db", rows)
+
+        monkeypatch.setattr(
+            "plancheck.corrections.classifier.ElementClassifier.train",
+            lambda self, path, calibrate=True, ensemble=False: {
+                "accuracy": 0.9,
+                "f1_weighted": 0.88,
+                "n_train": 8,
+                "n_val": 2,
+                "holdout_predictions": [],
+            },
+        )
+        monkeypatch.setattr(
+            "plancheck.corrections.drift_detection.DriftDetector",
+            lambda threshold=0.3: SimpleNamespace(
+                fit=lambda path: None,
+                save=lambda path: None,
+            ),
+        )
+
+        result = auto_retrain(
+            store,
+            model_path=tmp_path / "stage1.pkl",
+            stage2_model_path=tmp_path / "stage2.pkl",
+            threshold=0,
+        )
+
+        assert result.accepted is True
+        assert result.stage2_trained is False
+        assert result.stage2_error == ""
+        assert "only 4 subtype examples" in result.stage2_skipped_reason
+        assert len(store.saved_runs) == 1

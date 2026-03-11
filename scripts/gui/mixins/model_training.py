@@ -53,6 +53,55 @@ class ModelTrainingMixin:
         except Exception:  # noqa: BLE001
             log.debug("root.after scheduling failed", exc_info=True)
 
+    def _reload_classifiers(self) -> None:
+        """Clear hierarchical caches and reload the Stage-1 classifier."""
+        from plancheck.corrections.classifier import ElementClassifier
+        from plancheck.corrections.hierarchical_classifier import clear_classifier_cache
+
+        clear_classifier_cache()
+        model_path = Path(self.state.config.ml_model_path)
+        self._classifier = ElementClassifier(model_path=model_path)
+
+    def _format_retrain_status(
+        self,
+        result,
+        *,
+        action_label: str,
+        bootstrap_examples: int | None = None,
+    ) -> tuple[str, str]:
+        """Convert a retrain result into a concise UI status string."""
+        if result.error:
+            return f"{action_label} failed: {result.error}", "red"
+
+        if result.rolled_back:
+            f1 = result.metrics.get("f1_weighted", 0)
+            return (
+                f"Model rolled back — F1 regressed ({f1:.1%})",
+                "orange",
+            )
+
+        if not result.accepted:
+            return f"{action_label} incomplete", "gray"
+
+        prefix = action_label
+        if bootstrap_examples is not None:
+            prefix = f"{action_label} ({bootstrap_examples} examples)"
+
+        stage1_f1 = result.metrics.get("f1_weighted", 0)
+        text = f"{prefix} — S1 F1 {stage1_f1:.1%}"
+        color = "green"
+
+        if result.stage2_trained:
+            stage2_f1 = result.stage2_metrics.get("f1_weighted", 0)
+            text += f"; S2 F1 {stage2_f1:.1%}"
+        elif result.stage2_error:
+            text += f"; Stage 2 failed: {result.stage2_error}"
+            color = "orange"
+        elif result.stage2_skipped_reason:
+            text += f"; Stage 2 skipped: {result.stage2_skipped_reason}"
+
+        return text, color
+
     # ── Training ─────────────────────────────────────────────────
 
     def _on_train_model(self) -> None:
@@ -82,7 +131,8 @@ class ModelTrainingMixin:
                 # Force retrain by setting threshold=0 when user explicitly requests
                 result = auto_retrain(
                     store,
-                    model_path="data/element_classifier.pkl",
+                    model_path=self.state.config.ml_model_path,
+                    stage2_model_path=self.state.config.ml_stage2_model_path,
                     calibrate=True,
                     ensemble=False,
                     threshold=0,  # Always train when user clicks button
@@ -99,48 +149,22 @@ class ModelTrainingMixin:
                 # Store metrics for display
                 if result.metrics:
                     self._last_metrics = result.metrics
+                self._last_stage2_metrics = result.stage2_metrics or None
 
                 # Update status based on result
-                if result.error:
-                    self._safe_after(
-                        0,
-                        lambda: self._model_status_label.configure(
-                            text=f"Train failed: {result.error}",
-                            foreground="red",
-                        ),
-                    )
-                elif result.rolled_back:
-                    f1 = result.metrics.get("f1_weighted", 0)
-                    self._safe_after(
-                        0,
-                        lambda: self._model_status_label.configure(
-                            text=f"Model rolled back — F1 regressed ({f1:.1%})",
-                            foreground="orange",
-                        ),
-                    )
-                elif result.accepted:
-                    acc = result.metrics.get("accuracy", 0)
-                    f1 = result.metrics.get("f1_weighted", 0)
-                    self._safe_after(
-                        0,
-                        lambda: self._model_status_label.configure(
-                            text=f"Model trained — acc {acc:.1%}  F1 {f1:.1%}",
-                            foreground="green",
-                        ),
-                    )
-                else:
-                    self._safe_after(
-                        0,
-                        lambda: self._model_status_label.configure(
-                            text="Training incomplete",
-                            foreground="gray",
-                        ),
-                    )
+                status_text, status_color = self._format_retrain_status(
+                    result,
+                    action_label="Model trained",
+                )
+                self._safe_after(
+                    0,
+                    lambda: self._model_status_label.configure(
+                        text=status_text,
+                        foreground=status_color,
+                    ),
+                )
 
-                # Reload classifier
-                from plancheck.corrections.classifier import ElementClassifier
-
-                self._classifier = ElementClassifier()
+                self._reload_classifiers()
 
             except Exception as exc:
                 self._safe_after(
@@ -192,7 +216,8 @@ class ModelTrainingMixin:
                 # Train on the pseudo-labels
                 result = auto_retrain(
                     store,
-                    model_path="data/element_classifier.pkl",
+                    model_path=self.state.config.ml_model_path,
+                    stage2_model_path=self.state.config.ml_stage2_model_path,
                     calibrate=True,
                     ensemble=False,
                     threshold=0,  # Force training
@@ -202,39 +227,23 @@ class ModelTrainingMixin:
                 # Store metrics for display
                 if result.metrics:
                     self._last_metrics = result.metrics
+                self._last_stage2_metrics = result.stage2_metrics or None
 
                 # Update status
-                if result.error:
-                    self._safe_after(
-                        0,
-                        lambda: self._model_status_label.configure(
-                            text=f"Bootstrap failed: {result.error}",
-                            foreground="red",
-                        ),
-                    )
-                elif result.accepted:
-                    acc = result.metrics.get("accuracy", 0)
-                    f1 = result.metrics.get("f1_weighted", 0)
-                    self._safe_after(
-                        0,
-                        lambda: self._model_status_label.configure(
-                            text=f"Bootstrapped ({n_generated} examples) — F1 {f1:.1%}",
-                            foreground="green",
-                        ),
-                    )
-                else:
-                    self._safe_after(
-                        0,
-                        lambda: self._model_status_label.configure(
-                            text="Bootstrap incomplete",
-                            foreground="gray",
-                        ),
-                    )
+                status_text, status_color = self._format_retrain_status(
+                    result,
+                    action_label="Bootstrapped",
+                    bootstrap_examples=n_generated,
+                )
+                self._safe_after(
+                    0,
+                    lambda: self._model_status_label.configure(
+                        text=status_text,
+                        foreground=status_color,
+                    ),
+                )
 
-                # Reload classifier
-                from plancheck.corrections.classifier import ElementClassifier
-
-                self._classifier = ElementClassifier()
+                self._reload_classifiers()
 
             except Exception as exc:
                 log.exception("Bootstrap training failed")

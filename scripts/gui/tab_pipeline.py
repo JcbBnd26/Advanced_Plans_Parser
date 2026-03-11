@@ -15,7 +15,6 @@ release.
 from __future__ import annotations
 
 import json
-import tempfile
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -68,6 +67,7 @@ class PipelineTab:
 
     def _build_ui(self) -> None:
         pad = {"padx": 10, "pady": 4}
+        defaults = GroupingConfig.from_dict(self.state.config.to_dict())
 
         # ── Scrollable top area ──────────────────────────────────────
         self._canvas = tk.Canvas(self.frame, highlightthickness=0)
@@ -170,13 +170,41 @@ class PipelineTab:
         self._update_page_mode()
         row += 1
 
+        # ── Config File Actions ─────────────────────────────────────
+        config_frame = ttk.LabelFrame(self._inner, text="Config File", padding=10)
+        config_frame.grid(row=row, column=0, sticky="ew", **pad)
+        config_frame.columnconfigure(1, weight=1)
+
+        config_btns = ttk.Frame(config_frame)
+        config_btns.grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            config_btns,
+            text="Load Config...",
+            command=self._load_config_from_file,
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            config_btns,
+            text="Save Config...",
+            command=self._save_config_to_file,
+        ).pack(side="left")
+
+        self._config_path_var = tk.StringVar()
+        ttk.Label(
+            config_frame,
+            textvariable=self._config_path_var,
+            foreground="gray",
+        ).grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self._refresh_config_file_label()
+
+        row += 1
+
         # ── OCR Stage Toggles ───────────────────────────────────────
         stages_frame = ttk.LabelFrame(self._inner, text="Pipeline Stages", padding=10)
         stages_frame.grid(row=row, column=0, sticky="ew", **pad)
         stages_frame.columnconfigure(1, weight=1)
 
         # Get defaults from GroupingConfig (single source of truth)
-        _defaults = GroupingConfig()
+        _defaults = defaults
 
         # TOCR
         self.tocr_var = tk.BooleanVar(value=_defaults.enable_tocr)
@@ -287,6 +315,87 @@ class PipelineTab:
 
         row += 1
 
+        # ── ML Settings ─────────────────────────────────────────────
+        ml_frame = ttk.LabelFrame(self._inner, text="ML Settings", padding=10)
+        ml_frame.grid(row=row, column=0, sticky="ew", **pad)
+        ml_frame.columnconfigure(1, weight=1)
+
+        self.ml_enabled_var = tk.BooleanVar(value=_defaults.ml_enabled)
+        ttk.Checkbutton(
+            ml_frame,
+            text="Enable ML relabeling",
+            variable=self.ml_enabled_var,
+        ).grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Label(
+            ml_frame,
+            text="Run the trained classifier during pipeline feedback.",
+            foreground="gray",
+        ).grid(row=0, column=1, sticky="w", padx=(10, 0))
+
+        self.ml_hierarchical_var = tk.BooleanVar(
+            value=_defaults.ml_hierarchical_enabled
+        )
+        ttk.Checkbutton(
+            ml_frame,
+            text="Enable hierarchical title refinement",
+            variable=self.ml_hierarchical_var,
+            command=self._update_ml_control_state,
+        ).grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Label(
+            ml_frame,
+            text="Route title-family predictions through the Stage 2 subtype model.",
+            foreground="gray",
+        ).grid(row=1, column=1, sticky="w", padx=(10, 0))
+
+        ttk.Label(ml_frame, text="Stage 1 model:").grid(
+            row=2, column=0, sticky="w", pady=(8, 2)
+        )
+        stage1_row = ttk.Frame(ml_frame)
+        stage1_row.grid(row=2, column=1, sticky="ew", pady=(8, 2))
+        stage1_row.columnconfigure(0, weight=1)
+        self.ml_model_path_var = tk.StringVar(value=_defaults.ml_model_path)
+        self.ml_model_path_var.trace_add("write", self._refresh_ml_status)
+        ttk.Entry(stage1_row, textvariable=self.ml_model_path_var).grid(
+            row=0, column=0, sticky="ew"
+        )
+        ttk.Button(
+            stage1_row,
+            text="Browse...",
+            command=lambda: self._browse_model_path(self.ml_model_path_var),
+        ).grid(row=0, column=1, padx=(6, 0))
+        self._stage1_model_status_label = ttk.Label(stage1_row, foreground="gray")
+        self._stage1_model_status_label.grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(2, 0)
+        )
+
+        ttk.Label(ml_frame, text="Stage 2 model:").grid(
+            row=3, column=0, sticky="w", pady=2
+        )
+        stage2_row = ttk.Frame(ml_frame)
+        stage2_row.grid(row=3, column=1, sticky="ew", pady=2)
+        stage2_row.columnconfigure(0, weight=1)
+        self.ml_stage2_model_path_var = tk.StringVar(
+            value=_defaults.ml_stage2_model_path
+        )
+        self.ml_stage2_model_path_var.trace_add("write", self._refresh_ml_status)
+        self._stage2_path_entry = ttk.Entry(
+            stage2_row,
+            textvariable=self.ml_stage2_model_path_var,
+        )
+        self._stage2_path_entry.grid(row=0, column=0, sticky="ew")
+        self._stage2_browse_button = ttk.Button(
+            stage2_row,
+            text="Browse...",
+            command=lambda: self._browse_model_path(self.ml_stage2_model_path_var),
+        )
+        self._stage2_browse_button.grid(row=0, column=1, padx=(6, 0))
+        self._stage2_model_status_label = ttk.Label(stage2_row, foreground="gray")
+        self._stage2_model_status_label.grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(2, 0)
+        )
+
+        row += 1
+
         # ── Run Button ───────────────────────────────────────────────
         btn_frame = ttk.Frame(self._inner)
         btn_frame.grid(row=row, column=0, sticky="ew", **pad)
@@ -340,9 +449,10 @@ class PipelineTab:
 
         # ── Embedded Log Console ─────────────────────────────────────
         self.log_panel = LogPanel(self.frame, height=10)
-        self.log_panel.grid(
-            row=2, column=0, sticky="nsew", padx=10, pady=(0, 6)
-        )
+        self.log_panel.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 6))
+
+        self._update_ml_control_state()
+        self._refresh_ml_status()
 
     # ------------------------------------------------------------------
     # Config helpers
@@ -350,7 +460,7 @@ class PipelineTab:
 
     def _collect_config(self) -> GroupingConfig:
         """Build a GroupingConfig from all current UI knobs + toggles."""
-        cfg = GroupingConfig()
+        cfg = GroupingConfig.from_dict(self.state.config.to_dict())
         # Master toggles
         cfg.enable_tocr = self.tocr_var.get()
         cfg.enable_vocr = self.vocr_var.get()
@@ -358,16 +468,24 @@ class PipelineTab:
         cfg.enable_ocr_preprocess = self.ocr_preprocess_var.get()
         cfg.enable_skew = self.skew_var.get()
         cfg.enable_llm_checks = self.llm_checks_var.get()
+        cfg.ml_enabled = self.ml_enabled_var.get()
+        cfg.ml_hierarchical_enabled = self.ml_hierarchical_var.get()
+        cfg.ml_model_path = self.ml_model_path_var.get().strip() or cfg.ml_model_path
+        cfg.ml_stage2_model_path = (
+            self.ml_stage2_model_path_var.get().strip() or cfg.ml_stage2_model_path
+        )
 
         try:
             cfg.ocr_reconcile_resolution = int(self.ocr_dpi_var.get())
         except ValueError:
             pass
 
+        self.state.set_config(cfg, config_file_path=self.state.config_file_path)
         return cfg
 
     def _apply_config(self, cfg: GroupingConfig) -> None:
         """Push a GroupingConfig into all UI controls."""
+        self.state.set_config(cfg, config_file_path=self.state.config_file_path)
         self.tocr_var.set(cfg.enable_tocr)
         self.vocr_var.set(cfg.enable_vocr)
         self.ocr_reconcile_var.set(cfg.enable_ocr_reconcile)
@@ -375,6 +493,13 @@ class PipelineTab:
         self.skew_var.set(cfg.enable_skew)
         self.llm_checks_var.set(cfg.enable_llm_checks)
         self.ocr_dpi_var.set(str(cfg.ocr_reconcile_resolution))
+        self.ml_enabled_var.set(cfg.ml_enabled)
+        self.ml_hierarchical_var.set(cfg.ml_hierarchical_enabled)
+        self.ml_model_path_var.set(cfg.ml_model_path)
+        self.ml_stage2_model_path_var.set(cfg.ml_stage2_model_path)
+        self._update_ml_control_state()
+        self._refresh_ml_status()
+        self._refresh_config_file_label()
 
     def _on_load_config(self) -> None:
         """Handle load_config event from Runs tab."""
@@ -384,6 +509,195 @@ class PipelineTab:
         cfg = GroupingConfig.from_dict(config_dict)
         self._apply_config(cfg)
         self.state.pending_config = None  # Clear after applying
+
+    def _refresh_config_file_label(self) -> None:
+        """Show the current config source in the Pipeline tab."""
+        path = self.state.config_file_path
+        if path is None:
+            self._config_path_var.set("Working config: in memory")
+            return
+        self._config_path_var.set(f"Working config: {path.name}")
+
+    def _load_config_from_file(self) -> None:
+        """Load a YAML or TOML config file into the Pipeline tab."""
+        path_str = filedialog.askopenfilename(
+            title="Load Pipeline Config",
+            filetypes=[
+                ("Config Files", "*.yaml *.yml *.toml"),
+                ("YAML Files", "*.yaml *.yml"),
+                ("TOML Files", "*.toml"),
+                ("All Files", "*.*"),
+            ],
+            initialdir=str(Path.cwd()),
+        )
+        if not path_str:
+            return
+
+        path = Path(path_str)
+        try:
+            cfg = GroupingConfig.from_file(path)
+        except Exception as exc:  # noqa: BLE001 - GUI should surface config load errors
+            messagebox.showerror("Config Load Failed", str(exc))
+            return
+
+        self.state.config_file_path = path
+        self._apply_config(cfg)
+
+    def _save_config_to_file(self) -> None:
+        """Save the current GUI config to YAML or TOML."""
+        cfg = self._collect_config()
+        initial_name = "plancheck-config.yaml"
+        if self.state.config_file_path is not None:
+            initial_name = self.state.config_file_path.name
+
+        path_str = filedialog.asksaveasfilename(
+            title="Save Pipeline Config",
+            defaultextension=".yaml",
+            initialfile=initial_name,
+            filetypes=[
+                ("YAML Files", "*.yaml"),
+                ("YAML Files", "*.yml"),
+                ("TOML Files", "*.toml"),
+            ],
+            initialdir=str(Path.cwd()),
+        )
+        if not path_str:
+            return
+
+        path = Path(path_str)
+        suffix = path.suffix.lower()
+        try:
+            if suffix in (".yaml", ".yml"):
+                path.write_text(self._config_to_yaml(cfg), encoding="utf-8")
+            elif suffix == ".toml":
+                path.write_text(self._config_to_toml(cfg), encoding="utf-8")
+            else:
+                raise ValueError(
+                    "Unsupported config extension. Use .yaml, .yml, or .toml"
+                )
+        except Exception as exc:  # noqa: BLE001 - GUI should surface config save errors
+            messagebox.showerror("Config Save Failed", str(exc))
+            return
+
+        self.state.set_config(cfg, config_file_path=path)
+        self._refresh_config_file_label()
+
+    def _browse_model_path(self, variable: tk.StringVar) -> None:
+        """Choose a model artifact path for a config field."""
+        path_str = filedialog.askopenfilename(
+            title="Select Model Artifact",
+            filetypes=[
+                ("Pickle / Joblib", "*.pkl *.joblib"),
+                ("All Files", "*.*"),
+            ],
+            initialdir=str(Path.cwd()),
+        )
+        if not path_str:
+            return
+        variable.set(self._normalize_path(Path(path_str)))
+
+    def _normalize_path(self, path: Path) -> str:
+        """Prefer repo-relative paths when possible for saved config values."""
+        try:
+            return str(path.relative_to(Path.cwd()))
+        except ValueError:
+            return str(path)
+
+    def _update_ml_control_state(self) -> None:
+        """Enable Stage 2 path controls only when hierarchical mode is enabled."""
+        state = "normal" if self.ml_hierarchical_var.get() else "disabled"
+        if hasattr(self, "_stage2_path_entry"):
+            self._stage2_path_entry.configure(state=state)
+        if hasattr(self, "_stage2_browse_button"):
+            self._stage2_browse_button.configure(state=state)
+        self._refresh_ml_status()
+
+    def _refresh_ml_status(self, *_args) -> None:
+        """Update model-path status labels based on the current UI values."""
+        self._set_model_status(
+            getattr(self, "_stage1_model_status_label", None),
+            self.ml_model_path_var.get(),
+            prefix="Stage 1",
+        )
+
+        hierarchical_enabled = self.ml_hierarchical_var.get()
+        if not hierarchical_enabled:
+            self._set_model_status_text(
+                getattr(self, "_stage2_model_status_label", None),
+                "Stage 2 model inactive until hierarchical routing is enabled.",
+                "gray",
+            )
+            return
+
+        self._set_model_status(
+            getattr(self, "_stage2_model_status_label", None),
+            self.ml_stage2_model_path_var.get(),
+            prefix="Stage 2",
+        )
+
+    def _set_model_status(self, label_widget, raw_path: str, *, prefix: str) -> None:
+        """Render a model-path existence message for a status label."""
+        path_text = raw_path.strip()
+        if not path_text:
+            self._set_model_status_text(
+                label_widget,
+                f"{prefix} model path is empty.",
+                "orange",
+            )
+            return
+
+        path = Path(path_text)
+        if not path.is_absolute():
+            path = Path.cwd() / path
+
+        if path.exists():
+            self._set_model_status_text(
+                label_widget,
+                f"{prefix} model found: {path.name}",
+                "green",
+            )
+            return
+
+        self._set_model_status_text(
+            label_widget,
+            f"{prefix} model not found: {path_text}",
+            "orange",
+        )
+
+    def _set_model_status_text(
+        self,
+        label_widget,
+        text: str,
+        color: str,
+    ) -> None:
+        """Safely configure a status label when present."""
+        if label_widget is None:
+            return
+        label_widget.configure(text=text, foreground=color)
+
+    def _config_scalar_to_text(self, value: Any) -> str:
+        """Format a scalar config value for YAML/TOML output."""
+        if isinstance(value, str):
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    def _config_to_yaml(self, cfg: GroupingConfig) -> str:
+        """Serialize a flat config mapping as YAML without extra dependencies."""
+        lines = ["# plancheck pipeline config"]
+        for key, value in cfg.to_dict().items():
+            lines.append(f"{key}: {self._config_scalar_to_text(value)}")
+        lines.append("")
+        return "\n".join(lines)
+
+    def _config_to_toml(self, cfg: GroupingConfig) -> str:
+        """Serialize a flat config mapping as TOML without extra dependencies."""
+        lines = ["# plancheck pipeline config"]
+        for key, value in cfg.to_dict().items():
+            lines.append(f"{key} = {self._config_scalar_to_text(value)}")
+        lines.append("")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # PDF / Page selection (preserved from original)
@@ -461,6 +775,7 @@ class PipelineTab:
             resolution = 200
 
         cfg = self._collect_config()
+        self.state.set_config(cfg, config_file_path=self.state.config_file_path)
 
         runs_root = Path("runs")
 

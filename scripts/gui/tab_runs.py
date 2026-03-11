@@ -144,8 +144,7 @@ class RunsTab:
         if not config:
             messagebox.showinfo("No Config", "No config_snapshot in this manifest.")
             return
-        self.state.pending_config = config
-        self.state.notify("load_config")
+        self.state.queue_config_load(config)
         messagebox.showinfo(
             "Config Loaded",
             "Configuration loaded into Pipeline tab.\nSwitch to Pipeline tab to review.",

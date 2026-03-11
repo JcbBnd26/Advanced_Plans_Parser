@@ -28,9 +28,12 @@ from plancheck.corrections.store import CorrectionStore
 
 # ── Re-exports for backward compatibility ──────────────────────────────
 from .annotation_state import HANDLE_SIZE  # noqa: F401
-from .annotation_state import (HANDLE_POSITIONS, CanvasBox,
-                               _reshape_bbox_from_handle,
-                               _scale_polygon_to_bbox)
+from .annotation_state import (
+    HANDLE_POSITIONS,
+    CanvasBox,
+    _reshape_bbox_from_handle,
+    _scale_polygon_to_bbox,
+)
 from .annotation_store import AnnotationStoreMixin
 from .canvas_renderer import CanvasRendererMixin
 from .context_menu import ContextMenuMixin
@@ -493,6 +496,7 @@ class AnnotationTab(
             row=row, column=0, sticky="w", padx=4, pady=2
         )
         self._type_var = tk.StringVar()
+        self._type_var.trace_add("write", self._on_type_selection_changed)
         type_row_frame = ttk.Frame(inspector)
         type_row_frame.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
         self._type_combo = ttk.Combobox(
@@ -509,6 +513,25 @@ class AnnotationTab(
         )
         _btn_add_type.pack(side="left", padx=2)
         self._tooltip(_btn_add_type, "Register a new element type")
+
+        row += 1
+        ttk.Label(inspector, text="Subtype:").grid(
+            row=row, column=0, sticky="w", padx=4, pady=2
+        )
+        self._subtype_var = tk.StringVar()
+        self._subtype_combo = ttk.Combobox(
+            inspector,
+            textvariable=self._subtype_var,
+            values=self._title_subtypes(),
+            width=18,
+            state="disabled",
+        )
+        self._subtype_combo.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+        self._subtype_combo.bind("<<ComboboxSelected>>", self._on_subtype_selected)
+        self._tooltip(
+            self._subtype_combo,
+            "Optional Stage-2 title subtype for title-block annotations.",
+        )
 
         row += 1
         ttk.Label(inspector, text="Conf:").grid(
@@ -583,7 +606,15 @@ class AnnotationTab(
         self._suggest_label = ttk.Label(
             self._suggest_frame, text="", foreground="#0060c0"
         )
-        self._suggest_label.pack(side="left")
+        self._suggest_label.pack(anchor="w")
+        self._suggest_detail_label = ttk.Label(
+            self._suggest_frame,
+            text="",
+            foreground="#8a4b00",
+            wraplength=220,
+            justify="left",
+        )
+        self._suggest_detail_label.pack(anchor="w")
         self._suggest_btn = ttk.Button(
             self._suggest_frame, text="Apply", command=self._apply_suggestion
         )
@@ -970,6 +1001,7 @@ class AnnotationTab(
         # This must run after the inspector/filter UI exists because
         # _register_element_type updates comboboxes and filter controls.
         self._load_element_types_from_registry()
+        self._sync_title_subtype_controls(self._type_var.get())
 
         # Initialize model status
         self._update_model_status()

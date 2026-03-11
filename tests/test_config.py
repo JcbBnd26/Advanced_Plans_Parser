@@ -14,6 +14,8 @@ class TestGroupingConfig:
         assert cfg.enable_vocr is True
         assert cfg.enable_ocr_reconcile is True
         assert cfg.enable_ocr_preprocess is True
+        assert cfg.ml_enabled is True
+        assert cfg.ml_hierarchical_enabled is False
 
     def test_override(self):
         cfg = GroupingConfig(iou_prune=0.8, enable_skew=True)
@@ -164,11 +166,18 @@ class TestConfigValidation:
 
 class TestConfigFromDict:
     def test_from_dict_round_trip(self):
-        cfg = GroupingConfig(iou_prune=0.7, enable_vocr=True)
+        cfg = GroupingConfig(
+            iou_prune=0.7,
+            enable_vocr=True,
+            ml_hierarchical_enabled=True,
+            ml_stage2_model_path="data/custom_stage2.pkl",
+        )
         d = cfg.to_dict()
         cfg2 = GroupingConfig.from_dict(d)
         assert cfg2.iou_prune == 0.7
         assert cfg2.enable_vocr is True
+        assert cfg2.ml_hierarchical_enabled is True
+        assert cfg2.ml_stage2_model_path == "data/custom_stage2.pkl"
 
     def test_from_dict_ignores_unknown_keys(self):
         d = {"iou_prune": 0.6, "unknown_field": 42}
@@ -184,10 +193,17 @@ class TestConfigFromDict:
 class TestConfigFromYaml:
     def test_load_yaml(self, tmp_path):
         yaml_file = tmp_path / "config.yaml"
-        yaml_file.write_text("iou_prune: 0.75\nenable_vocr: true\n")
+        yaml_file.write_text(
+            "iou_prune: 0.75\n"
+            "enable_vocr: true\n"
+            "ml_hierarchical_enabled: true\n"
+            'ml_stage2_model_path: "data/title_stage2.pkl"\n'
+        )
         cfg = GroupingConfig.from_yaml(yaml_file)
         assert cfg.iou_prune == 0.75
         assert cfg.enable_vocr is True
+        assert cfg.ml_hierarchical_enabled is True
+        assert cfg.ml_stage2_model_path == "data/title_stage2.pkl"
 
     def test_load_yaml_ignores_unknown(self, tmp_path):
         yaml_file = tmp_path / "config.yaml"
@@ -213,10 +229,14 @@ class TestConfigFromYaml:
 class TestConfigFromToml:
     def test_load_toml(self, tmp_path):
         toml_file = tmp_path / "config.toml"
-        toml_file.write_text("iou_prune = 0.8\nenable_vocr = true\n")
+        toml_file.write_text(
+            'iou_prune = 0.8\nenable_vocr = true\nml_hierarchical_enabled = true\nml_stage2_model_path = "data/title_stage2.pkl"\n'
+        )
         cfg = GroupingConfig.from_toml(toml_file)
         assert cfg.iou_prune == 0.8
         assert cfg.enable_vocr is True
+        assert cfg.ml_hierarchical_enabled is True
+        assert cfg.ml_stage2_model_path == "data/title_stage2.pkl"
 
     def test_load_toml_subtable(self, tmp_path):
         toml_file = tmp_path / "config.toml"
@@ -272,10 +292,15 @@ class TestSubconfigSync:
         import dataclasses
 
         from plancheck.config import PipelineConfig
-        from plancheck.config.subconfigs import (AnalysisConfig, ExportConfig,
-                                                 GroupingStageConfig, MLConfig,
-                                                 ReconcileConfig, TOCRConfig,
-                                                 VOCRConfig)
+        from plancheck.config.subconfigs import (
+            AnalysisConfig,
+            ExportConfig,
+            GroupingStageConfig,
+            MLConfig,
+            ReconcileConfig,
+            TOCRConfig,
+            VOCRConfig,
+        )
 
         pipeline_fields = {f.name for f in dataclasses.fields(PipelineConfig)}
         subconfigs = [

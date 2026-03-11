@@ -63,6 +63,8 @@ class GuiState:
         self.pdf_path: Path | None = None
         self.last_run_dir: Path | None = None
         self.config: GroupingConfig = GroupingConfig()
+        self.config_file_path: Path | None = None
+        self.pending_config: dict | None = None
         self._subscribers: dict[str, list] = {}
         self.experiment_tracker: ExperimentTracker | None = None
 
@@ -85,6 +87,27 @@ class GuiState:
     def set_last_run(self, run_dir: Path) -> None:
         self.last_run_dir = run_dir
         self.notify("run_completed")
+
+    def set_config(
+        self,
+        config: GroupingConfig,
+        *,
+        config_file_path: Path | None = None,
+    ) -> None:
+        """Replace the working config and remember its source path."""
+        self.config = GroupingConfig.from_dict(config.to_dict())
+        self.config_file_path = config_file_path
+
+    def queue_config_load(
+        self,
+        config_dict: dict,
+        *,
+        config_file_path: Path | None = None,
+    ) -> None:
+        """Queue a config snapshot for the Pipeline tab to consume."""
+        self.pending_config = dict(config_dict)
+        self.config_file_path = config_file_path
+        self.notify("load_config")
 
 
 # ---------------------------------------------------------------------------

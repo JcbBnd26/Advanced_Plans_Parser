@@ -27,6 +27,7 @@ router to fall back gracefully.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
@@ -386,3 +387,67 @@ class TitleSubtypeClassifier:
                 zip(feature_names, importances), key=lambda x: -x[1]
             )
         }
+
+    def calibration_curve(self, jsonl_path: Path) -> dict:
+        """Compute calibration curves for each Stage-2 subtype class."""
+        self._load_model()
+        if self._model is None:
+            return {"curves": {}, "ece": 0.0}
+
+        examples: list[dict] = []
+        with open(jsonl_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    examples.append(json.loads(line))
+
+        val_ex = [e for e in examples if e.get("split") == "val"]
+        if not val_ex:
+            val_ex = examples
+        if not val_ex:
+            return {"curves": {}, "ece": 0.0}
+
+        X = np.array([encode_subtype_features(e["features"]) for e in val_ex])
+        y_true = [e["label"] for e in val_ex]
+        probas = self._model.predict_proba(X)
+        classes = list(self._model.classes_)
+
+        from sklearn.calibration import calibration_curve as _sk_cal_curve
+
+        curves: dict[str, dict] = {}
+        total_ece = 0.0
+        total_weight = 0
+
+        for i, cls in enumerate(classes):
+            y_binary = np.array([1 if yt == cls else 0 for yt in y_true])
+            p_cls = probas[:, i]
+            n_pos = int(y_binary.sum())
+            if n_pos == 0 or n_pos == len(y_binary):
+                continue
+            try:
+                frac_pos, mean_pred = _sk_cal_curve(
+                    y_binary,
+                    p_cls,
+                    n_bins=min(10, max(3, n_pos)),
+                    strategy="uniform",
+                )
+                curves[cls] = {
+                    "mean_predicted": [round(float(v), 4) for v in mean_pred],
+                    "fraction_positive": [round(float(v), 4) for v in frac_pos],
+                }
+                bin_counts = np.histogram(
+                    p_cls,
+                    bins=len(frac_pos),
+                    range=(0, 1),
+                )[0]
+                ece = float(
+                    np.sum(np.abs(frac_pos - mean_pred) * bin_counts)
+                    / max(len(p_cls), 1)
+                )
+                total_ece += ece * n_pos
+                total_weight += n_pos
+            except Exception:  # noqa: BLE001
+                continue
+
+        weighted_ece = total_ece / total_weight if total_weight > 0 else 0.0
+        return {"curves": curves, "ece": round(weighted_ece, 4)}

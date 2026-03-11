@@ -31,12 +31,15 @@ Usage
 
 from __future__ import annotations
 
+import json
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from plancheck.config import DEFAULT_CORRECTIONS_DB, DEFAULT_ML_MODEL
+from plancheck.config.constants import DEFAULT_SUBTYPE_MODEL
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +55,10 @@ class RetrainResult:
     error: str = ""
     new_corrections: int = 0
     threshold: int = 50
+    stage2_trained: bool = False
+    stage2_metrics: dict[str, Any] = field(default_factory=dict)
+    stage2_error: str = ""
+    stage2_skipped_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,7 +70,46 @@ class RetrainResult:
             "error": self.error,
             "new_corrections": self.new_corrections,
             "threshold": self.threshold,
+            "stage2_trained": self.stage2_trained,
+            "stage2_f1_weighted": self.stage2_metrics.get("f1_weighted", 0.0),
+            "stage2_accuracy": self.stage2_metrics.get("accuracy", 0.0),
+            "stage2_error": self.stage2_error,
+            "stage2_skipped_reason": self.stage2_skipped_reason,
         }
+
+
+_MIN_STAGE2_EXAMPLES = 10
+
+
+def _export_stage2_training_jsonl(
+    source_jsonl: Path,
+    output_jsonl: Path,
+) -> tuple[int, Counter[str]]:
+    """Filter exported training data down to valid Stage-2 subtype labels."""
+    from .subtype_classifier import TITLE_SUBTYPES
+
+    allowed = set(TITLE_SUBTYPES)
+    label_counts: Counter[str] = Counter()
+    kept_lines: list[str] = []
+
+    with source_jsonl.open(encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            record = json.loads(stripped)
+            label = str(record.get("label", ""))
+            if label not in allowed:
+                continue
+            kept_lines.append(stripped)
+            label_counts[label] += 1
+
+    output_jsonl.parent.mkdir(parents=True, exist_ok=True)
+    output_jsonl.write_text(
+        "\n".join(kept_lines) + ("\n" if kept_lines else ""),
+        encoding="utf-8",
+    )
+    return len(kept_lines), label_counts
 
 
 def check_retrain_needed(
@@ -86,6 +132,7 @@ def auto_retrain(
     store: Any,
     model_path: Path | str = "data/element_classifier.pkl",
     *,
+    stage2_model_path: Path | str | None = None,
     calibrate: bool = True,
     ensemble: bool = False,
     threshold: int = 50,
@@ -114,8 +161,10 @@ def auto_retrain(
         Outcome of the retrain attempt.
     """
     from .classifier import ElementClassifier
+    from .subtype_classifier import TitleSubtypeClassifier
 
     model_path = Path(model_path)
+    stage2_model_path = Path(stage2_model_path or DEFAULT_SUBTYPE_MODEL)
     result = RetrainResult(threshold=threshold)
 
     # Backup existing model before training (for rollback)
@@ -234,6 +283,46 @@ def auto_retrain(
         except Exception:  # noqa: BLE001 — drift stats update is best-effort
             log.debug("Drift stats update failed", exc_info=True)
 
+        # Train Stage 2 when subtype labels are present and sufficiently diverse.
+        try:
+            stage2_jsonl_path = db_parent / "training_data_stage2.jsonl"
+            stage2_count, stage2_label_counts = _export_stage2_training_jsonl(
+                jsonl_path,
+                stage2_jsonl_path,
+            )
+            stage2_labels = sorted(stage2_label_counts)
+
+            if stage2_count < _MIN_STAGE2_EXAMPLES:
+                result.stage2_skipped_reason = f"only {stage2_count} subtype examples (need >= {_MIN_STAGE2_EXAMPLES})"
+            elif len(stage2_labels) < 2:
+                result.stage2_skipped_reason = (
+                    "need at least 2 subtype labels to train Stage 2"
+                )
+            else:
+                subtype_clf = TitleSubtypeClassifier(model_path=stage2_model_path)
+                stage2_metrics = subtype_clf.train(
+                    stage2_jsonl_path,
+                    calibrate=calibrate,
+                    ensemble=ensemble,
+                )
+                result.stage2_trained = True
+                result.stage2_metrics = stage2_metrics
+                store.save_training_run(
+                    stage2_metrics,
+                    model_path=str(stage2_model_path),
+                    notes="auto-retrain-stage2",
+                    holdout_predictions=stage2_metrics.get("holdout_predictions"),
+                )
+                log.info(
+                    "Stage-2 retrain complete: labels=%s F1=%.4f accuracy=%.4f",
+                    ", ".join(stage2_labels),
+                    stage2_metrics.get("f1_weighted", 0.0),
+                    stage2_metrics.get("accuracy", 0.0),
+                )
+        except Exception as exc:
+            log.warning("Stage-2 retrain failed: %s", exc, exc_info=True)
+            result.stage2_error = str(exc)
+
     except Exception as exc:
         log.error("Auto-retrain failed: %s", exc, exc_info=True)
         result.error = str(exc)
@@ -276,6 +365,11 @@ def startup_check(
     try:
         threshold = getattr(cfg, "ml_retrain_threshold", 50)
         model_path = getattr(cfg, "ml_model_path", str(DEFAULT_ML_MODEL))
+        stage2_model_path = getattr(
+            cfg,
+            "ml_stage2_model_path",
+            str(DEFAULT_SUBTYPE_MODEL),
+        )
         ensemble = getattr(cfg, "ml_ensemble_enabled", False)
 
         if not check_retrain_needed(store, threshold=threshold):
@@ -287,6 +381,7 @@ def startup_check(
         return auto_retrain(
             store,
             model_path=model_path,
+            stage2_model_path=stage2_model_path,
             ensemble=ensemble,
             threshold=threshold,
         )

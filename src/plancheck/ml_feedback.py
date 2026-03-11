@@ -213,7 +213,7 @@ def _apply_ml_feedback(
                 # Hierarchical: Stage 1 → family normalisation → Stage 2 → LLM
                 from .corrections.hierarchical_classifier import classify_element
 
-                det_text = det.get("text", "")
+                det_text = det.get("text_content", "") or det.get("text", "")
                 if not det_text and det["features"]:
                     det_text = str(det["features"].get("_text", ""))
 
@@ -257,7 +257,7 @@ def _apply_ml_feedback(
                     det_features = det["features"]
                     # Reconstruct text from features if available, or use
                     # a representative text snippet from the detection
-                    det_text = det.get("text", "")
+                    det_text = det.get("text_content", "") or det.get("text", "")
                     if not det_text and det_features:
                         det_text = str(det_features.get("_text", ""))
                     if det_text:

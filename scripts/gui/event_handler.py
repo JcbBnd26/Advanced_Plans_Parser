@@ -31,6 +31,106 @@ from .annotation_state import (
 class EventHandlerMixin:
     """Mixin providing all event handling, undo/redo, and interaction methods."""
 
+    @staticmethod
+    def _format_stage2_candidates(candidates: list[tuple[str, float]]) -> str:
+        """Format Stage-2 alternatives for compact inspector display."""
+        if not candidates:
+            return ""
+        return ", ".join(
+            f"{label} {confidence:.0%}" for label, confidence in candidates
+        )
+
+    def _get_configured_classifier(self):
+        """Return the Stage-1 classifier selected by the current GUI config."""
+        from pathlib import Path
+
+        from plancheck.corrections.classifier import ElementClassifier
+
+        cfg = getattr(getattr(self, "state", None), "config", None)
+        model_path = Path(getattr(cfg, "ml_model_path", self._classifier.model_path))
+        current_model_path = Path(getattr(self._classifier, "model_path", model_path))
+        if current_model_path == model_path:
+            return self._classifier
+        return ElementClassifier(model_path=model_path)
+
+    def _predict_model_suggestion(
+        self,
+        features: dict[str, Any],
+        *,
+        text: str = "",
+    ) -> tuple[str, float, str] | None:
+        """Predict a GUI-facing label suggestion using current ML settings."""
+        suggestion = self._predict_model_suggestion_details(features, text=text)
+        if suggestion is None:
+            return None
+        return suggestion["label"], suggestion["confidence"], suggestion["text"]
+
+    def _predict_model_suggestion_details(
+        self,
+        features: dict[str, Any],
+        *,
+        text: str = "",
+    ) -> dict[str, Any] | None:
+        """Return the suggestion label plus review metadata for the inspector."""
+        classifier = self._get_configured_classifier()
+        if not classifier.model_exists():
+            return None
+
+        raw_label, raw_conf = classifier.predict(features)
+        cfg = getattr(getattr(self, "state", None), "config", None)
+        if not getattr(cfg, "ml_hierarchical_enabled", False):
+            return {
+                "label": raw_label,
+                "confidence": raw_conf,
+                "text": f"Model suggests: {raw_label} ({raw_conf:.0%})",
+                "detail_text": "",
+            }
+
+        from pathlib import Path
+
+        from plancheck.corrections.hierarchical_classifier import classify_element
+
+        result = classify_element(
+            features,
+            text=text,
+            stage1_model_path=Path(cfg.ml_model_path),
+            stage2_model_path=Path(cfg.ml_stage2_model_path),
+            enable_llm=False,
+        )
+
+        display_label = result.label
+        display_conf = result.confidence
+        stage_suffix = "Stage 1"
+        detail_text = ""
+
+        if result.stage2_skipped and result.label == "title":
+            display_label = raw_label
+            display_conf = raw_conf
+            detail_text = (
+                "Review: Stage 2 title refinement is unavailable, so this remains a "
+                f"Stage 1 {raw_label} suggestion."
+            )
+        elif result.subtype:
+            stage_suffix = "Stage 2"
+
+        if result.low_confidence and stage_suffix == "Stage 2":
+            stage_suffix = "Stage 2, low confidence"
+            alternatives = self._format_stage2_candidates(result.stage2_candidates)
+            detail_text = "Review: low-confidence title subtype."
+            if alternatives:
+                detail_text += f" Alternatives: {alternatives}."
+        elif result.llm_used:
+            detail_text = (
+                "Review: resolved by LLM tiebreaker after close Stage 2 candidates."
+            )
+
+        return {
+            "label": display_label,
+            "confidence": display_conf,
+            "text": f"Model suggests: {display_label} ({display_conf:.0%}) [{stage_suffix}]",
+            "detail_text": detail_text,
+        }
+
     def _on_word_click(self, event: tk.Event) -> str | None:
         """Handle Ctrl+Click for word overlay selection / lasso."""
         cx = self._canvas.canvasx(event.x)
@@ -457,7 +557,7 @@ class EventHandlerMixin:
 
         # Populate inspector
         self._insp_id.configure(text=cbox.detection_id)
-        self._type_var.set(cbox.element_type)
+        self._set_active_element_type(cbox.element_type)
         conf_text = f"{cbox.confidence:.2%}" if cbox.confidence is not None else "—"
         self._insp_conf.configure(text=conf_text)
 
@@ -467,14 +567,24 @@ class EventHandlerMixin:
         self._insp_text.config(state="disabled")
         self._model_suggestion = None
         self._suggest_label.configure(text="")
+        self._suggest_detail_label.configure(text="")
         self._suggest_btn.pack_forget()
-        if cbox.features and self._classifier.model_exists():
+        if cbox.features:
             try:
-                pred_label, pred_conf = self._classifier.predict(cbox.features)
+                prediction = self._predict_model_suggestion_details(
+                    cbox.features,
+                    text=cbox.text_content,
+                )
+                if prediction is None:
+                    raise ValueError("No configured model is available")
+                pred_label = prediction["label"]
+                pred_conf = prediction["confidence"]
+                pred_text = prediction["text"]
                 if pred_label != cbox.element_type:
                     self._model_suggestion = pred_label
-                    self._suggest_label.configure(
-                        text=f"Model suggests: {pred_label} ({pred_conf:.0%})"
+                    self._suggest_label.configure(text=pred_text)
+                    self._suggest_detail_label.configure(
+                        text=prediction.get("detail_text", "")
                     )
                     self._suggest_btn.pack(side="left", padx=4)
             except Exception:  # noqa: BLE001 — classifier suggestion is optional
@@ -494,7 +604,7 @@ class EventHandlerMixin:
             self._selected_box = None
 
         self._insp_id.configure(text="—")
-        self._type_var.set("")
+        self._set_active_element_type("")
         self._insp_conf.configure(text="—")
         self._insp_text.config(state="normal")
         self._insp_text.delete("1.0", "end")
@@ -503,6 +613,7 @@ class EventHandlerMixin:
         # Clear suggestion
         self._model_suggestion = None
         self._suggest_label.configure(text="")
+        self._suggest_detail_label.configure(text="")
         self._suggest_btn.pack_forget()
 
         # Clear group section
@@ -773,10 +884,46 @@ class EventHandlerMixin:
         )
         combo.pack(padx=10)
 
+        ttk.Label(type_win, text="Title subtype:").pack(padx=10, pady=(8, 4))
+        subtype_var = tk.StringVar(value="")
+        subtype_combo = ttk.Combobox(
+            type_win,
+            textvariable=subtype_var,
+            values=self._title_subtypes(),
+            width=20,
+            state="disabled",
+        )
+        subtype_combo.pack(padx=10)
+
+        def _sync_add_dialog(*_args) -> None:
+            label = self._normalize_element_type_name(type_var.get())
+            if label in self._title_subtypes():
+                subtype_var.set(label)
+                subtype_combo.configure(state="readonly")
+            elif label == "title_block":
+                subtype_var.set("")
+                subtype_combo.configure(state="readonly")
+            else:
+                subtype_var.set("")
+                subtype_combo.configure(state="disabled")
+
+        def _apply_add_subtype(_event=None) -> None:
+            subtype = self._normalize_element_type_name(subtype_var.get())
+            if subtype in self._title_subtypes():
+                type_var.set(subtype)
+
+        type_var.trace_add("write", _sync_add_dialog)
+        subtype_combo.bind("<<ComboboxSelected>>", _apply_add_subtype)
+        _sync_add_dialog()
+
         result: list[str | None] = [None]
 
         def on_ok():
-            result[0] = type_var.get()
+            subtype = self._normalize_element_type_name(subtype_var.get())
+            if subtype in self._title_subtypes():
+                result[0] = subtype
+            else:
+                result[0] = type_var.get()
             type_win.destroy()
 
         def on_cancel():
@@ -903,7 +1050,7 @@ class EventHandlerMixin:
             self._status.configure(text="No box selected")
             return
 
-        new_label = self._type_var.get()
+        new_label = self._normalize_element_type_name(self._type_var.get())
         if not new_label:
             return
 
@@ -1623,9 +1770,15 @@ class EventHandlerMixin:
             # Auto-label via classifier if possible, unless user forced a type
             features = featurize_region("misc_title", new_bbox, None, 2448.0, 1584.0)
             chosen_type = forced_type or (self._type_var.get() or "misc_title")
-            if forced_type is None and features and self._classifier.model_exists():
+            if forced_type is None and features:
                 try:
-                    pred_label, pred_conf = self._classifier.predict(features)
+                    prediction = self._predict_model_suggestion(
+                        features,
+                        text=merged_text,
+                    )
+                    if prediction is None:
+                        raise ValueError("No configured model is available")
+                    pred_label, pred_conf, _pred_text = prediction
                     if pred_conf and pred_conf > 0.5:
                         chosen_type = pred_label
                 except Exception:  # noqa: BLE001 — classifier is optional

@@ -259,15 +259,15 @@ class ContextMenuMixin:
             self._status.configure(text="Warning: failed to write label_registry.json")
 
         # Create detection from words using this type (force create, no classifier override)
-        self._type_var.set(label)
+        self._set_active_element_type(label)
         self._merge_words_into_detection(forced_type=label, force_create=True)
 
     def _create_words_as_type(self, element_type: str) -> None:
         """Create a new detection from selected words with a specific type."""
         old_type = self._type_var.get()
-        self._type_var.set(element_type)
+        self._set_active_element_type(element_type)
         self._merge_words_into_detection(forced_type=element_type, force_create=True)
-        self._type_var.set(old_type)
+        self._set_active_element_type(old_type)
 
     def _select_all_words(self) -> None:
         """Select every word in the overlay."""
