@@ -11,9 +11,9 @@ class TestGroupingConfig:
         assert cfg.iou_prune == 0.5
         assert cfg.enable_skew is False
         assert cfg.enable_tocr is True
-        assert cfg.enable_vocr is False
-        assert cfg.enable_ocr_reconcile is False
-        assert cfg.enable_ocr_preprocess is False
+        assert cfg.enable_vocr is True
+        assert cfg.enable_ocr_reconcile is True
+        assert cfg.enable_ocr_preprocess is True
 
     def test_override(self):
         cfg = GroupingConfig(iou_prune=0.8, enable_skew=True)

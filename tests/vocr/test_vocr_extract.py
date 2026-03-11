@@ -118,14 +118,12 @@ class TestDedupTiles:
 
 class TestOcrOneTile:
     def _make_mock_ocr(self, polys, texts, scores):
-        """Build a mock OCR backend that yields one page result."""
-        page_result = {
-            "dt_polys": polys,
-            "rec_texts": texts,
-            "rec_scores": scores,
-        }
+        """Build a mock OCR backend that yields TextBox results."""
         mock_ocr = MagicMock()
-        mock_ocr.predict.return_value = [page_result]
+        mock_ocr.predict.return_value = [
+            TextBox(polygon=p, text=t, confidence=s)
+            for p, t, s in zip(polys, texts, scores)
+        ]
         return mock_ocr
 
     def test_basic_extraction(self):
@@ -238,11 +236,10 @@ class TestOcrOneTile:
         assert tokens[0].origin == "ocr_full"
         assert tokens[0].page == 3
 
-    def test_none_attributes_skipped(self):
-        """If OCR returns None for polys/texts/scores, return nothing."""
-        page_result = {"dt_polys": None, "rec_texts": None, "rec_scores": None}
+    def test_empty_result_returns_nothing(self):
+        """If OCR backend returns an empty list, return empty token list."""
         mock_ocr = MagicMock()
-        mock_ocr.predict.return_value = [page_result]
+        mock_ocr.predict.return_value = []
 
         tokens, _ = _ocr_one_tile(
             mock_ocr,
@@ -256,22 +253,16 @@ class TestOcrOneTile:
         )
         assert len(tokens) == 0
 
-    def test_object_style_result(self):
-        """OCR may return an object with attributes instead of a dict."""
-
-        class FakeResult:
-            dt_polys = [[[0, 0], [10, 0], [10, 10], [0, 10]]]
-            rec_texts = ["OBJ"]
-            rec_scores = [0.9]
-
-            # Not a dict, so hasattr(x, "get") is False
-            pass
-
-        mock_ocr = MagicMock()
-        mock_ocr.predict.return_value = [FakeResult()]
+    def test_single_token_returned(self):
+        """OCR backend returns a single TextBox; should produce one GlyphBox."""
+        ocr = self._make_mock_ocr(
+            [[[0, 0], [10, 0], [10, 10], [0, 10]]],
+            ["OBJ"],
+            [0.9],
+        )
 
         tokens, confs = _ocr_one_tile(
-            mock_ocr,
+            ocr,
             "fake_array",
             offset_x=0,
             offset_y=0,

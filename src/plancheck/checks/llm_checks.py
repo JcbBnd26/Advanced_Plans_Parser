@@ -283,3 +283,137 @@ def run_llm_checks(
 
     log.info("LLM checks: %d findings from %s/%s", len(results), provider, model)
     return results
+
+
+# ── Title-subtype tiebreaker ──────────────────────────────────────────
+
+_SUBTYPE_SYSTEM_PROMPT = """\
+You are analyzing elements extracted from an architectural or engineering plan sheet.
+Your task is to classify a text element into exactly one subtype category based on its
+text content, position on the sheet, and nearby context.
+
+You must return ONLY a JSON object with two keys:
+  "subtype": one of: page_title, plan_title, detail_title, section_title, graph_title, map_title, box_title
+  "confidence": float 0.0-1.0
+
+Do not explain your reasoning. Do not return any other text.\
+"""
+
+_SUBTYPE_USER_TEMPLATE = """\
+Classify this title element:
+
+Text: {text}
+Zone: {zone}
+Position: x={x_frac:.2f}, y={y_frac:.2f} (0=left/top, 1=right/bottom)
+Width: {width_frac:.2f} (fraction of page width)
+
+Top model candidates:
+{candidates}
+
+Return ONLY a JSON object with "subtype" and "confidence" keys.\
+"""
+
+
+def llm_classify_title_subtype(
+    text: str,
+    features: dict,
+    candidates: list,
+    *,
+    provider: str = "ollama",
+    model: str = "llama3.1:8b",
+    api_key: str = "",
+    api_base: str = "http://localhost:11434",
+    policy: str = "local_only",
+) -> tuple[str, float]:
+    """Use the LLM to break ties in Stage-2 title subtype classification.
+
+    This is invoked only when Stage-2 GBM confidence is below the threshold.
+    It uses the element's text content and positional context — signals that
+    the GBM cannot read — to choose between the top candidates.
+
+    Parameters
+    ----------
+    text : str
+        Raw text content of the title element.
+    features : dict
+        Feature dict from :func:`~plancheck.corrections.features.featurize`
+        (used for zone and positional context).
+    candidates : list[tuple[str, float]]
+        Top Stage-2 candidates in ``[(label, confidence), …]`` order.
+    provider : str
+        LLM provider (``"ollama"``, ``"openai"``, ``"anthropic"``).
+    model : str
+        Model identifier.
+    api_key : str
+        API key (not needed for Ollama).
+    api_base : str
+        Base API URL.
+    policy : str
+        Data-privacy policy.
+
+    Returns
+    -------
+    tuple[str, float]
+        ``(subtype_label, confidence)`` from the LLM, or ``("", 0.0)``
+        on failure or when the provider is unavailable.
+    """
+    if not is_llm_available(provider):
+        log.debug(
+            "LLM provider %r not available — cannot classify subtype", provider
+        )
+        return "", 0.0
+
+    if not text or not text.strip():
+        log.debug("Empty text — skipping LLM subtype classification")
+        return "", 0.0
+
+    candidates_text = "\n".join(
+        f"  {i + 1}. {label} (confidence={conf:.3f})"
+        for i, (label, conf) in enumerate(candidates)
+    )
+
+    user_prompt = _SUBTYPE_USER_TEMPLATE.format(
+        text=text[:300],
+        zone=features.get("zone", "unknown"),
+        x_frac=features.get("x_frac", 0.0),
+        y_frac=features.get("y_frac", 0.0),
+        width_frac=features.get("width_frac", 0.0),
+        candidates=candidates_text,
+    )
+
+    client = LLMClient(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        api_base=api_base,
+        temperature=0.0,  # deterministic for classification
+        policy=policy,
+    )
+
+    try:
+        parsed, _meta = client.chat_structured(_SUBTYPE_SYSTEM_PROMPT, user_prompt)
+    except Exception as exc:  # noqa: BLE001 — LLM failures must not break pipeline
+        log.warning("LLM subtype tiebreaker failed: %s", exc)
+        return "", 0.0
+
+    subtype = parsed.get("subtype", "")
+    confidence = float(parsed.get("confidence", 0.0))
+
+    # Validate that the LLM returned a known subtype
+    from plancheck.corrections.subtype_classifier import TITLE_SUBTYPES
+
+    if subtype not in TITLE_SUBTYPES:
+        log.warning(
+            "LLM returned unknown subtype %r — ignoring", subtype
+        )
+        return "", 0.0
+
+    log.debug(
+        "LLM tiebreaker: %r → %r (conf=%.3f) via %s/%s",
+        text[:40],
+        subtype,
+        confidence,
+        provider,
+        model,
+    )
+    return subtype, confidence

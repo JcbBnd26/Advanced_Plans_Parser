@@ -70,6 +70,7 @@ def train_classifier(
     *,
     calibrate: bool = True,
     ensemble: bool = False,
+    encode_fn: Callable[[dict], np.ndarray] | None = None,
 ) -> tuple[dict, Any, Any, int]:
     """Execute the full training loop and persist the model.
 
@@ -91,6 +92,12 @@ def train_classifier(
         :class:`~sklearn.calibration.CalibratedClassifierCV`.
     ensemble : bool
         If *True*, use the ensemble builder instead of the single GBM.
+    encode_fn : callable, optional
+        Function ``(feature_dict) -> np.ndarray`` used to convert JSONL
+        feature dicts to numeric vectors.  Defaults to
+        :func:`~plancheck.corrections.classifier.encode_features` when
+        not provided.  Pass :func:`~plancheck.corrections.subtype_classifier.encode_subtype_features`
+        when training :class:`~plancheck.corrections.subtype_classifier.TitleSubtypeClassifier`.
 
     Returns
     -------
@@ -106,8 +113,10 @@ def train_classifier(
     # Lazy imports avoid circular dependencies at module load time
     from sklearn.utils.class_weight import compute_sample_weight
 
-    from .classifier import _NUMERIC_KEYS, FEATURE_VERSION, ZONE_VALUES, encode_features
+    from .classifier import _NUMERIC_KEYS, FEATURE_VERSION, ZONE_VALUES, encode_features as _default_encode
     from .metrics import compute_metrics
+
+    _encode = encode_fn if encode_fn is not None else _default_encode
 
     # ── Load data ────────────────────────────────────────────────
     examples: list[dict] = []
@@ -127,7 +136,7 @@ def train_classifier(
     if not train_ex:
         raise ValueError("No training-split examples found")
 
-    X_train = np.array([encode_features(e["features"]) for e in train_ex])
+    X_train = np.array([_encode(e["features"]) for e in train_ex])
     y_train = [e["label"] for e in train_ex]
 
     # ── Balanced class weighting ─────────────────────────────────
@@ -137,7 +146,7 @@ def train_classifier(
     X_val = None
     y_val = None
     if val_ex:
-        X_val = np.array([encode_features(e["features"]) for e in val_ex])
+        X_val = np.array([_encode(e["features"]) for e in val_ex])
         y_val = [e["label"] for e in val_ex]
 
     # ── Build and fit ─────────────────────────────────────────────
@@ -179,7 +188,7 @@ def train_classifier(
             "TRAINING data and are unreliable"
         )
     eval_ex = val_ex if val_ex else train_ex
-    X_eval = np.array([encode_features(e["features"]) for e in eval_ex])
+    X_eval = np.array([_encode(e["features"]) for e in eval_ex])
     y_eval = [e["label"] for e in eval_ex]
     eval_model = calibrated_clf if calibrated_clf is not None else clf
     y_pred = eval_model.predict(X_eval).tolist()
