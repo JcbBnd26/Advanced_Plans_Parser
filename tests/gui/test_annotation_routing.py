@@ -137,7 +137,7 @@ def test_predict_model_suggestion_details_surface_low_confidence_candidates(
         "label": "page_title",
         "confidence": 0.45,
         "text": "Model suggests: page_title (45%) [Stage 2, low confidence]",
-        "detail_text": "Review: low-confidence title subtype. Alternatives: page_title 45%, plan_title 40%.",
+        "detail_text": "Routing: Stage 1 title_block (87%) -> Stage 2 page_title (45%). Review: low-confidence title subtype. Alternatives: page_title 45%, plan_title 40%.",
     }
 
 
@@ -170,5 +170,5 @@ def test_predict_model_suggestion_details_note_when_stage2_unavailable(
         "label": "title_block",
         "confidence": 0.91,
         "text": "Model suggests: title_block (91%) [Stage 1]",
-        "detail_text": "Review: Stage 2 title refinement is unavailable, so this remains a Stage 1 title_block suggestion.",
+        "detail_text": "Routing: Stage 1 title_block (91%) -> Stage 2 skipped. Review: Stage 2 title refinement is unavailable, so this remains a Stage 1 title_block suggestion.",
     }

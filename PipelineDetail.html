@@ -687,13 +687,13 @@
                         <div class="step-header">
                             <span class="step-number" style="color:#8b5cf6; background:rgba(139,92,246,.12);">STAGE
                                 3b</span>
-                            <span class="step-title">VOCR — Visual OCR (PaddleOCR)</span>
+                            <span class="step-title">VOCR — Visual OCR (Surya OCR)</span>
                         </div>
                         <p class="step-summary">
                             The PDF text layer misses symbols like <strong>/</strong>, <strong>%</strong>,
                             <strong>°</strong>, and <strong>±</strong>
                             because CAD software renders them as vector graphics instead of real text characters.
-                            VOCR runs a deep-learning OCR engine (PaddleOCR) on the enhanced page image from VOCRPP
+                            VOCR runs a deep-learning OCR engine (Surya OCR) on the enhanced page image from VOCRPP
                             to find those missing symbols by "reading" the picture the way a human would.
                         </p>
                         <details>
@@ -701,10 +701,10 @@
                             <ul class="detail-list" style="margin-top: 8px;">
                                 <li>Use the preprocessed image from VOCRPP if available, otherwise fall back to the raw
                                     rendered image</li>
-                                <li>Convert to RGB (PaddleOCR needs 3-channel images)</li>
-                                <li>If the image is very large, split it into overlapping tiles so PaddleOCR doesn't
+                                <li>Convert to RGB (Surya expects 3-channel images)</li>
+                                <li>If the image is very large, split it into overlapping tiles so Surya OCR doesn't
                                     exceed its memory limit</li>
-                                <li>Run PaddleOCR on each tile (or the whole image if it fits) — this is the slowest
+                                <li>Run Surya OCR on each tile (or the whole image if it fits) — this is the slowest
                                     step in the pipeline</li>
                                 <li>A heartbeat message prints every 15 seconds so you know it's still working</li>
                                 <li>Convert each OCR detection from pixel coordinates back to PDF-point coordinates</li>
@@ -727,7 +727,7 @@
                         <div class="badge-row">
                             <span class="badge badge-input">Preprocessed image (from VOCRPP)</span>
                             <span class="badge badge-output">GlyphBox tokens (origin = ocr)</span>
-                            <span class="badge badge-lib">PaddleOCR · NumPy</span>
+                            <span class="badge badge-lib">Surya OCR · NumPy</span>
                             <span class="badge badge-file">📄 src/plancheck/vocr/extract.py</span>
                         </div>
                     </div>
@@ -763,14 +763,16 @@
                                 <h5>Level 1 — Method Stats</h5>
                                 <p>Per-method hit/miss rates from historical runs. Methods that perform well get higher
                                     confidence; poor performers are down-weighted. Persisted to
-                                    <code>candidate_method_stats.json</code>.</p>
+                                    <code>candidate_method_stats.json</code>.
+                                </p>
                             </div>
                             <div class="level-card" style="--level-color: #60a5fa;">
                                 <h5>Level 2 — ML Classifier</h5>
                                 <p>A trained GradientBoostingClassifier filters candidates using geometric + text
                                     features.
                                     Runs when <code>vocr_cand_ml_enabled=True</code>. Model stored in
-                                    <code>data/</code>.</p>
+                                    <code>data/</code>.
+                                </p>
                             </div>
                             <div class="level-card" style="--level-color: #c084fc;">
                                 <h5>Level 3 — Producer Stats</h5>
@@ -929,7 +931,7 @@
                     </p>
                     <ul class="detail-list">
                         <li>Crop each candidate's bbox (with padding) from the page image</li>
-                        <li>Run PaddleOCR on the small crop (typically 50–200px wide)</li>
+                        <li>Run Surya OCR on the small crop (typically 50–200px wide)</li>
                         <li>Update candidate with <code>outcome</code>: "hit" if symbol found, "miss" otherwise</li>
                         <li>Store found text for reconciliation</li>
                         <li>If no candidates exist, fall back to full-page OCR</li>
@@ -937,7 +939,7 @@
                     <div class="badge-row">
                         <span class="badge badge-input">VocrCandidate patches</span>
                         <span class="badge badge-output">OCR tokens per patch</span>
-                        <span class="badge badge-lib">PaddleOCR</span>
+                        <span class="badge badge-lib">Surya OCR</span>
                         <span class="badge badge-file">📄 src/plancheck/vocr/targeted.py</span>
                     </div>
                 </div>
@@ -1636,7 +1638,7 @@
 
         <div class="footer">
             Advanced Plans Parser · Pipeline Detail Reference · March 2026<br>
-            <span style="color: #64748b;">Python 3.10+ · pdfplumber · PaddleOCR · scikit-learn · NumPy · OpenCV ·
+            <span style="color: #64748b;">Python 3.10+ · pdfplumber · Surya OCR · scikit-learn · NumPy · OpenCV ·
                 ReportLab</span>
         </div>
     </div>

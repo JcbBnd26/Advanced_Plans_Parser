@@ -251,8 +251,11 @@ class PdfLoaderMixin:
         # Clear previous drift indicator
         if hasattr(self, "_drift_indicator"):
             self._drift_indicator.configure(text="")
+        self._active_drift_text = ""
 
         if not self._canvas_boxes:
+            if hasattr(self, "_update_annotation_runtime_summary"):
+                self._update_annotation_runtime_summary()
             return
 
         try:
@@ -283,12 +286,16 @@ class PdfLoaderMixin:
                         pass
 
             if drifted_count > 0:
-                self._drift_indicator.configure(
-                    text=f"⚠ Drift detected on {drifted_count}/{total} detections"
+                self._active_drift_text = (
+                    f"Drift: active on {drifted_count}/{total} detections"
                 )
+                self._drift_indicator.configure(text=f"⚠ {self._active_drift_text}")
         except Exception:  # noqa: BLE001 — drift check is best-effort
             # Silently ignore drift check failures
             pass
+        finally:
+            if hasattr(self, "_update_annotation_runtime_summary"):
+                self._update_annotation_runtime_summary()
 
     # ── Page element summary ───────────────────────────────────────
 

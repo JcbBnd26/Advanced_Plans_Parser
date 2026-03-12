@@ -62,8 +62,8 @@ class SuryaOCRBackend(OCRBackend):
         if self._initialized:
             return
 
-        # Prevent OpenBLAS memory-allocation crash on Windows when
-        # PaddlePaddle and PyTorch coexist (both link OpenBLAS).
+        # Prevent OpenBLAS memory-allocation crashes on Windows when
+        # multiple BLAS-linked ML stacks share the same environment.
         import os
 
         for var in (

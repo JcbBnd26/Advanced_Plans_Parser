@@ -31,9 +31,9 @@ and requiring hours per page.
 OpenBLAS error: Memory allocation still failed after 10 retries, giving up.
 ```
 
-**Cause:** PaddlePaddle and PyTorch both link against OpenBLAS with different
-thread pool configurations. On Windows, this causes a memory contention crash
-when both packages coexist in the same environment.
+**Cause:** Multiple BLAS-linked ML stacks can install conflicting thread pool
+defaults in the same Windows environment. That can trigger an OpenBLAS memory
+contention crash during predictor initialization.
 
 **Fix:** Set BLAS thread environment variables to 1 before model construction.
 This is baked into `SuryaOCRBackend._ensure_initialized()`:
@@ -152,10 +152,9 @@ full-page fallback is the worst-case path.
   transformers>=4.45.0,<5.0.0
   ```
 
-- [ ] **Consider removing PaddlePaddle** from the environment since we've
-  migrated to Surya. This eliminates the OpenBLAS conflict entirely, and
-  removes the need for the `NUM_THREADS=1` workaround (which kills BLAS
-  parallelism).
+- [ ] **Remove unused OCR/ML packages** from the environment when possible.
+  A leaner environment reduces the chance of BLAS/runtime conflicts and may
+  eventually let us relax the `NUM_THREADS=1` workaround.
 
 ### Medium-Term (Performance)
 

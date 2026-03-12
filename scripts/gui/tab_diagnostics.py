@@ -17,6 +17,86 @@ from typing import Any
 from .widgets import CollapsibleFrame, LogPanel
 from .worker import PipelineWorker
 
+
+def _resolve_runtime_path(raw_path: str) -> Path | None:
+    """Resolve a potentially relative model path against the workspace."""
+    path_text = raw_path.strip()
+    if not path_text:
+        return None
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
+
+
+def _build_ml_runtime_summary(
+    cfg: Any,
+    *,
+    pending_corrections: int | None = None,
+    db_present: bool = False,
+) -> dict[str, str]:
+    """Build a lightweight runtime summary for ML-related diagnostics."""
+    stage1_path = _resolve_runtime_path(getattr(cfg, "ml_model_path", ""))
+    stage2_path = _resolve_runtime_path(getattr(cfg, "ml_stage2_model_path", ""))
+    drift_path = _resolve_runtime_path(getattr(cfg, "ml_drift_stats_path", ""))
+    candidate_path = _resolve_runtime_path(
+        getattr(cfg, "vocr_cand_classifier_path", "")
+    )
+
+    threshold = getattr(cfg, "ml_retrain_threshold", 50)
+    if db_present and pending_corrections is not None:
+        retrain_summary = f"{pending_corrections}/{threshold} pending"
+        if pending_corrections >= threshold:
+            retrain_summary += " — recommended"
+    else:
+        retrain_summary = "No corrections database"
+
+    return {
+        "Routing": (
+            "Hierarchical title refinement"
+            if getattr(cfg, "ml_hierarchical_enabled", False)
+            else "Stage 1 only"
+        ),
+        "Stage 1 model": (
+            f"Ready ({stage1_path.name})"
+            if stage1_path and stage1_path.exists()
+            else "Missing"
+        ),
+        "Stage 2 model": (
+            "Inactive"
+            if not getattr(cfg, "ml_hierarchical_enabled", False)
+            else (
+                f"Ready ({stage2_path.name})"
+                if stage2_path and stage2_path.exists()
+                else "Missing"
+            )
+        ),
+        "Drift detection": (
+            "Disabled"
+            if not getattr(cfg, "ml_drift_enabled", False)
+            else (
+                f"Enabled (threshold {getattr(cfg, 'ml_drift_threshold', 0.0):.2f}, "
+                f"stats {'ready' if drift_path and drift_path.exists() else 'missing'})"
+            )
+        ),
+        "Retrain readiness": retrain_summary,
+        "Candidate ML": (
+            "Disabled"
+            if not getattr(cfg, "vocr_cand_ml_enabled", False)
+            else (
+                f"Enabled ({candidate_path.name})"
+                if candidate_path and candidate_path.exists()
+                else "Enabled, model missing"
+            )
+        ),
+        "Layout runtime": (
+            "Disabled"
+            if not getattr(cfg, "ml_layout_enabled", False)
+            else getattr(cfg, "ml_layout_model_path", "").strip() or "Model missing"
+        ),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Section 1 – Font Diagnostics
 # ---------------------------------------------------------------------------
@@ -375,6 +455,89 @@ class MLCalibrationSection(CollapsibleFrame):
             self._draw_reliability_diagram(curves, ece)
 
         self._worker.run(target, on_done=on_done)
+
+
+class MLRuntimeSummarySection(CollapsibleFrame):
+    """Collapsible section summarizing ML runtime posture."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        log_panel: LogPanel,
+        state: Any,
+        root: tk.Tk,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, "ML Runtime Summary", **kwargs)
+        self._log = log_panel
+        self._state = state
+        self._root = root
+        self._value_labels: dict[str, ttk.Label] = {}
+        self._build()
+
+    def _build(self) -> None:
+        section = self.content
+        section.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            section,
+            text="Quick summary of routing, retrain readiness, drift, and runtime model availability.",
+            foreground="gray",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+
+        keys = [
+            "Routing",
+            "Stage 1 model",
+            "Stage 2 model",
+            "Drift detection",
+            "Retrain readiness",
+            "Candidate ML",
+            "Layout runtime",
+        ]
+        for index, key in enumerate(keys, start=1):
+            ttk.Label(section, text=f"{key}:", font=("TkDefaultFont", 9, "bold")).grid(
+                row=index,
+                column=0,
+                sticky="nw",
+                padx=(0, 8),
+                pady=1,
+            )
+            value_label = ttk.Label(section, text="", wraplength=420)
+            value_label.grid(row=index, column=1, sticky="w", pady=1)
+            self._value_labels[key] = value_label
+
+        ttk.Button(section, text="Refresh Summary", command=self._refresh_summary).grid(
+            row=len(keys) + 1,
+            column=0,
+            sticky="w",
+            pady=(6, 2),
+        )
+        self._refresh_summary()
+
+    def _refresh_summary(self) -> None:
+        pending_corrections = None
+        db_present = False
+        db_path = Path("data") / "corrections.db"
+        if db_path.exists():
+            db_present = True
+            try:
+                from plancheck.corrections.store import CorrectionStore
+
+                store = CorrectionStore(db_path)
+                try:
+                    pending_corrections = store.count_corrections_since_last_train()
+                finally:
+                    store.close()
+            except Exception as exc:  # noqa: BLE001
+                self._log.write(f"Runtime summary refresh failed: {exc}", "WARNING")
+
+        summary = _build_ml_runtime_summary(
+            self._state.config,
+            pending_corrections=pending_corrections,
+            db_present=db_present,
+        )
+        for key, label in self._value_labels.items():
+            label.configure(text=summary.get(key, "—"))
 
     def _draw_reliability_diagram(self, curves: dict, ece: float) -> None:
         """Render a reliability diagram into the calibration canvas frame."""
@@ -1387,6 +1550,7 @@ class DiagnosticsTab:
             FontDiagnosticsSection(self._inner, **section_kwargs),
             BenchmarkSection(self._inner, **section_kwargs),
             MLCalibrationSection(self._inner, **section_kwargs),
+            MLRuntimeSummarySection(self._inner, **section_kwargs),
             TrainingProgressSection(self._inner, **section_kwargs),
             ModelComparisonSection(self._inner, **section_kwargs),
             LayoutModelSection(self._inner, **section_kwargs),

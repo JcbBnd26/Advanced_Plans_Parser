@@ -101,28 +101,41 @@ class EventHandlerMixin:
         display_label = result.label
         display_conf = result.confidence
         stage_suffix = "Stage 1"
-        detail_text = ""
+        detail_parts: list[str] = []
 
         if result.stage2_skipped and result.label == "title":
             display_label = raw_label
             display_conf = raw_conf
-            detail_text = (
+            detail_parts.append(
+                f"Routing: Stage 1 {raw_label} ({raw_conf:.0%}) -> Stage 2 skipped."
+            )
+            detail_parts.append(
                 "Review: Stage 2 title refinement is unavailable, so this remains a "
                 f"Stage 1 {raw_label} suggestion."
             )
         elif result.subtype:
             stage_suffix = "Stage 2"
+            detail_parts.append(
+                f"Routing: Stage 1 {raw_label} ({raw_conf:.0%}) -> "
+                f"Stage 2 {display_label} ({display_conf:.0%})."
+            )
 
         if result.low_confidence and stage_suffix == "Stage 2":
             stage_suffix = "Stage 2, low confidence"
             alternatives = self._format_stage2_candidates(result.stage2_candidates)
-            detail_text = "Review: low-confidence title subtype."
+            detail_parts.append("Review: low-confidence title subtype.")
             if alternatives:
-                detail_text += f" Alternatives: {alternatives}."
+                detail_parts.append(f"Alternatives: {alternatives}.")
         elif result.llm_used:
-            detail_text = (
+            detail_parts.append(
+                f"Routing: Stage 1 {raw_label} ({raw_conf:.0%}) -> "
+                f"LLM tiebreak {display_label} ({display_conf:.0%})."
+            )
+            detail_parts.append(
                 "Review: resolved by LLM tiebreaker after close Stage 2 candidates."
             )
+
+        detail_text = " ".join(detail_parts).strip()
 
         return {
             "label": display_label,
@@ -578,15 +591,21 @@ class EventHandlerMixin:
                 if prediction is None:
                     raise ValueError("No configured model is available")
                 pred_label = prediction["label"]
-                pred_conf = prediction["confidence"]
                 pred_text = prediction["text"]
-                if pred_label != cbox.element_type:
+                show_prediction = pred_label != cbox.element_type or bool(
+                    prediction.get("detail_text")
+                )
+                if show_prediction:
                     self._model_suggestion = pred_label
                     self._suggest_label.configure(text=pred_text)
                     self._suggest_detail_label.configure(
                         text=prediction.get("detail_text", "")
                     )
-                    self._suggest_btn.pack(side="left", padx=4)
+                    if pred_label != cbox.element_type:
+                        self._suggest_btn.pack(side="left", padx=4)
+                    else:
+                        self._model_suggestion = None
+                        self._suggest_btn.pack_forget()
             except Exception:  # noqa: BLE001 — classifier suggestion is optional
                 pass
 

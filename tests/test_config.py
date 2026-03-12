@@ -128,7 +128,7 @@ class TestConfigValidation:
 
     def test_invalid_vocr_backend(self):
         with pytest.raises(ConfigValidationError, match="vocr_backend"):
-            GroupingConfig(vocr_backend="paddle")
+            GroupingConfig(vocr_backend="unsupported_backend")
 
     def test_valid_vocr_backend(self):
         cfg = GroupingConfig(vocr_backend="surya")

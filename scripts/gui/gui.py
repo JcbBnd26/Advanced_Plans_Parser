@@ -35,6 +35,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _format_startup_retrain_status(result: object) -> str:
+    """Format startup retrain status for the GUI status bar."""
+    if result is None:
+        return "Startup retrain skipped — no corrections database found"
+
+    if getattr(result, "error", ""):
+        return f"Startup retrain failed: {result.error}"
+
+    if getattr(result, "rolled_back", False):
+        return "Startup retrain rolled back — F1 regressed"
+
+    if not getattr(result, "retrained", False):
+        new_corrections = getattr(result, "new_corrections", 0)
+        threshold = getattr(result, "threshold", 0)
+        return (
+            "Startup retrain not needed "
+            f"({new_corrections}/{threshold} corrections)"
+        )
+
+    stage1_f1 = getattr(result, "metrics", {}).get("f1_weighted", 0.0)
+    msg = f"Auto-retrained on startup (S1 F1: {stage1_f1:.1%})"
+
+    if getattr(result, "stage2_trained", False):
+        stage2_f1 = getattr(result, "stage2_metrics", {}).get("f1_weighted", 0.0)
+        msg += f"; S2 F1: {stage2_f1:.1%}"
+    elif getattr(result, "stage2_error", ""):
+        msg += f"; S2 failed: {result.stage2_error}"
+    elif getattr(result, "stage2_skipped_reason", ""):
+        msg += f"; S2 skipped: {result.stage2_skipped_reason}"
+
+    return msg
+
 # ---------------------------------------------------------------------------
 # GuiState – shared state + pub/sub
 # ---------------------------------------------------------------------------
@@ -146,21 +179,32 @@ class PlanParserGUI:
         """Check if auto-retrain is needed on startup."""
         import threading
 
+        startup_retrain_enabled = getattr(
+            self.state.config,
+            "ml_retrain_on_startup",
+            False,
+        )
+
+        if startup_retrain_enabled:
+            self._status_bar.set_status("Startup retrain check running...")
+
         def _check():
             try:
                 from plancheck.corrections.retrain_trigger import startup_check
 
                 result = startup_check(self.state.config)
-                if result and result.retrained:
-                    if result.rolled_back:
-                        msg = "Startup retrain rolled back — F1 regressed"
-                        self.root.after(0, lambda: self._status_bar.set_status(msg))
-                    elif result.accepted:
-                        f1 = result.metrics.get("f1_weighted", 0)
-                        msg = f"Auto-retrained on startup (F1: {f1:.1%})"
-                        self.root.after(0, lambda: self._status_bar.set_status(msg))
+                if startup_retrain_enabled:
+                    msg = _format_startup_retrain_status(result)
+                    self.root.after(0, lambda: self._status_bar.set_status(msg))
             except Exception:  # noqa: BLE001 — startup check is best-effort
                 logger.debug("Startup check failed", exc_info=True)
+                if startup_retrain_enabled:
+                    self.root.after(
+                        0,
+                        lambda: self._status_bar.set_status(
+                            "Startup retrain check failed"
+                        ),
+                    )
 
         threading.Thread(target=_check, daemon=True).start()
 

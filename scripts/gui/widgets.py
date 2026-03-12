@@ -288,6 +288,7 @@ class StageProgressBar(ttk.Frame):
         "ingest",
         "tocr",
         "vocrpp",
+        "vocr_candidates",
         "vocr",
         "reconcile",
         "grouping",

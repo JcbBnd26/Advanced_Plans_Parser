@@ -38,7 +38,7 @@ class QueueHandler(logging.Handler):
 class StdoutCapture:
     """File-like object that captures print() output and posts to a queue."""
 
-    # OCR backend / ML library messages that should not be shown as ERROR
+    # OCR backend and ML library chatter that should not be shown as ERROR.
     _INFO_PATTERNS = (
         "Connectivity check",
         "Creating model:",

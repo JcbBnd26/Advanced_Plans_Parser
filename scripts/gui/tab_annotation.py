@@ -87,6 +87,7 @@ class AnnotationTab(
         self._doc_id: str | None = None
         self._run_id: str = ""
         self._pipeline_ran_for_doc: bool = False
+        self._active_drift_text: str = ""
         self._page: int = 0
         self._page_count: int = 0
         self._resolution: int = 150
@@ -869,6 +870,24 @@ class AnnotationTab(
         self._tooltip(
             self._drift_indicator,
             "Drift detected: this page looks different from training data",
+        )
+
+        row += 1
+        self._runtime_summary_label = ttk.Label(
+            inspector,
+            text="",
+            foreground="gray",
+            wraplength=220,
+            justify="left",
+            font=("TkDefaultFont", 8),
+        )
+        self._runtime_summary_label.grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=4, pady=1
+        )
+        self._add_copy_menu(self._runtime_summary_label)
+        self._tooltip(
+            self._runtime_summary_label,
+            "Current routing mode, drift posture, and retrain readiness",
         )
 
         # ── Annotation Stats ──────────────────────────────────────

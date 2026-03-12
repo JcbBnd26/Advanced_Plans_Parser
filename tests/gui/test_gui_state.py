@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 from plancheck.config import GroupingConfig
-from scripts.gui.gui import GuiState
+from plancheck.corrections.retrain_trigger import RetrainResult
+from scripts.gui.gui import GuiState, _format_startup_retrain_status
 
 
 def test_gui_state_notify_logs_and_continues(caplog: pytest.LogCaptureFixture) -> None:
@@ -55,3 +56,26 @@ def test_gui_state_queue_config_load_notifies_subscribers() -> None:
 
     assert calls == [{"ml_hierarchical_enabled": True}]
     assert state.pending_config == {"ml_hierarchical_enabled": True}
+
+
+def test_format_startup_retrain_status_with_stage2_metrics() -> None:
+    result = RetrainResult(
+        retrained=True,
+        accepted=True,
+        metrics={"f1_weighted": 0.81},
+        stage2_trained=True,
+        stage2_metrics={"f1_weighted": 0.73},
+    )
+
+    status = _format_startup_retrain_status(result)
+
+    assert "Auto-retrained on startup" in status
+    assert "S1 F1: 81.0%" in status
+    assert "S2 F1: 73.0%" in status
+
+
+def test_format_startup_retrain_status_for_skipped_check() -> None:
+    assert (
+        _format_startup_retrain_status(None)
+        == "Startup retrain skipped — no corrections database found"
+    )

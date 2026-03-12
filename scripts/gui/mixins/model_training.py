@@ -102,6 +102,90 @@ class ModelTrainingMixin:
 
         return text, color
 
+    def _format_model_readiness_status(
+        self,
+        *,
+        model_exists: bool,
+        pending_corrections: int | None = None,
+        threshold: int | None = None,
+    ) -> tuple[str, str]:
+        """Format model load status together with retrain readiness."""
+        if model_exists:
+            text = "Model loaded ✓"
+            color = "green"
+        else:
+            text = "No model trained"
+            color = "gray"
+
+        if pending_corrections is None or threshold is None or threshold <= 0:
+            return text, color
+
+        text += f" | Pending corrections: {pending_corrections}/{threshold}"
+        if pending_corrections >= threshold:
+            text += " — retrain recommended"
+            color = "orange" if model_exists else "red"
+        elif pending_corrections >= max(1, int(threshold * 0.8)):
+            text += " — nearing threshold"
+            if model_exists:
+                color = "#e5c07b"
+
+        return text, color
+
+    def _format_annotation_runtime_summary(
+        self,
+        *,
+        pending_corrections: int | None = None,
+        threshold: int | None = None,
+        active_drift_text: str = "",
+    ) -> str:
+        """Format routing, drift, and retrain posture for the inspector."""
+        routing_text = (
+            "hierarchical"
+            if getattr(self.state.config, "ml_hierarchical_enabled", False)
+            else "Stage 1 only"
+        )
+
+        drift_segment = "Drift: disabled"
+        if getattr(self.state.config, "ml_drift_enabled", False):
+            if active_drift_text:
+                drift_segment = active_drift_text
+            else:
+                drift_path = Path(getattr(self.state.config, "ml_drift_stats_path", ""))
+                if not drift_path.is_absolute():
+                    drift_path = Path.cwd() / drift_path
+                drift_segment = (
+                    "Drift: monitoring"
+                    if drift_path.exists()
+                    else "Drift: stats missing"
+                )
+
+        retrain_segment = "Retrain: unavailable"
+        if pending_corrections is not None and threshold is not None:
+            retrain_segment = f"Retrain: {pending_corrections}/{threshold} pending"
+            if pending_corrections >= threshold:
+                retrain_segment += " (recommended)"
+
+        return f"Routing: {routing_text} | {drift_segment} | {retrain_segment}"
+
+    def _update_annotation_runtime_summary(self) -> None:
+        """Refresh the compact annotation runtime summary label when present."""
+        if not hasattr(self, "_runtime_summary_label"):
+            return
+
+        try:
+            threshold = getattr(self.state.config, "ml_retrain_threshold", 50)
+            pending_corrections = self._store.count_corrections_since_last_train()
+        except Exception:  # noqa: BLE001
+            threshold = None
+            pending_corrections = None
+
+        summary = self._format_annotation_runtime_summary(
+            pending_corrections=pending_corrections,
+            threshold=threshold,
+            active_drift_text=getattr(self, "_active_drift_text", ""),
+        )
+        self._runtime_summary_label.configure(text=summary)
+
     # ── Training ─────────────────────────────────────────────────
 
     def _on_train_model(self) -> None:
@@ -353,14 +437,20 @@ class ModelTrainingMixin:
 
     def _update_model_status(self) -> None:
         """Check if a trained model file exists and update the label."""
-        if self._classifier.model_exists():
-            self._model_status_label.configure(
-                text="Model loaded ✓", foreground="green"
-            )
-        else:
-            self._model_status_label.configure(
-                text="No model trained", foreground="gray"
-            )
+        try:
+            threshold = getattr(self.state.config, "ml_retrain_threshold", 50)
+            pending_corrections = self._store.count_corrections_since_last_train()
+        except Exception:  # noqa: BLE001
+            threshold = None
+            pending_corrections = None
+
+        text, color = self._format_model_readiness_status(
+            model_exists=self._classifier.model_exists(),
+            pending_corrections=pending_corrections,
+            threshold=threshold,
+        )
+        self._model_status_label.configure(text=text, foreground=color)
+        self._update_annotation_runtime_summary()
 
     # ── Annotation stats ─────────────────────────────────────────
 
@@ -372,6 +462,9 @@ class ModelTrainingMixin:
             n_dets = ov["total_detections"]
             n_corr = ov["total_corrections"]
             n_train = ov["total_training_examples"]
+            pending_retrain = self._store.count_corrections_since_last_train()
+            retrain_threshold = getattr(self.state.config, "ml_retrain_threshold", 50)
+            retrain_flag = self._store.should_retrain(threshold=retrain_threshold)
 
             # Per-type breakdown
             type_breakdown = self._store.get_detection_type_breakdown()
@@ -380,9 +473,13 @@ class ModelTrainingMixin:
             text = (
                 f"Docs: {n_docs}  Dets: {n_dets}\n"
                 f"Corrections: {n_corr}  Training: {n_train}\n"
+                f"Retrain: {pending_retrain}/{retrain_threshold}"
+                f"{'  recommended' if retrain_flag else ''}\n"
                 f"{breakdown}"
             )
             self._stats_label.configure(text=text)
+            self._update_model_status()
+            self._update_annotation_runtime_summary()
         except Exception as exc:
             self._stats_label.configure(text=f"Error: {exc}")
 
