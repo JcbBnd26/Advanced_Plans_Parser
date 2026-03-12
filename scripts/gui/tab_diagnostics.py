@@ -167,7 +167,8 @@ class FontDiagnosticsSection(CollapsibleFrame):
         self._worker = PipelineWorker(self._root, self._log)
 
         def target():
-            from ..diagnostics.run_font_metrics_diagnostics import run_diagnostics
+            from ..diagnostics.run_font_metrics_diagnostics import \
+                run_diagnostics
             from ..utils.run_utils import make_run_dir
 
             run_dir = make_run_dir(
@@ -292,12 +293,10 @@ class BenchmarkSection(CollapsibleFrame):
         def target():
             from plancheck.config import GroupingConfig
 
-            from ..diagnostics.run_benchmark import (
-                _CONDITIONS,
-                _build_comparison,
-                _print_table,
-                _read_manifest,
-            )
+            from ..diagnostics.run_benchmark import (_CONDITIONS,
+                                                     _build_comparison,
+                                                     _print_table,
+                                                     _read_manifest)
             from ..runners.run_pdf_batch import run_pdf
 
             manifests = {}
@@ -429,9 +428,8 @@ class MLCalibrationSection(CollapsibleFrame):
 
         def target():
             if target_name == "Stage 2":
-                from plancheck.corrections.subtype_classifier import (
-                    TitleSubtypeClassifier,
-                )
+                from plancheck.corrections.subtype_classifier import \
+                    TitleSubtypeClassifier
 
                 clf = TitleSubtypeClassifier(model_path=model_path)
             else:
@@ -455,6 +453,44 @@ class MLCalibrationSection(CollapsibleFrame):
             self._draw_reliability_diagram(curves, ece)
 
         self._worker.run(target, on_done=on_done)
+
+    def _draw_reliability_diagram(self, curves: dict, ece: float) -> None:
+        """Render a reliability diagram into the calibration canvas frame."""
+        for w in self._cal_canvas_frame.winfo_children():
+            w.destroy()
+
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+        except ImportError:
+            self._log.write(
+                "matplotlib not installed — cannot render diagram.", "WARNING"
+            )
+            return
+
+        fig = Figure(figsize=(5, 4), dpi=96)
+        ax = fig.add_subplot(111)
+        ax.plot([0, 1], [0, 1], "k--", lw=1, label="Perfectly calibrated")
+
+        for cls_name, data in curves.items():
+            mp = data["mean_predicted"]
+            fp = data["fraction_positive"]
+            ax.plot(mp, fp, "o-", markersize=4, label=cls_name)
+
+        ax.set_xlabel("Mean predicted probability")
+        ax.set_ylabel("Fraction of positives")
+        ax.set_title(f"Reliability Diagram  (ECE = {ece:.4f})")
+        ax.legend(loc="lower right", fontsize=7)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self._cal_canvas_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="x", expand=True)
 
 
 class MLRuntimeSummarySection(CollapsibleFrame):
@@ -539,45 +575,6 @@ class MLRuntimeSummarySection(CollapsibleFrame):
         for key, label in self._value_labels.items():
             label.configure(text=summary.get(key, "—"))
 
-    def _draw_reliability_diagram(self, curves: dict, ece: float) -> None:
-        """Render a reliability diagram into the calibration canvas frame."""
-        for w in self._cal_canvas_frame.winfo_children():
-            w.destroy()
-
-        try:
-            import matplotlib
-
-            matplotlib.use("Agg")
-            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-            from matplotlib.figure import Figure
-        except ImportError:
-            self._log.write(
-                "matplotlib not installed — cannot render diagram.", "WARNING"
-            )
-            return
-
-        fig = Figure(figsize=(5, 4), dpi=96)
-        ax = fig.add_subplot(111)
-        ax.plot([0, 1], [0, 1], "k--", lw=1, label="Perfectly calibrated")
-
-        for cls_name, data in curves.items():
-            mp = data["mean_predicted"]
-            fp = data["fraction_positive"]
-            ax.plot(mp, fp, "o-", markersize=4, label=cls_name)
-
-        ax.set_xlabel("Mean predicted probability")
-        ax.set_ylabel("Fraction of positives")
-        ax.set_title(f"Reliability Diagram  (ECE = {ece:.4f})")
-        ax.legend(loc="lower right", fontsize=7)
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        fig.tight_layout()
-
-        canvas = FigureCanvasTkAgg(fig, master=self._cal_canvas_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="x", expand=True)
-
-
 # ---------------------------------------------------------------------------
 # Section 4 – Training Progress Charts
 # ---------------------------------------------------------------------------
@@ -644,7 +641,8 @@ class TrainingProgressSection(CollapsibleFrame):
         store = CorrectionStore(db_path)
 
         try:
-            from plancheck.corrections.experiment_tracker import ExperimentTracker
+            from plancheck.corrections.experiment_tracker import \
+                ExperimentTracker
 
             tracker = ExperimentTracker(store)
             # Fetch experiments with per_class and holdout_predictions included
@@ -1143,10 +1141,8 @@ class LayoutModelSection(CollapsibleFrame):
 
         def target():
             from plancheck import GlyphBox, GroupingConfig, extract_tokens
-            from plancheck.analysis.layout_model import (
-                is_layout_available,
-                predict_layout,
-            )
+            from plancheck.analysis.layout_model import (is_layout_available,
+                                                         predict_layout)
             from plancheck.ingest import render_page_image
 
             if not is_layout_available():
@@ -1235,7 +1231,8 @@ class TextEmbeddingsSection(CollapsibleFrame):
     def _check_embeddings_avail(self) -> None:
         self._log.clear()
         try:
-            from plancheck.corrections.text_embeddings import is_embeddings_available
+            from plancheck.corrections.text_embeddings import \
+                is_embeddings_available
 
             avail = is_embeddings_available()
             if avail:
@@ -1256,9 +1253,7 @@ class TextEmbeddingsSection(CollapsibleFrame):
 
         def target():
             from plancheck.corrections.text_embeddings import (
-                TextEmbedder,
-                is_embeddings_available,
-            )
+                TextEmbedder, is_embeddings_available)
 
             if not is_embeddings_available():
                 raise RuntimeError(
@@ -1386,7 +1381,8 @@ class LLMSemanticChecksSection(CollapsibleFrame):
 
         def target():
             from plancheck import GroupingConfig
-            from plancheck.checks.llm_checks import is_llm_available, run_llm_checks
+            from plancheck.checks.llm_checks import (is_llm_available,
+                                                     run_llm_checks)
             from plancheck.pipeline import run_pipeline
 
             if not is_llm_available(provider):

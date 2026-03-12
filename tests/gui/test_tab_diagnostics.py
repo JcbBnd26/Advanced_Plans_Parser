@@ -3,11 +3,9 @@ from pathlib import Path
 
 from plancheck.config import GroupingConfig
 from scripts.gui.gui import GuiState
-from scripts.gui.tab_diagnostics import (
-    LayoutModelSection,
-    MLCalibrationSection,
-    _build_ml_runtime_summary,
-)
+from scripts.gui.tab_diagnostics import (LayoutModelSection,
+                                         MLCalibrationSection,
+                                         _build_ml_runtime_summary)
 
 
 def test_calibration_section_resolves_stage1_paths() -> None:
@@ -110,3 +108,7 @@ def test_build_ml_runtime_summary_reports_enabled_modes(tmp_path, monkeypatch) -
     assert summary["Retrain readiness"] == "60/50 pending — recommended"
     assert summary["Candidate ML"] == "Enabled (candidate.pkl)"
     assert summary["Layout runtime"] == "models/layout-ft"
+
+
+def test_calibration_section_owns_reliability_diagram_renderer() -> None:
+    assert hasattr(MLCalibrationSection, "_draw_reliability_diagram")

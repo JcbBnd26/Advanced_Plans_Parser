@@ -50,6 +50,8 @@ tests/                  pytest suite (~1280 tests)
 docs/                   Implementation notes & status logs
 ```
 
+GUI workflow draft: [docs/GUI_ML_WORKFLOW_DRAFT.md](docs/GUI_ML_WORKFLOW_DRAFT.md)
+
 ## Quick start
 
 ```bash

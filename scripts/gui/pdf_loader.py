@@ -7,7 +7,8 @@ from pathlib import Path
 from tkinter import filedialog
 from typing import Any
 
-from plancheck.ingest.ingest import extract_text_in_bbox, extract_text_in_polygon
+from plancheck.ingest.ingest import (extract_text_in_bbox,
+                                     extract_text_in_polygon)
 
 from .annotation_state import CanvasBox
 
@@ -253,6 +254,12 @@ class PdfLoaderMixin:
             self._drift_indicator.configure(text="")
         self._active_drift_text = ""
 
+        cfg = getattr(getattr(self, "state", None), "config", None)
+        if not getattr(cfg, "ml_drift_enabled", False):
+            if hasattr(self, "_update_annotation_runtime_summary"):
+                self._update_annotation_runtime_summary()
+            return
+
         if not self._canvas_boxes:
             if hasattr(self, "_update_annotation_runtime_summary"):
                 self._update_annotation_runtime_summary()
@@ -263,7 +270,12 @@ class PdfLoaderMixin:
 
             import numpy as np
 
-            drift_stats_path = _Path("data") / "drift_stats.json"
+            drift_stats_raw = getattr(cfg, "ml_drift_stats_path", "")
+            drift_stats_path = _Path(drift_stats_raw) if drift_stats_raw else None
+            if drift_stats_path is None:
+                return
+            if not drift_stats_path.is_absolute():
+                drift_stats_path = _Path.cwd() / drift_stats_path
             if not drift_stats_path.exists():
                 return
 

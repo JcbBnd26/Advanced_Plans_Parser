@@ -100,3 +100,22 @@ def test_format_annotation_runtime_summary_reports_drift_and_retrain() -> None:
         text
         == "Routing: hierarchical | Drift: active on 2/9 detections | Retrain: 60/50 pending (recommended)"
     )
+
+
+def test_format_annotation_runtime_summary_reflects_disabled_drift() -> None:
+    host = _MixinHost()
+    host.state = SimpleNamespace(
+        config=SimpleNamespace(
+            ml_hierarchical_enabled=False,
+            ml_drift_enabled=False,
+            ml_drift_stats_path="data/custom_drift.json",
+        )
+    )
+
+    text = host._format_annotation_runtime_summary(
+        pending_corrections=4,
+        threshold=50,
+        active_drift_text="",
+    )
+
+    assert text == "Routing: Stage 1 only | Drift: disabled | Retrain: 4/50 pending"
