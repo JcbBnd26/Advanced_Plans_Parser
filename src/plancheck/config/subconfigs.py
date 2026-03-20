@@ -186,6 +186,11 @@ class AnalysisConfig:
     font_metrics_confidence_min: float = 0.7
     font_metrics_visual_dpi: int = 300
     font_metrics_dark_threshold: int = 200
+    box_containment_pad: float = 4.0
+    box_promote_gap_tolerance: float = 50.0
+    box_promote_overlap_frac: float = 0.60
+    box_callout_area_frac: float = 0.01
+    box_callout_max_parts: int = 6
 
 
 @dataclass
@@ -231,9 +236,11 @@ class MLConfig:
     ml_gnn_enabled: bool = False
     ml_gnn_model_path: str = str(DEFAULT_GNN_MODEL)
     ml_gnn_hidden_dim: int = 64
+    ml_gnn_patience: int = 20
     ml_drift_enabled: bool = False
     ml_drift_stats_path: str = str(DEFAULT_DRIFT_STATS)
     ml_drift_threshold: float = 0.3
     ml_retrain_threshold: int = 50
     ml_retrain_on_startup: bool = False
     ml_feature_cache_enabled: bool = True
+    ml_comparison_threshold: float = 0.005

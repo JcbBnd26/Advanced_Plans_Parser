@@ -64,6 +64,8 @@ def _make_tab(interp: tk.Tcl) -> PipelineTab:
         value="data/gnn_model.pt",
     )
     tab.ml_gnn_hidden_dim_var = tk.StringVar(master=interp, value="64")
+    tab.ml_gnn_patience_var = tk.StringVar(master=interp, value="20")
+    tab.ml_comparison_threshold_var = tk.StringVar(master=interp, value="0.005")
     tab.vocr_cand_ml_enabled_var = tk.BooleanVar(master=interp, value=False)
     tab.vocr_cand_classifier_path_var = tk.StringVar(
         master=interp,

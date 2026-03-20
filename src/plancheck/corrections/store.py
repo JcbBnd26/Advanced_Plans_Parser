@@ -495,12 +495,19 @@ class CorrectionStore(
         number of deleted detection rows.
         """
         with self._write_lock():
-            # Find the latest non-manual run_id per doc_id
+            # Find the latest non-manual run_id per doc_id.
+            # Use a correlated subquery so we get the run_id that
+            # actually corresponds to MAX(created_at), not an
+            # arbitrary row from the GROUP BY.
             latest_rows = self._conn.execute(
-                "SELECT doc_id, run_id FROM detections "
-                "WHERE run_id NOT LIKE 'manual%' "
-                "GROUP BY doc_id "
-                "HAVING created_at = MAX(created_at)"
+                "SELECT DISTINCT d.doc_id, d.run_id "
+                "FROM detections d "
+                "WHERE d.run_id NOT LIKE 'manual%' "
+                "  AND d.created_at = ("
+                "      SELECT MAX(d2.created_at) FROM detections d2 "
+                "      WHERE d2.doc_id = d.doc_id "
+                "        AND d2.run_id NOT LIKE 'manual%'"
+                "  )"
             ).fetchall()
             keep = {r["doc_id"]: r["run_id"] for r in latest_rows}
 

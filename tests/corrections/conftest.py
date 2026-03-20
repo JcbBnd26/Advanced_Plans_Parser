@@ -2,11 +2,29 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
+# Limit OpenBLAS / MKL / OpenMP thread pools before sklearn is imported.
+# On Windows the default initialisation can take 40+ seconds under pytest,
+# which causes tests to hit the timeout before sklearn even runs.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 from plancheck.corrections.store import CorrectionStore
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _warm_up_sklearn() -> None:  # noqa: PT004
+    """Import sklearn once at session start to pay the Windows cold-start cost.
+
+    Without this, the first test that touches sklearn can take 40+ seconds
+    initialising thread pools, which fires the pytest-timeout at 120 s.
+    """
+    import sklearn  # noqa: F401
 
 
 @pytest.fixture

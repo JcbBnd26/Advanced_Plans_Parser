@@ -212,6 +212,11 @@ class PipelineConfig:
     font_metrics_confidence_min: float = 0.7
     font_metrics_visual_dpi: int = 300
     font_metrics_dark_threshold: int = 200
+    box_containment_pad: float = 4.0
+    box_promote_gap_tolerance: float = 50.0
+    box_promote_overlap_frac: float = 0.60
+    box_callout_area_frac: float = 0.01
+    box_callout_max_parts: int = 6
 
     # ── Overlay / debug visualisation ──────────────────────────────────
     overlay_label_font_base: int = 10
@@ -252,6 +257,8 @@ class PipelineConfig:
     ml_gnn_enabled: bool = False
     ml_gnn_model_path: str = str(DEFAULT_GNN_MODEL)
     ml_gnn_hidden_dim: int = 64
+    ml_gnn_patience: int = 20
+    ml_comparison_threshold: float = 0.005
 
     # ── ML drift & retraining ─────────────────────────────────────────
     ml_drift_enabled: bool = False

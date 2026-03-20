@@ -141,9 +141,12 @@ class TestExtractEntities:
         assert "ADA" in ent["abbreviations"]
 
     def test_common_words_filtered(self):
-        ent = _extract_entities("THE AND FOR NOT ALL")
+        ent = _extract_entities("THE AND FOR NOT ALL SHALL MUST SEE PER")
         assert "THE" not in ent["abbreviations"]
         assert "AND" not in ent["abbreviations"]
+        assert "SHALL" not in ent["abbreviations"]
+        assert "SEE" not in ent["abbreviations"]
+        assert "PER" not in ent["abbreviations"]
 
     def test_empty_text(self):
         ent = _extract_entities("")

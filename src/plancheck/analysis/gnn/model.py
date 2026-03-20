@@ -155,10 +155,11 @@ if _GNN_AVAILABLE:
         epochs: int = 200,
         lr: float = 0.005,
         weight_decay: float = 5e-4,
+        patience: int = 0,
         train_mask: Optional[torch.Tensor] = None,
         val_mask: Optional[torch.Tensor] = None,
         verbose: bool = True,
-    ) -> dict[str, list[float]]:
+    ) -> dict[str, list[float] | int]:
         """Train the GNN on a single document graph.
 
         Parameters
@@ -175,6 +176,10 @@ if _GNN_AVAILABLE:
             Learning rate.
         weight_decay : float
             L2 regularisation.
+        patience : int
+            Early-stopping patience (0 = disabled).  Training stops when
+            validation accuracy has not improved for *patience* consecutive
+            epochs.  Requires *val_mask* to be set.
         train_mask : Tensor, optional
             Boolean mask for training nodes (defaults to all nodes).
         val_mask : Tensor, optional
@@ -185,7 +190,8 @@ if _GNN_AVAILABLE:
         Returns
         -------
         dict
-            ``{"train_loss": [...], "train_acc": [...], "val_acc": [...]}``
+            ``{"train_loss": [...], "train_acc": [...], "val_acc": [...],
+            "stopped_epoch": int}``
         """
         device = next(model.parameters()).device
         data = data.to(device)
@@ -202,11 +208,18 @@ if _GNN_AVAILABLE:
             model.parameters(), lr=lr, weight_decay=weight_decay
         )
 
-        history: dict[str, list[float]] = {
+        history: dict[str, list[float] | int] = {
             "train_loss": [],
             "train_acc": [],
             "val_acc": [],
+            "stopped_epoch": epochs,
         }
+
+        # Early stopping state
+        use_early_stop = patience > 0 and val_mask is not None
+        best_val_acc = -1.0
+        epochs_without_improvement = 0
+        best_state: dict | None = None
 
         for epoch in range(1, epochs + 1):
             model.train()
@@ -217,9 +230,11 @@ if _GNN_AVAILABLE:
             loss.backward()
             optimizer.step()
 
-            # Record metrics
+            # Record metrics — re-run forward pass so metrics
+            # reflect the updated parameters (not pre-step logits).
             model.eval()
             with torch.no_grad():
+                out = model(data)
                 pred = out.argmax(dim=1)
                 train_correct = (pred[train_mask] == labels[train_mask]).sum().item()
                 train_total = train_mask.sum().item()
@@ -235,11 +250,33 @@ if _GNN_AVAILABLE:
             history["train_acc"].append(train_acc)
             history["val_acc"].append(val_acc)
 
+            # Early stopping
+            if use_early_stop:
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    epochs_without_improvement = 0
+                    best_state = {k: v.clone() for k, v in model.state_dict().items()}
+                else:
+                    epochs_without_improvement += 1
+                    if epochs_without_improvement >= patience:
+                        history["stopped_epoch"] = epoch
+                        if verbose:
+                            log.info(
+                                "Early stopping at epoch %d (no improvement for %d epochs)",
+                                epoch,
+                                patience,
+                            )
+                        break
+
             if verbose and epoch % 20 == 0:
                 msg = f"Epoch {epoch:3d} | loss {loss.item():.4f} | train_acc {train_acc:.3f}"
                 if val_mask is not None:
                     msg += f" | val_acc {val_acc:.3f}"
                 log.info(msg)
+
+        # Restore best weights when early stopping was active
+        if use_early_stop and best_state is not None:
+            model.load_state_dict(best_state)
 
         return history
 

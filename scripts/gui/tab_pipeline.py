@@ -480,6 +480,7 @@ class PipelineTab:
             advanced_ml.content,
             text="Enable drift detection",
             variable=self.ml_drift_enabled_var,
+            command=self._update_ml_control_state,
         ).grid(row=4, column=0, sticky="w", pady=2)
         ttk.Label(
             advanced_ml.content,
@@ -490,7 +491,7 @@ class PipelineTab:
         self.ml_drift_threshold_var = tk.StringVar(
             value=str(_defaults.ml_drift_threshold)
         )
-        self._add_labeled_entry(
+        self._drift_threshold_entry = self._add_labeled_entry(
             advanced_ml.content,
             row=5,
             label="Drift threshold",
@@ -498,10 +499,8 @@ class PipelineTab:
             help_text="Higher values require a larger feature shift before flagging.",
         )
 
-        self.ml_drift_stats_path_var = tk.StringVar(
-            value=_defaults.ml_drift_stats_path
-        )
-        self._add_labeled_entry(
+        self.ml_drift_stats_path_var = tk.StringVar(value=_defaults.ml_drift_stats_path)
+        self._drift_stats_entry = self._add_labeled_entry(
             advanced_ml.content,
             row=6,
             label="Drift stats path",
@@ -511,6 +510,17 @@ class PipelineTab:
                 self.ml_drift_stats_path_var,
                 title="Select Drift Stats File",
             ),
+        )
+
+        self.ml_comparison_threshold_var = tk.StringVar(
+            value=str(_defaults.ml_comparison_threshold)
+        )
+        self._add_labeled_entry(
+            advanced_ml.content,
+            row=7,
+            label="Comparison F1 threshold",
+            variable=self.ml_comparison_threshold_var,
+            help_text="Min absolute per-class F1 delta to count as improved / regressed.",
         )
 
         optional_ml = CollapsibleFrame(
@@ -526,6 +536,7 @@ class PipelineTab:
             optional_ml.content,
             text="Enable vision features",
             variable=self.ml_vision_enabled_var,
+            command=self._update_ml_control_state,
         ).grid(row=0, column=0, sticky="w", pady=2)
         ttk.Label(
             optional_ml.content,
@@ -534,7 +545,7 @@ class PipelineTab:
         ).grid(row=0, column=1, sticky="w", padx=(10, 0))
 
         self.ml_vision_backbone_var = tk.StringVar(value=_defaults.ml_vision_backbone)
-        self._add_labeled_entry(
+        self._vision_backbone_entry = self._add_labeled_entry(
             optional_ml.content,
             row=1,
             label="Vision backbone",
@@ -549,6 +560,7 @@ class PipelineTab:
             optional_ml.content,
             text="Enable text embeddings",
             variable=self.ml_embeddings_enabled_var,
+            command=self._update_ml_control_state,
         ).grid(row=2, column=0, sticky="w", pady=2)
         ttk.Label(
             optional_ml.content,
@@ -556,10 +568,8 @@ class PipelineTab:
             foreground="gray",
         ).grid(row=2, column=1, sticky="w", padx=(10, 0))
 
-        self.ml_embeddings_model_var = tk.StringVar(
-            value=_defaults.ml_embeddings_model
-        )
-        self._add_labeled_entry(
+        self.ml_embeddings_model_var = tk.StringVar(value=_defaults.ml_embeddings_model)
+        self._embeddings_model_entry = self._add_labeled_entry(
             optional_ml.content,
             row=3,
             label="Embeddings model",
@@ -572,6 +582,7 @@ class PipelineTab:
             optional_ml.content,
             text="Enable layout model in pipeline",
             variable=self.ml_layout_enabled_var,
+            command=self._update_ml_control_state,
         ).grid(row=4, column=0, sticky="w", pady=2)
         ttk.Label(
             optional_ml.content,
@@ -582,7 +593,7 @@ class PipelineTab:
         self.ml_layout_model_path_var = tk.StringVar(
             value=_defaults.ml_layout_model_path
         )
-        self._add_labeled_entry(
+        self._layout_model_entry = self._add_labeled_entry(
             optional_ml.content,
             row=5,
             label="Layout model",
@@ -595,6 +606,7 @@ class PipelineTab:
             optional_ml.content,
             text="Enable GNN post-processing",
             variable=self.ml_gnn_enabled_var,
+            command=self._update_ml_control_state,
         ).grid(row=6, column=0, sticky="w", pady=2)
         ttk.Label(
             optional_ml.content,
@@ -603,7 +615,7 @@ class PipelineTab:
         ).grid(row=6, column=1, sticky="w", padx=(10, 0))
 
         self.ml_gnn_model_path_var = tk.StringVar(value=_defaults.ml_gnn_model_path)
-        self._add_labeled_entry(
+        self._gnn_model_path_entry = self._add_labeled_entry(
             optional_ml.content,
             row=7,
             label="GNN model path",
@@ -618,12 +630,21 @@ class PipelineTab:
         self.ml_gnn_hidden_dim_var = tk.StringVar(
             value=str(_defaults.ml_gnn_hidden_dim)
         )
-        self._add_labeled_entry(
+        self._gnn_hidden_dim_entry = self._add_labeled_entry(
             optional_ml.content,
             row=8,
             label="GNN hidden dim",
             variable=self.ml_gnn_hidden_dim_var,
             help_text="Hidden feature width expected by the GNN checkpoint.",
+        )
+
+        self.ml_gnn_patience_var = tk.StringVar(value=str(_defaults.ml_gnn_patience))
+        self._gnn_patience_entry = self._add_labeled_entry(
+            optional_ml.content,
+            row=9,
+            label="GNN early-stop patience",
+            variable=self.ml_gnn_patience_var,
+            help_text="Stop GNN training after N epochs without val improvement (0 = disabled).",
         )
 
         candidate_ml = CollapsibleFrame(
@@ -641,6 +662,7 @@ class PipelineTab:
             candidate_ml.content,
             text="Enable candidate classifier",
             variable=self.vocr_cand_ml_enabled_var,
+            command=self._update_ml_control_state,
         ).grid(row=0, column=0, sticky="w", pady=2)
         ttk.Label(
             candidate_ml.content,
@@ -651,7 +673,7 @@ class PipelineTab:
         self.vocr_cand_classifier_path_var = tk.StringVar(
             value=_defaults.vocr_cand_classifier_path
         )
-        self._add_labeled_entry(
+        self._cand_classifier_path_entry = self._add_labeled_entry(
             candidate_ml.content,
             row=1,
             label="Candidate model path",
@@ -665,7 +687,7 @@ class PipelineTab:
         self.vocr_cand_ml_threshold_var = tk.StringVar(
             value=str(_defaults.vocr_cand_ml_threshold)
         )
-        self._add_labeled_entry(
+        self._cand_threshold_entry = self._add_labeled_entry(
             candidate_ml.content,
             row=2,
             label="Candidate threshold",
@@ -680,6 +702,7 @@ class PipelineTab:
             candidate_ml.content,
             text="Blend GNN candidate prior",
             variable=self.vocr_cand_gnn_prior_enabled_var,
+            command=self._update_ml_control_state,
         ).grid(row=3, column=0, sticky="w", pady=2)
         ttk.Label(
             candidate_ml.content,
@@ -690,7 +713,7 @@ class PipelineTab:
         self.vocr_cand_gnn_prior_path_var = tk.StringVar(
             value=_defaults.vocr_cand_gnn_prior_path
         )
-        self._add_labeled_entry(
+        self._cand_gnn_prior_path_entry = self._add_labeled_entry(
             candidate_ml.content,
             row=4,
             label="Candidate GNN prior path",
@@ -705,7 +728,7 @@ class PipelineTab:
         self.vocr_cand_gnn_prior_blend_var = tk.StringVar(
             value=str(_defaults.vocr_cand_gnn_prior_blend)
         )
-        self._add_labeled_entry(
+        self._cand_gnn_blend_entry = self._add_labeled_entry(
             candidate_ml.content,
             row=5,
             label="Candidate GNN blend",
@@ -835,10 +858,8 @@ class PipelineTab:
 
         self._update_ml_control_state()
         self._refresh_ml_status()
-
-    # ------------------------------------------------------------------
-    # Config helpers
-    # ------------------------------------------------------------------
+        # Keyboard shortcut: Ctrl+R to start a pipeline run
+        self.root.bind_all("<Control-r>", self._on_ctrl_r_run, add="+")
 
     def _add_labeled_entry(
         self,
@@ -969,8 +990,20 @@ class PipelineTab:
         )
         self._set_config_scalar(
             cfg,
+            "ml_comparison_threshold",
+            self.ml_comparison_threshold_var,
+            float,
+        )
+        self._set_config_scalar(
+            cfg,
             "ml_gnn_hidden_dim",
             self.ml_gnn_hidden_dim_var,
+            int,
+        )
+        self._set_config_scalar(
+            cfg,
+            "ml_gnn_patience",
+            self.ml_gnn_patience_var,
             int,
         )
         self._set_config_scalar(
@@ -1016,6 +1049,7 @@ class PipelineTab:
         self.ml_feature_cache_enabled_var.set(cfg.ml_feature_cache_enabled)
         self.ml_drift_enabled_var.set(cfg.ml_drift_enabled)
         self.ml_drift_threshold_var.set(str(cfg.ml_drift_threshold))
+        self.ml_comparison_threshold_var.set(str(cfg.ml_comparison_threshold))
         self.ml_drift_stats_path_var.set(cfg.ml_drift_stats_path)
         self.ml_vision_enabled_var.set(cfg.ml_vision_enabled)
         self.ml_vision_backbone_var.set(cfg.ml_vision_backbone)
@@ -1026,6 +1060,7 @@ class PipelineTab:
         self.ml_gnn_enabled_var.set(cfg.ml_gnn_enabled)
         self.ml_gnn_model_path_var.set(cfg.ml_gnn_model_path)
         self.ml_gnn_hidden_dim_var.set(str(cfg.ml_gnn_hidden_dim))
+        self.ml_gnn_patience_var.set(str(cfg.ml_gnn_patience))
         self.vocr_cand_ml_enabled_var.set(cfg.vocr_cand_ml_enabled)
         self.vocr_cand_classifier_path_var.set(cfg.vocr_cand_classifier_path)
         self.vocr_cand_ml_threshold_var.set(str(cfg.vocr_cand_ml_threshold))
@@ -1254,7 +1289,9 @@ class PipelineTab:
             lines.extend(f"- {message}" for message in warnings)
         return "\n".join(lines)
 
-    def _notify_loaded_config_validation(self, cfg: GroupingConfig, *, source: str) -> None:
+    def _notify_loaded_config_validation(
+        self, cfg: GroupingConfig, *, source: str
+    ) -> None:
         """Show non-blocking validation feedback after importing a config."""
         errors, warnings = self._collect_run_validation_messages(cfg)
         if not errors and not warnings:
@@ -1285,12 +1322,62 @@ class PipelineTab:
         )
 
     def _update_ml_control_state(self) -> None:
-        """Enable Stage 2 path controls only when hierarchical mode is enabled."""
-        state = "normal" if self.ml_hierarchical_var.get() else "disabled"
+        """Enable dependent path controls only when their parent feature is on."""
+        # Stage 2 depends on hierarchical routing
+        s2_state = "normal" if self.ml_hierarchical_var.get() else "disabled"
         if hasattr(self, "_stage2_path_entry"):
-            self._stage2_path_entry.configure(state=state)
+            self._stage2_path_entry.configure(state=s2_state)
         if hasattr(self, "_stage2_browse_button"):
-            self._stage2_browse_button.configure(state=state)
+            self._stage2_browse_button.configure(state=s2_state)
+
+        # Drift threshold / stats path depend on drift detection enabled
+        drift_state = "normal" if self.ml_drift_enabled_var.get() else "disabled"
+        for _attr in ("_drift_threshold_entry", "_drift_stats_entry"):
+            _w = getattr(self, _attr, None)
+            if _w:
+                _w.configure(state=drift_state)
+
+        # Vision backbone depends on vision features enabled
+        vision_state = "normal" if self.ml_vision_enabled_var.get() else "disabled"
+        _w = getattr(self, "_vision_backbone_entry", None)
+        if _w:
+            _w.configure(state=vision_state)
+
+        # Embeddings model depends on text embeddings enabled
+        embed_state = "normal" if self.ml_embeddings_enabled_var.get() else "disabled"
+        _w = getattr(self, "_embeddings_model_entry", None)
+        if _w:
+            _w.configure(state=embed_state)
+
+        # Layout model path depends on layout model enabled
+        layout_state = "normal" if self.ml_layout_enabled_var.get() else "disabled"
+        _w = getattr(self, "_layout_model_entry", None)
+        if _w:
+            _w.configure(state=layout_state)
+
+        # GNN model path / hidden dim depend on GNN enabled
+        gnn_state = "normal" if self.ml_gnn_enabled_var.get() else "disabled"
+        for _attr in ("_gnn_model_path_entry", "_gnn_hidden_dim_entry"):
+            _w = getattr(self, _attr, None)
+            if _w:
+                _w.configure(state=gnn_state)
+
+        # Candidate path / threshold depend on candidate classifier enabled
+        cand_state = "normal" if self.vocr_cand_ml_enabled_var.get() else "disabled"
+        for _attr in ("_cand_classifier_path_entry", "_cand_threshold_entry"):
+            _w = getattr(self, _attr, None)
+            if _w:
+                _w.configure(state=cand_state)
+
+        # GNN prior path / blend depend on GNN prior enabled
+        prior_state = (
+            "normal" if self.vocr_cand_gnn_prior_enabled_var.get() else "disabled"
+        )
+        for _attr in ("_cand_gnn_prior_path_entry", "_cand_gnn_blend_entry"):
+            _w = getattr(self, _attr, None)
+            if _w:
+                _w.configure(state=prior_state)
+
         self._refresh_ml_status()
 
     def _refresh_ml_status(self, *_args) -> None:
@@ -1438,6 +1525,17 @@ class PipelineTab:
         self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     # ------------------------------------------------------------------
+    def _on_ctrl_r_run(self, event: tk.Event) -> None:
+        """Ctrl+R shortcut: start a pipeline run unless a text widget has focus."""
+        if isinstance(
+            event.widget,
+            (tk.Entry, ttk.Entry, tk.Text, ttk.Spinbox, ttk.Combobox),
+        ):
+            return
+        if str(self.run_button.cget("state")) == "disabled":
+            return
+        self._run_processing()
+
     # Pipeline Execution (embedded – replaces subprocess)
     # ------------------------------------------------------------------
 

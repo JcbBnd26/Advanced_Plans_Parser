@@ -9,9 +9,13 @@ from __future__ import annotations
 import bisect
 import logging
 import math
-from typing import List
+from typing import TYPE_CHECKING, List, Optional
 
 from ..models import BlockCluster
+
+if TYPE_CHECKING:
+    from ..config.subconfigs import AnalysisConfig
+
 from .structural_boxes import (
     PAGE_BORDER_AREA_FRAC,
     TITLE_BLOCK_MAX_ASPECT,
@@ -59,6 +63,8 @@ def classify_structural_boxes(
     blocks: List[BlockCluster],
     page_width: float,
     page_height: float,
+    *,
+    config: Optional[AnalysisConfig] = None,
 ) -> List[StructuralBox]:
     """Classify each structural box by its geometric properties and text content.
 
@@ -79,6 +85,11 @@ def classify_structural_boxes(
     page_area = page_width * page_height
     if page_area <= 0:
         return boxes
+
+    # Resolve configurable thresholds
+    pad = config.box_containment_pad if config else 4.0
+    callout_area_frac = config.box_callout_area_frac if config else 0.01
+    callout_max_parts = config.box_callout_max_parts if config else 6
 
     # Pre-compute block centers sorted by y for efficient containment check
     # This reduces O(n_boxes × n_blocks) to O(n_boxes × log(n_blocks) + k)
@@ -105,7 +116,6 @@ def classify_structural_boxes(
         text_parts = []
 
         # Find blocks whose y-center is within box's y-range (with padding)
-        pad = 4.0
         y_lo = box.y0 - pad
         y_hi = box.y1 + pad
         lo_idx = bisect.bisect_left(y_centers, y_lo)
@@ -176,7 +186,11 @@ def classify_structural_boxes(
             continue
 
         # 8. Callout – very small, all-caps, short text
-        if area_frac < 0.01 and box.contained_text.isupper() and len(text_parts) < 6:
+        if (
+            area_frac < callout_area_frac
+            and box.contained_text.isupper()
+            and len(text_parts) < callout_max_parts
+        ):
             box.box_type = BoxType.callout
             box.confidence = 0.50
             continue
@@ -187,7 +201,7 @@ def classify_structural_boxes(
 
     # Second pass: promote unknown boxes that are directly below a classified
     # header box of the same type (e.g., legend body below legend header).
-    _promote_sub_boxes(boxes, page_width)
+    _promote_sub_boxes(boxes, page_width, config=config)
 
     logger.debug(
         "classify_structural_boxes: %s",
@@ -197,8 +211,16 @@ def classify_structural_boxes(
     return boxes
 
 
-def _promote_sub_boxes(boxes: List[StructuralBox], page_width: float) -> None:
-    """Promote unknown boxes below a classified box with >60% x-overlap."""
+def _promote_sub_boxes(
+    boxes: List[StructuralBox],
+    page_width: float,
+    *,
+    config: Optional[AnalysisConfig] = None,
+) -> None:
+    """Promote unknown boxes below a classified box with sufficient x-overlap."""
+    gap_tolerance = config.box_promote_gap_tolerance if config else 50.0
+    overlap_frac = config.box_promote_overlap_frac if config else 0.60
+
     classified = [
         b for b in boxes if b.box_type not in (BoxType.unknown, BoxType.page_border)
     ]
@@ -210,7 +232,7 @@ def _promote_sub_boxes(boxes: List[StructuralBox], page_width: float) -> None:
             if unk.y0 < cls.y1 - 5:
                 continue
             # Must be close vertically
-            if unk.y0 - cls.y1 > 50:
+            if unk.y0 - cls.y1 > gap_tolerance:
                 continue
             # Horizontal overlap
             overlap_x0 = max(unk.x0, cls.x0)
@@ -219,7 +241,7 @@ def _promote_sub_boxes(boxes: List[StructuralBox], page_width: float) -> None:
             if unk_w <= 0:
                 continue
             h_overlap_frac = max(0, overlap_x1 - overlap_x0) / unk_w
-            if h_overlap_frac >= 0.60:
+            if h_overlap_frac >= overlap_frac:
                 unk.box_type = cls.box_type
                 unk.confidence = cls.confidence * 0.7
                 break

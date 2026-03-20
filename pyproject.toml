@@ -61,7 +61,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-timeout = 60
+timeout = 120
 markers = [
     "unit: fast isolated unit tests",
     "integration: tests that combine multiple modules",

@@ -14,11 +14,15 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from ..models import BlockCluster, GraphicElement
-from .box_merge import find_overlap_clusters, merge_boxes, polygon_bbox
+
+if TYPE_CHECKING:
+    from ..config.subconfigs import AnalysisConfig
+
 from .box_classifier import classify_structural_boxes
+from .box_merge import find_overlap_clusters, merge_boxes, polygon_bbox
 from .structural_boxes import (
     BoxType,
     SemanticRegion,
@@ -423,6 +427,7 @@ def detect_semantic_regions(
     font_size_ratio: float = 1.8,
     adaptive_gap_mult: float = 3.0,
     merge_overlapping: bool = False,
+    config: Optional[AnalysisConfig] = None,
 ) -> Tuple[List[StructuralBox], List[SemanticRegion]]:
     """Run the full structural detection + semantic region pipeline.
 
@@ -465,7 +470,9 @@ def detect_semantic_regions(
     struct_boxes = detect_structural_boxes(graphics, page_width, page_height)
 
     # Step 2: Classify by text + geometry
-    classify_structural_boxes(struct_boxes, blocks, page_width, page_height)
+    classify_structural_boxes(
+        struct_boxes, blocks, page_width, page_height, config=config
+    )
 
     # Step 3: Synthetic regions from text anchors
     synthetic = create_synthetic_regions(

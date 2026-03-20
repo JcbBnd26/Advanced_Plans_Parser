@@ -199,6 +199,11 @@ def train_classifier(
             "No validation data available — metrics computed on "
             "TRAINING data and are unreliable"
         )
+    if eval_on_cal:
+        log.warning(
+            "Validation data was used for BOTH calibration and evaluation — "
+            "reported metrics may be optimistic"
+        )
     eval_ex = val_ex if val_ex else train_ex
     X_eval = np.array([_encode(e["features"]) for e in eval_ex])
     y_eval = [e["label"] for e in eval_ex]

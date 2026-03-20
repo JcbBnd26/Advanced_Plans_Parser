@@ -7,8 +7,7 @@ from pathlib import Path
 from tkinter import filedialog
 from typing import Any
 
-from plancheck.ingest.ingest import (extract_text_in_bbox,
-                                     extract_text_in_polygon)
+from plancheck.ingest.ingest import extract_text_in_bbox, extract_text_in_polygon
 
 from .annotation_state import CanvasBox
 
@@ -53,6 +52,17 @@ class PdfLoaderMixin:
             self._word_overlay_on = False
             self._pipeline_ran_for_doc = False
             self._canvas.delete("all")
+            # Show a loading cue while the first page renders
+            self._status.configure(text="Loading PDF\u2026")
+            self._canvas.create_text(
+                10,
+                10,
+                text="Loading PDF, please wait\u2026",
+                anchor="nw",
+                fill="#888888",
+                font=("TkDefaultFont", 11),
+            )
+            self.root.update_idletasks()
             # Render first page preview
             self._navigate_to_page()
         else:

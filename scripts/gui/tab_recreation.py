@@ -136,8 +136,13 @@ class RecreationTab:
             row=orow, column=0, sticky="w", pady=2
         )
         self._opacity_var = tk.StringVar(value="0.15")
+        self._opacity_display_var = tk.StringVar(value="0.15")
         opacity_frame = ttk.Frame(oc)
         opacity_frame.grid(row=orow, column=1, sticky="w", pady=2)
+
+        def _on_opacity_change(val: str) -> None:
+            self._opacity_display_var.set(f"{float(val):.2f}")
+
         ttk.Scale(
             opacity_frame,
             from_=0.05,
@@ -145,8 +150,9 @@ class RecreationTab:
             orient="horizontal",
             variable=self._opacity_var,
             length=200,
+            command=_on_opacity_change,
         ).pack(side="left")
-        ttk.Label(opacity_frame, textvariable=self._opacity_var, width=6).pack(
+        ttk.Label(opacity_frame, textvariable=self._opacity_display_var, width=6).pack(
             side="left", padx=(4, 0)
         )
         orow += 1

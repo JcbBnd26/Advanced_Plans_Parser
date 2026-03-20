@@ -6,6 +6,7 @@ Provides training set generation from corrections and pseudo-labels.
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,6 +15,8 @@ from .store_utils import _deterministic_sort_key, _gen_id, _utcnow_iso
 
 if TYPE_CHECKING:
     pass
+
+log = logging.getLogger(__name__)
 
 
 class TrainingDataMixin:
@@ -173,6 +176,13 @@ class TrainingDataMixin:
                 # Sort deterministically within this class using MD5
                 group.sort(key=lambda r: _deterministic_sort_key(r["detection_id"]))
                 n = len(group)
+                if n < 5:
+                    log.warning(
+                        "Class %r has only %d examples — "
+                        "stratification is unreliable at this size",
+                        _label,
+                        n,
+                    )
                 train_end = max(1, int(n * 0.7))  # at least 1 in train
                 val_end = max(train_end + 1, int(n * 0.9)) if n >= 2 else train_end
                 for i, r in enumerate(group):

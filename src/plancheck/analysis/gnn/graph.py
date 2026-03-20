@@ -148,6 +148,60 @@ class GraphNode:
 _DETAIL_RE = re.compile(r"\b(\d{1,2})/([A-Z]-?\d{1,4})\b")
 _ABBREV_RE = re.compile(r"\b([A-Z]{2,6})\b")  # simple upper-case tokens
 
+# Common English words that appear in uppercase on plans but are NOT
+# domain abbreviations.  Kept as a module-level frozenset for O(1) lookup.
+_ABBREV_STOPWORDS: frozenset[str] = frozenset(
+    {
+        # Articles / conjunctions / prepositions
+        "THE",
+        "AND",
+        "FOR",
+        "NOT",
+        "ALL",
+        "ARE",
+        "BUT",
+        "NOR",
+        "YET",
+        "THIS",
+        "THAT",
+        "WITH",
+        "FROM",
+        "INTO",
+        "UPON",
+        "OVER",
+        "THAN",
+        # Common verbs / auxiliaries
+        "HAS",
+        "HAD",
+        "WAS",
+        "WERE",
+        "BEEN",
+        "HAVE",
+        "DOES",
+        "WILL",
+        "SHALL",
+        "MUST",
+        "CAN",
+        "MAY",
+        # Pronouns / determiners
+        "ANY",
+        "EACH",
+        "SUCH",
+        "EVERY",
+        "THESE",
+        "THOSE",
+        "THEM",
+        # Other high-frequency words on plan sheets
+        "SEE",
+        "PER",
+        "USE",
+        "NEW",
+        "SET",
+        "TWO",
+        "ONE",
+    }
+)
+
 
 def _extract_entities(text: str) -> dict[str, set[str]]:
     """Pull out named entities that can link regions across pages.
@@ -165,19 +219,7 @@ def _extract_entities(text: str) -> dict[str, set[str]]:
 
     for m in _ABBREV_RE.finditer(text):
         tok = m.group(1)
-        # Filter out very common words that happen to be uppercase
-        if len(tok) >= 2 and tok not in {
-            "THE",
-            "AND",
-            "FOR",
-            "NOT",
-            "ALL",
-            "ARE",
-            "BUT",
-            "THIS",
-            "THAT",
-            "WITH",
-        }:
+        if tok not in _ABBREV_STOPWORDS:
             entities["abbreviations"].add(tok)
 
     return entities

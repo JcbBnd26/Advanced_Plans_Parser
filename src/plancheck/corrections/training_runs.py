@@ -136,7 +136,9 @@ class TrainingRunsMixin:
             )
         return results
 
-    def compare_runs(self, run_id_a: str, run_id_b: str) -> dict[str, Any]:
+    def compare_runs(
+        self, run_id_a: str, run_id_b: str, *, threshold: float = 0.005
+    ) -> dict[str, Any]:
         """Compare two training runs and return metric deltas.
 
         Parameters
@@ -144,6 +146,8 @@ class TrainingRunsMixin:
         run_id_a, run_id_b : str
             Run IDs to compare.  Convention: *a* is the baseline (older),
             *b* is the candidate (newer).
+        threshold : float
+            Minimum absolute F1 delta to count as improved/regressed.
 
         Returns
         -------
@@ -179,9 +183,9 @@ class TrainingRunsMixin:
             f1_b = b["per_class"].get(cls, {}).get("f1", 0.0)
             delta = f1_b - f1_a
             per_class_deltas[cls] = round(delta, 6)
-            if delta > 0.005:
+            if delta > threshold:
                 improved.append(cls)
-            elif delta < -0.005:
+            elif delta < -threshold:
                 regressed.append(cls)
 
         return {

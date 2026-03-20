@@ -660,7 +660,9 @@ def render_overlay(
         if layers.get("structural", False):
             try:
                 sboxes = detect_structural_boxes(graphics, page_w, page_h)
-                classify_structural_boxes(sboxes, blocks, page_w, page_h)
+                classify_structural_boxes(
+                    sboxes, blocks, page_w, page_h, config=cfg.analysis
+                )
                 _draw_structural_boxes_layer(draw, sboxes, scale, font)
             except Exception:  # noqa: BLE001 — layer rendering is best-effort
                 pass

@@ -161,6 +161,8 @@ class ExperimentTracker:
         self,
         run_id_a: str,
         run_id_b: str,
+        *,
+        threshold: float = 0.005,
     ) -> ExperimentComparison:
         """Compare two training runs side-by-side.
 
@@ -170,12 +172,14 @@ class ExperimentTracker:
             Baseline (older) run ID.
         run_id_b : str
             Candidate (newer) run ID.
+        threshold : float
+            Minimum absolute F1 delta to count as improved/regressed.
 
         Returns
         -------
         ExperimentComparison
         """
-        raw = self._store.compare_runs(run_id_a, run_id_b)
+        raw = self._store.compare_runs(run_id_a, run_id_b, threshold=threshold)
         exps = {e.run_id: e for e in self.list_experiments(limit=10000)}
 
         run_a = exps.get(run_id_a, ExperimentSummary(run_id=run_id_a))

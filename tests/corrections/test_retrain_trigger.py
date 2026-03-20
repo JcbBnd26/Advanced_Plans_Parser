@@ -310,3 +310,132 @@ class TestAutoRetrainStage2:
         assert result.stage2_error == ""
         assert "only 4 subtype examples" in result.stage2_skipped_reason
         assert len(store.saved_runs) == 1
+
+
+# ── Auto-rollback ─────────────────────────────────────────────────────
+
+
+class TestAutoRetrainRollback:
+    """Verify the F1-regression rollback logic in auto_retrain()."""
+
+    def _make_rows(self, sample_features: dict, n: int = 20) -> list[dict]:
+        labels = ["header", "notes_column", "legend", "abbreviation_table"]
+        return [
+            {
+                "example_id": f"ex_{i}",
+                "label": labels[i % len(labels)],
+                "features": sample_features,
+                "split": "train" if i < int(n * 0.8) else "val",
+            }
+            for i in range(n)
+        ]
+
+    def test_rolled_back_when_f1_regresses(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_features: dict,
+    ) -> None:
+        """When the new F1 is lower than the previous run, the old model is restored."""
+        rows = self._make_rows(sample_features)
+        store = _FakeStore(tmp_path / "test.db", rows)
+
+        # Simulate a prior training run with high F1
+        monkeypatch.setattr(
+            store,
+            "get_training_history",
+            lambda: [{"run_id": "prior_run_001", "f1_weighted": 0.90}],
+        )
+
+        # Mock train to produce a regressed F1 (no model file written)
+        monkeypatch.setattr(
+            "plancheck.corrections.classifier.ElementClassifier.train",
+            lambda self, path, calibrate=True, ensemble=False: {
+                "accuracy": 0.40,
+                "f1_macro": 0.35,
+                "f1_weighted": 0.35,
+                "n_train": 16,
+                "n_val": 4,
+                "holdout_predictions": [],
+            },
+        )
+
+        # Write a sentinel model so a backup can be created & restored
+        model_path = tmp_path / "model.pkl"
+        model_path.write_bytes(b"original-model-sentinel")
+
+        result = auto_retrain(store, model_path=model_path, threshold=0)
+
+        assert result.rolled_back is True
+        assert result.accepted is False
+        assert model_path.read_bytes() == b"original-model-sentinel"
+        assert not model_path.with_suffix(".pkl.bak").exists()
+
+    def test_not_rolled_back_when_f1_improves(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_features: dict,
+    ) -> None:
+        """When F1 improves, the new model is accepted and backup is removed."""
+        rows = self._make_rows(sample_features)
+        store = _FakeStore(tmp_path / "test.db", rows)
+
+        monkeypatch.setattr(
+            store,
+            "get_training_history",
+            lambda: [{"run_id": "prior_run_001", "f1_weighted": 0.60}],
+        )
+
+        monkeypatch.setattr(
+            "plancheck.corrections.classifier.ElementClassifier.train",
+            lambda self, path, calibrate=True, ensemble=False: {
+                "accuracy": 0.90,
+                "f1_macro": 0.85,
+                "f1_weighted": 0.88,
+                "n_train": 16,
+                "n_val": 4,
+                "holdout_predictions": [],
+            },
+        )
+
+        model_path = tmp_path / "model.pkl"
+        model_path.write_bytes(b"original")
+
+        result = auto_retrain(store, model_path=model_path, threshold=0)
+
+        assert result.rolled_back is False
+        assert result.accepted is True
+        # Backup file should have been removed after successful accept
+        assert not model_path.with_suffix(".pkl.bak").exists()
+
+    def test_no_rollback_without_prior_history(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_features: dict,
+    ) -> None:
+        """When there are no prior runs, rollback is never triggered."""
+        rows = self._make_rows(sample_features)
+        store = _FakeStore(tmp_path / "test.db", rows)
+        # get_training_history already returns [] in _FakeStore, so no patch needed
+
+        monkeypatch.setattr(
+            "plancheck.corrections.classifier.ElementClassifier.train",
+            lambda self, path, calibrate=True, ensemble=False: {
+                "accuracy": 0.70,
+                "f1_macro": 0.68,
+                "f1_weighted": 0.69,
+                "n_train": 16,
+                "n_val": 4,
+                "holdout_predictions": [],
+            },
+        )
+
+        model_path = tmp_path / "model.pkl"
+        model_path.write_bytes(b"original")
+
+        result = auto_retrain(store, model_path=model_path, threshold=0)
+
+        assert result.rolled_back is False
+        assert result.accepted is True

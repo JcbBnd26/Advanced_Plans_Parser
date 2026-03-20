@@ -451,6 +451,7 @@ def _run_analysis_stage(
             page_width=page_w,
             page_height=page_h,
             merge_overlapping=cfg.merge_overlapping_boxes,
+            config=cfg.analysis,
         )
         abbreviation_regions = detect_abbreviation_regions(
             blocks=blocks,

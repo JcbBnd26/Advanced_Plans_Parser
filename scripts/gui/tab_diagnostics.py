@@ -167,8 +167,7 @@ class FontDiagnosticsSection(CollapsibleFrame):
         self._worker = PipelineWorker(self._root, self._log)
 
         def target():
-            from ..diagnostics.run_font_metrics_diagnostics import \
-                run_diagnostics
+            from ..diagnostics.run_font_metrics_diagnostics import run_diagnostics
             from ..utils.run_utils import make_run_dir
 
             run_dir = make_run_dir(
@@ -293,10 +292,12 @@ class BenchmarkSection(CollapsibleFrame):
         def target():
             from plancheck.config import GroupingConfig
 
-            from ..diagnostics.run_benchmark import (_CONDITIONS,
-                                                     _build_comparison,
-                                                     _print_table,
-                                                     _read_manifest)
+            from ..diagnostics.run_benchmark import (
+                _CONDITIONS,
+                _build_comparison,
+                _print_table,
+                _read_manifest,
+            )
             from ..runners.run_pdf_batch import run_pdf
 
             manifests = {}
@@ -428,8 +429,9 @@ class MLCalibrationSection(CollapsibleFrame):
 
         def target():
             if target_name == "Stage 2":
-                from plancheck.corrections.subtype_classifier import \
-                    TitleSubtypeClassifier
+                from plancheck.corrections.subtype_classifier import (
+                    TitleSubtypeClassifier,
+                )
 
                 clf = TitleSubtypeClassifier(model_path=model_path)
             else:
@@ -575,6 +577,7 @@ class MLRuntimeSummarySection(CollapsibleFrame):
         for key, label in self._value_labels.items():
             label.configure(text=summary.get(key, "—"))
 
+
 # ---------------------------------------------------------------------------
 # Section 4 – Training Progress Charts
 # ---------------------------------------------------------------------------
@@ -641,8 +644,7 @@ class TrainingProgressSection(CollapsibleFrame):
         store = CorrectionStore(db_path)
 
         try:
-            from plancheck.corrections.experiment_tracker import \
-                ExperimentTracker
+            from plancheck.corrections.experiment_tracker import ExperimentTracker
 
             tracker = ExperimentTracker(store)
             # Fetch experiments with per_class and holdout_predictions included
@@ -980,7 +982,8 @@ class ModelComparisonSection(CollapsibleFrame):
         id_b = run_b_str.split(" | ")[0].strip()
 
         try:
-            comparison = tracker.compare_experiments(id_a, id_b)
+            threshold = getattr(self._state.config, "ml_comparison_threshold", 0.005)
+            comparison = tracker.compare_experiments(id_a, id_b, threshold=threshold)
         except Exception as exc:
             store.close()
             messagebox.showwarning("Comparison Error", str(exc))
@@ -1141,8 +1144,10 @@ class LayoutModelSection(CollapsibleFrame):
 
         def target():
             from plancheck import GlyphBox, GroupingConfig, extract_tokens
-            from plancheck.analysis.layout_model import (is_layout_available,
-                                                         predict_layout)
+            from plancheck.analysis.layout_model import (
+                is_layout_available,
+                predict_layout,
+            )
             from plancheck.ingest import render_page_image
 
             if not is_layout_available():
@@ -1231,8 +1236,7 @@ class TextEmbeddingsSection(CollapsibleFrame):
     def _check_embeddings_avail(self) -> None:
         self._log.clear()
         try:
-            from plancheck.corrections.text_embeddings import \
-                is_embeddings_available
+            from plancheck.corrections.text_embeddings import is_embeddings_available
 
             avail = is_embeddings_available()
             if avail:
@@ -1253,7 +1257,9 @@ class TextEmbeddingsSection(CollapsibleFrame):
 
         def target():
             from plancheck.corrections.text_embeddings import (
-                TextEmbedder, is_embeddings_available)
+                TextEmbedder,
+                is_embeddings_available,
+            )
 
             if not is_embeddings_available():
                 raise RuntimeError(
@@ -1381,8 +1387,7 @@ class LLMSemanticChecksSection(CollapsibleFrame):
 
         def target():
             from plancheck import GroupingConfig
-            from plancheck.checks.llm_checks import (is_llm_available,
-                                                     run_llm_checks)
+            from plancheck.checks.llm_checks import is_llm_available, run_llm_checks
             from plancheck.pipeline import run_pipeline
 
             if not is_llm_available(provider):

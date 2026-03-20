@@ -59,6 +59,9 @@ _FALLBACK_PATTERNS: dict[str, list[str]] = {
     "standard_detail": [r"STD", r"STANDARD", r"SEE SHEET"],
 }
 
+# Pre-compiled regex for note-number detection (used in featurize)
+_NOTE_NUMBER_RE = re.compile(r"^\s*(\d+\.|\(\d+\)|[a-zA-Z]\.)")
+
 
 def _load_label_patterns() -> dict[str, list[re.Pattern[str]]]:
     """Load and compile text_patterns from label_registry.json (cached)."""
@@ -252,8 +255,6 @@ def featurize(
     min_token_confidence = round(min(confs), 4) if confs else 1.0
 
     # ── Relational features (v6) ───────────────────────────────────
-    # Note number pattern for notes detection
-    _NOTE_NUMBER_RE = re.compile(r"^\s*(\d+\.|\(\d+\)|[a-zA-Z]\.)")
     starts_with_note_number = int(bool(_NOTE_NUMBER_RE.match(first_text)))
 
     # Header proximity and sibling features require all_blocks

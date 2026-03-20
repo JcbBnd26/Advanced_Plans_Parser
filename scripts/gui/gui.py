@@ -51,8 +51,7 @@ def _format_startup_retrain_status(result: object) -> str:
         new_corrections = getattr(result, "new_corrections", 0)
         threshold = getattr(result, "threshold", 0)
         return (
-            "Startup retrain not needed "
-            f"({new_corrections}/{threshold} corrections)"
+            "Startup retrain not needed " f"({new_corrections}/{threshold} corrections)"
         )
 
     stage1_f1 = getattr(result, "metrics", {}).get("f1_weighted", 0.0)
@@ -67,6 +66,7 @@ def _format_startup_retrain_status(result: object) -> str:
         msg += f"; S2 skipped: {result.stage2_skipped_reason}"
 
     return msg
+
 
 # ---------------------------------------------------------------------------
 # GuiState – shared state + pub/sub
@@ -300,9 +300,36 @@ class PlanParserGUI:
 
 def main() -> None:
     """Launch the GUI application."""
-    root = tk.Tk()
-    _app = PlanParserGUI(root)
-    root.mainloop()
+    _setup_logging()
+    try:
+        root = tk.Tk()
+        _app = PlanParserGUI(root)
+        root.mainloop()
+    except Exception:
+        logger.critical("GUI crashed on startup", exc_info=True)
+        _write_crash_log()
+        raise
+
+
+def _setup_logging() -> None:
+    """Configure file logging so crashes are visible even under pythonw."""
+    log_path = Path("logs")
+    log_path.mkdir(exist_ok=True)
+    handler = logging.FileHandler(log_path / "gui.log", encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(name)s %(levelname)s: %(message)s")
+    )
+    logging.getLogger().addHandler(handler)
+    logging.getLogger().setLevel(logging.INFO)
+
+
+def _write_crash_log() -> None:
+    """Write a crash report next to the executable for easy discovery."""
+    import traceback
+
+    crash_path = Path("logs") / "gui_crash.txt"
+    crash_path.parent.mkdir(exist_ok=True)
+    crash_path.write_text(traceback.format_exc(), encoding="utf-8")
 
 
 if __name__ == "__main__":

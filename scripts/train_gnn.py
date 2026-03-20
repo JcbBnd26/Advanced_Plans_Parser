@@ -49,6 +49,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--heads", type=int, default=4)
     p.add_argument("--lr", type=float, default=0.005)
     p.add_argument(
+        "--patience", type=int, default=20, help="Early-stopping patience (0=disabled)"
+    )
+    p.add_argument(
         "--train-split", type=float, default=0.8, help="Fraction used for training"
     )
     p.add_argument("--embeddings", action="store_true", help="Include text embeddings")
@@ -179,6 +182,7 @@ def main() -> None:
         labels,
         epochs=args.epochs,
         lr=args.lr,
+        patience=args.patience,
         train_mask=train_mask,
         val_mask=val_mask,
         verbose=args.verbose,

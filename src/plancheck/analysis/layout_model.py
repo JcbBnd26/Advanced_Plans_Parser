@@ -348,6 +348,12 @@ class LayoutModel:
 
                 most_common_lid = Counter(lids).most_common(1)[0][0]
                 if most_common_lid >= len(LAYOUT_LABELS):
+                    log.warning(
+                        "Label ID %d exceeds vocabulary size %d — "
+                        "clamping to last label",
+                        most_common_lid,
+                        len(LAYOUT_LABELS),
+                    )
                     most_common_lid = len(LAYOUT_LABELS) - 1
                 word_pred[wid] = (LAYOUT_LABELS[most_common_lid], cs / cnt)
         else:
