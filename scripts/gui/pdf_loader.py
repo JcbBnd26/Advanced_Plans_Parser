@@ -203,6 +203,7 @@ class PdfLoaderMixin:
             return
 
         # Load detections only after pipeline has run for this doc this session
+        self._reopen_store()
         self._doc_id = self._store.register_document(self._pdf_path)
         self._canvas_boxes.clear()
         self._selected_box = None

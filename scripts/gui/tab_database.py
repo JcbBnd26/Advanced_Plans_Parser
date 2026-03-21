@@ -51,7 +51,7 @@ class DatabaseTab:
         self.frame.rowconfigure(1, weight=1)
         notebook.add(self.frame, text="Database")
 
-        self._store = CorrectionStore()
+        self._store: CorrectionStore | None = None
         self._selected_doc_id: str | None = None
         self._selected_run_id: str | None = None
 
@@ -664,6 +664,7 @@ class DatabaseTab:
     def _on_snapshot(self) -> None:
         """Create a DB snapshot."""
         try:
+            self._reopen_store()
             path = self._store.snapshot(tag="manual")
             messagebox.showinfo("Snapshot", f"Saved to:\n{path}")
             self._refresh()
@@ -672,6 +673,7 @@ class DatabaseTab:
 
     def _on_restore(self) -> None:
         """Restore from a snapshot."""
+        self._reopen_store()
         snaps = self._store.list_snapshots()
         if not snaps:
             messagebox.showinfo("Restore", "No snapshots available.")

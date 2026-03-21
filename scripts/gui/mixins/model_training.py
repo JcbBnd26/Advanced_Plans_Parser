@@ -173,6 +173,7 @@ class ModelTrainingMixin:
             return
 
         try:
+            self._reopen_store()
             threshold = getattr(self.state.config, "ml_retrain_threshold", 50)
             pending_corrections = self._store.count_corrections_since_last_train()
         except Exception:  # noqa: BLE001
@@ -367,6 +368,7 @@ class ModelTrainingMixin:
     def _on_show_training_history(self) -> None:
         """Show a popup with all past training runs."""
         try:
+            self._reopen_store()
             from plancheck.corrections.experiment_tracker import ExperimentTracker
 
             tracker = ExperimentTracker(self._store)
@@ -438,6 +440,7 @@ class ModelTrainingMixin:
     def _update_model_status(self) -> None:
         """Check if a trained model file exists and update the label."""
         try:
+            self._reopen_store()
             threshold = getattr(self.state.config, "ml_retrain_threshold", 50)
             pending_corrections = self._store.count_corrections_since_last_train()
         except Exception:  # noqa: BLE001
@@ -457,6 +460,7 @@ class ModelTrainingMixin:
     def _refresh_stats(self) -> None:
         """Query the DB for annotation statistics and display them."""
         try:
+            self._reopen_store()
             ov = self._store.get_db_overview()
             n_docs = ov["total_documents"]
             n_dets = ov["total_detections"]
@@ -495,6 +499,7 @@ class ModelTrainingMixin:
         if not ok:
             return
         try:
+            self._reopen_store()
             n = self._store.purge_all_stale_detections()
             self._refresh_stats()
             if self._pdf_path:
@@ -515,6 +520,7 @@ class ModelTrainingMixin:
             return
 
         try:
+            self._reopen_store()
             from plancheck.corrections.active_learning import suggest_next_page
 
             suggestion = suggest_next_page(self._store, self._classifier)
@@ -548,6 +554,7 @@ class ModelTrainingMixin:
             return  # cancelled
         tag = tag.strip() or "manual"
         try:
+            self._reopen_store()
             path = self._store.snapshot(tag)
             self._status.configure(text=f"Snapshot saved: {path.name}")
         except Exception as exc:
@@ -557,6 +564,7 @@ class ModelTrainingMixin:
         """Show a list of snapshots and restore the chosen one."""
         from tkinter import ttk
 
+        self._reopen_store()
         snaps = self._store.list_snapshots()
         if not snaps:
             messagebox.showinfo("No Snapshots", "No snapshots available.")

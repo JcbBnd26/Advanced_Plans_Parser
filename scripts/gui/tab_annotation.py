@@ -110,7 +110,7 @@ class AnnotationTab(
         self._word_click_candidate_rid: int | None = None
         self._session_id: str = uuid4().hex[:8]
         self._session_count: int = 0
-        self._store = CorrectionStore()
+        self._store: CorrectionStore | None = None
         self._worker: PipelineWorker | None = None
         self._classifier = ElementClassifier()
 

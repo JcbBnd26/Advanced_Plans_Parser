@@ -10,16 +10,33 @@ See: https://github.com/VikParuchuri/surya
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, List
+import os
+import subprocess
+import sys
+from typing import TYPE_CHECKING, List, Tuple
 
 import numpy as np
 
+from ...config.exceptions import OCRBackendTimeoutError
 from .base import OCRBackend, TextBox
 
 if TYPE_CHECKING:
     from ...config import GroupingConfig
 
 log = logging.getLogger(__name__)
+
+
+def _preflight_environment() -> dict[str, str]:
+    """Return an environment copy with conservative BLAS thread settings."""
+    env = os.environ.copy()
+    for var in (
+        "OPENBLAS_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        env.setdefault(var, "1")
+    return env
 
 
 class SuryaOCRBackend(OCRBackend):
@@ -46,6 +63,8 @@ class SuryaOCRBackend(OCRBackend):
         self._det_predictor = None
         self._rec_predictor = None
         self._initialized = False
+        self._init_error = None
+        self._preflight_complete = False
 
         # Get languages from config (default English)
         # Config stores as comma-separated string: "en,de,fr"
@@ -57,47 +76,110 @@ class SuryaOCRBackend(OCRBackend):
                     lang.strip() for lang in langs_str.split(",") if lang.strip()
                 ]
 
+    def _load_predictor_classes(self) -> Tuple[type, type, type]:
+        """Import and return the Surya predictor classes."""
+        try:
+            from surya.detection import DetectionPredictor
+            from surya.recognition import FoundationPredictor, RecognitionPredictor
+        except ImportError as exc:
+            raise ImportError(
+                "Surya OCR is not installed. Install with: pip install surya-ocr"
+            ) from exc
+
+        return DetectionPredictor, FoundationPredictor, RecognitionPredictor
+
+    def _run_import_preflight(self) -> None:
+        """Check the Surya import path in a child process before in-process init."""
+        if self._preflight_complete:
+            return
+
+        timeout = 45
+        if self._cfg is not None:
+            timeout = getattr(self._cfg, "surya_init_timeout_sec", timeout)
+
+        code = (
+            "from surya.detection import DetectionPredictor\n"
+            "from surya.recognition import FoundationPredictor, RecognitionPredictor\n"
+            "print('ok')\n"
+        )
+        log.info("Running Surya import preflight (timeout=%ds)", timeout)
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-u", "-c", code],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=timeout,
+                check=False,
+                env=_preflight_environment(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            detail = ((exc.stderr or "") or (exc.stdout or "")).strip()
+            if detail:
+                detail = detail.splitlines()[-1]
+                message = f"Surya import preflight timed out after {timeout}s: {detail}"
+            else:
+                message = f"Surya import preflight timed out after {timeout}s"
+            raise OCRBackendTimeoutError(message) from exc
+
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()
+            if detail:
+                detail = detail.splitlines()[-1]
+                raise ImportError(f"Surya import preflight failed: {detail}")
+            raise ImportError("Surya import preflight failed")
+
+        self._preflight_complete = True
+
     def _ensure_initialized(self) -> None:
         """Lazy-load Surya models on first use."""
         if self._initialized:
             return
+        if self._init_error is not None:
+            raise self._init_error
 
         # Prevent OpenBLAS memory-allocation crashes on Windows when
         # multiple BLAS-linked ML stacks share the same environment.
-        import os
+        import gc
 
-        for var in (
-            "OPENBLAS_NUM_THREADS",
-            "OMP_NUM_THREADS",
-            "MKL_NUM_THREADS",
-            "NUMEXPR_NUM_THREADS",
-        ):
-            os.environ.setdefault(var, "1")
+        for var, value in _preflight_environment().items():
+            if var in (
+                "OPENBLAS_NUM_THREADS",
+                "OMP_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS",
+            ):
+                os.environ.setdefault(var, value)
+
+        # Reclaim any accumulated garbage before loading heavy models
+        # (~1–1.5 GB for detection + recognition transformers).
+        gc.collect()
 
         log.info(
             "Initializing Surya OCR (device=%s, langs=%s)...",
             self._device,
             self._languages,
         )
-
         try:
-            from surya.detection import DetectionPredictor
-            from surya.recognition import FoundationPredictor, RecognitionPredictor
-        except ImportError as e:
-            raise ImportError(
-                "Surya OCR is not installed. Install with: " "pip install surya-ocr"
-            ) from e
+            self._run_import_preflight()
+            DetectionPredictor, FoundationPredictor, RecognitionPredictor = (
+                self._load_predictor_classes()
+            )
 
-        # Configure device
-        device_str = "cuda" if self._device == "gpu" else "cpu"
+            # Configure device
+            device_str = "cuda" if self._device == "gpu" else "cpu"
 
-        # Initialize predictors (RecognitionPredictor wraps a FoundationPredictor)
-        self._det_predictor = DetectionPredictor(device=device_str)
-        foundation = FoundationPredictor(device=device_str)
-        self._rec_predictor = RecognitionPredictor(foundation)
+            # Initialize predictors (RecognitionPredictor wraps a FoundationPredictor)
+            self._det_predictor = DetectionPredictor(device=device_str)
+            foundation = FoundationPredictor(device=device_str)
+            self._rec_predictor = RecognitionPredictor(foundation)
 
-        self._initialized = True
-        log.info("Surya OCR initialized successfully")
+            self._initialized = True
+            log.info("Surya OCR initialized successfully")
+        except Exception as exc:
+            self._init_error = exc
+            log.error("Surya OCR initialization failed", exc_info=True)
+            raise
 
     @property
     def name(self) -> str:
@@ -125,6 +207,12 @@ class SuryaOCRBackend(OCRBackend):
         if image.dtype != np.uint8:
             image = image.astype(np.uint8)
         pil_image = Image.fromarray(image)
+
+        log.debug(
+            "Surya predict: image %dx%d px",
+            pil_image.width,
+            pil_image.height,
+        )
 
         # Run detection + recognition
         predictions = self._rec_predictor(

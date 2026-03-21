@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PIL import Image
 
-from plancheck.config import GroupingConfig
+from plancheck.config import GroupingConfig, OCRBackendTimeoutError
 from plancheck.models import GlyphBox
 from plancheck.vocr.backends import TextBox
 from plancheck.vocr.extract import _dedup_tiles, _ocr_one_tile, iou
@@ -404,6 +404,21 @@ class TestExtractVocrTokens:
 
         mock_backend = MagicMock()
         mock_backend.predict.side_effect = RuntimeError("GPU OOM")
+        mock_get_backend.return_value = mock_backend
+
+        img = Image.new("RGB", (100, 100))
+        cfg = self._make_cfg()
+        tokens, confs = extract_vocr_tokens(img, 0, 100.0, 100.0, cfg)
+        assert tokens == []
+        assert confs == []
+
+    @patch("plancheck.vocr.extract.get_ocr_backend")
+    def test_timeout_returns_empty(self, mock_get_backend):
+        """OCR backend init timeout should degrade to empty OCR results."""
+        from plancheck.vocr.extract import extract_vocr_tokens
+
+        mock_backend = MagicMock()
+        mock_backend.predict.side_effect = OCRBackendTimeoutError("timed out")
         mock_get_backend.return_value = mock_backend
 
         img = Image.new("RGB", (100, 100))

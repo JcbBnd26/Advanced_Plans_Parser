@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from plancheck.config import GroupingConfig
+from plancheck.config import GroupingConfig, OCRBackendTimeoutError
 from plancheck.vocr.backends.base import (
     _backend_cache,
     _backend_key,
     clear_backend_cache,
     get_ocr_backend,
 )
+from plancheck.vocr.backends.surya import SuryaOCRBackend
 
 
 class TestBackendKey:
@@ -96,3 +98,54 @@ class TestBackendFactory:
 
         with pytest.raises(ValueError, match="Unknown OCR backend"):
             get_ocr_backend(cfg)
+
+
+class TestSuryaBackendInitialization:
+    def test_preflight_timeout_raises_timeout_error(self):
+        backend = SuryaOCRBackend(cfg=GroupingConfig(surya_init_timeout_sec=1))
+
+        with patch(
+            "plancheck.vocr.backends.surya.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["python"], timeout=1),
+        ):
+            with pytest.raises(OCRBackendTimeoutError, match="timed out"):
+                backend._run_import_preflight()
+
+    def test_init_error_is_cached_after_timeout(self):
+        backend = SuryaOCRBackend(cfg=GroupingConfig(surya_init_timeout_sec=1))
+        error = OCRBackendTimeoutError("timeout")
+
+        with patch.object(
+            backend,
+            "_run_import_preflight",
+            side_effect=error,
+        ) as mock_preflight:
+            with pytest.raises(OCRBackendTimeoutError, match="timeout"):
+                backend._ensure_initialized()
+            with pytest.raises(OCRBackendTimeoutError, match="timeout"):
+                backend._ensure_initialized()
+
+        assert mock_preflight.call_count == 1
+
+    def test_successful_init_constructs_predictors(self):
+        backend = SuryaOCRBackend(cfg=GroupingConfig())
+        det_predictor = MagicMock()
+        foundation = MagicMock()
+        rec_predictor = MagicMock()
+        detection_cls = MagicMock(return_value=det_predictor)
+        foundation_cls = MagicMock(return_value=foundation)
+        recognition_cls = MagicMock(return_value=rec_predictor)
+
+        with patch.object(backend, "_run_import_preflight") as mock_preflight:
+            with patch.object(
+                backend,
+                "_load_predictor_classes",
+                return_value=(detection_cls, foundation_cls, recognition_cls),
+            ):
+                backend._ensure_initialized()
+
+        mock_preflight.assert_called_once()
+        detection_cls.assert_called_once_with(device="cpu")
+        foundation_cls.assert_called_once_with(device="cpu")
+        recognition_cls.assert_called_once_with(foundation)
+        assert backend._initialized is True

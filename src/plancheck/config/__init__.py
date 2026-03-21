@@ -11,7 +11,7 @@ from .constants import (
     DEFAULT_GNN_MODEL,
     DEFAULT_ML_MODEL,
 )
-from .exceptions import ConfigLoadError, ConfigValidationError
+from .exceptions import ConfigLoadError, ConfigValidationError, OCRBackendTimeoutError
 from .pipeline import PipelineConfig, migrate_config
 from .subconfigs import (
     AnalysisConfig,
@@ -34,6 +34,7 @@ __all__ = [
     # Exceptions
     "ConfigValidationError",
     "ConfigLoadError",
+    "OCRBackendTimeoutError",
     # Migration helper
     "migrate_config",
     # Sub-config views

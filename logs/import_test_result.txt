@@ -1,0 +1,23 @@
+python: 3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]
+exe: C:\Projects\Advanced_Plan_Parser\.venv\Scripts\python.exe
+
+PIL: OK (1.2s)
+numpy: OK (1.1s)
+reportlab: OK (0.3s)
+plancheck.config.pipeline: TIMEOUT (15.0s) — HUNG!
+plancheck.models: TIMEOUT (15.0s) — HUNG!
+plancheck.export.csv_export: TIMEOUT (15.0s) — HUNG!
+plancheck.export.font_map: TIMEOUT (15.0s) — HUNG!
+plancheck.export.page_data: TIMEOUT (15.0s) — HUNG!
+plancheck.export.overlays.colors: TIMEOUT (15.0s) — HUNG!
+plancheck.export.overlays.detection: TIMEOUT (15.0s) — HUNG!
+plancheck.export.overlays.structural: TIMEOUT (15.0s) — HUNG!
+plancheck.reconcile.helpers: TIMEOUT (15.0s) — HUNG!
+plancheck.vocr.extract: TIMEOUT (15.0s) — HUNG!
+plancheck.reconcile.reconcile: TIMEOUT (15.0s) — HUNG!
+plancheck.export.reconcile_overlay: TIMEOUT (15.0s) — HUNG!
+plancheck.export.sheet_recreation: TIMEOUT (15.0s) — HUNG!
+plancheck.ingest: TIMEOUT (15.0s) — HUNG!
+plancheck (full): TIMEOUT (15.0s) — HUNG!
+
+DONE

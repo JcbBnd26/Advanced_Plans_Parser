@@ -9,3 +9,7 @@ class ConfigValidationError(ValueError):
 
 class ConfigLoadError(ValueError):
     """Raised when a config file cannot be loaded or parsed."""
+
+
+class OCRBackendTimeoutError(TimeoutError):
+    """Raised when OCR backend initialization exceeds the configured timeout."""

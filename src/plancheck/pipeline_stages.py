@@ -40,7 +40,80 @@ def _run_ingest_stage(
     pr.stages["ingest"] = sr
 
 
-# ── Stages 2 + 3: TOCR and VOCRPP ─────────────────────────────────────
+# ── Stage 2: TOCR (text-layer OCR extraction) ─────────────────────────
+
+
+def _run_tocr_stage(
+    pr: PageResult,
+    ctx: "PageContext",
+    cfg: GroupingConfig,
+) -> tuple:
+    """Stage 2: TOCR only.  Returns (boxes, page_w, page_h)."""
+    from .tocr.extract import extract_tocr_from_words
+
+    with run_stage("tocr", cfg) as sr_t:
+        result = extract_tocr_from_words(
+            ctx.words,
+            ctx.page_num,
+            ctx.page_width,
+            ctx.page_height,
+            cfg,
+            mode="full",
+        )
+        b, pw, ph, diag = result.to_legacy_tuple()
+        sr_t.counts = {"tokens_total": diag.get("tokens_total", 0)}
+        sr_t.status = "success" if not diag.get("error") else "failed"
+
+    pr.stages["tocr"] = sr_t
+    pr.page_width = pw
+    pr.page_height = ph
+    return b, pw, ph
+
+
+# ── Stage 3: VOCRPP (visual-OCR preprocessing) ────────────────────────
+
+
+def _run_vocrpp_stage(
+    pr: PageResult,
+    ctx: "PageContext",
+    cfg: GroupingConfig,
+) -> "Image.Image | None":
+    """Stage 3: VOCRPP only.  Returns preprocessed image or None."""
+    raw_img = ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
+
+    with run_stage("vocrpp", cfg) as sr_v:
+        pp_img = None
+        if sr_v.ran:
+            from .vocrpp.preprocess import OcrPreprocessConfig
+            from .vocrpp.preprocess import preprocess_image_for_ocr as _pp
+
+            pp_cfg = OcrPreprocessConfig(
+                enabled=True,
+                grayscale=cfg.vocrpp_grayscale,
+                autocontrast=cfg.vocrpp_autocontrast,
+                clahe=cfg.vocrpp_clahe,
+                clahe_clip_limit=cfg.vocrpp_clahe_clip_limit,
+                clahe_tile_size=cfg.vocrpp_clahe_grid_size,
+                median_denoise=cfg.vocrpp_median_denoise,
+                median_kernel_size=cfg.vocrpp_median_kernel,
+                adaptive_binarize=cfg.vocrpp_adaptive_binarize,
+                adaptive_block_size=cfg.vocrpp_binarize_block_size,
+                adaptive_c=cfg.vocrpp_binarize_constant,
+                sharpen=cfg.vocrpp_sharpen,
+                sharpen_radius=cfg.vocrpp_sharpen_radius,
+                sharpen_percent=cfg.vocrpp_sharpen_percent,
+                save_intermediate=False,
+            )
+            pp_result = _pp(raw_img, cfg=pp_cfg)
+            pp_img = pp_result.image
+            sr_v.counts = {"applied_steps": pp_result.applied_steps}
+            sr_v.status = "success"
+
+    pr.stages["vocrpp"] = sr_v
+    return pp_img
+
+
+# ── Stages 2 + 3: TOCR and VOCRPP (combined for backward compat) ─────
 
 
 def _run_tocr_vocrpp_stages(
@@ -49,70 +122,8 @@ def _run_tocr_vocrpp_stages(
     cfg: GroupingConfig,
 ) -> tuple:
     """Stages 2+3: TOCR then VOCRPP (sequential).  Returns (boxes, page_w, page_h, preprocess_img)."""
-    from .tocr.extract import extract_tocr_from_words
-
-    def _do_tocr():
-        """Execute the text-layer OCR extraction stage.
-
-        Returns (sr, page_w, page_h, boxes) — all outputs explicit for clarity.
-        """
-        with run_stage("tocr", cfg) as sr_t:
-            result = extract_tocr_from_words(
-                ctx.words,
-                ctx.page_num,
-                ctx.page_width,
-                ctx.page_height,
-                cfg,
-                mode="full",
-            )
-            b, pw, ph, diag = result.to_legacy_tuple()
-            sr_t.counts = {"tokens_total": diag.get("tokens_total", 0)}
-            sr_t.status = "success" if not diag.get("error") else "failed"
-            return sr_t, pw, ph, b
-
-    def _do_vocrpp(raw_img):
-        """Execute the visual-OCR preprocessing stage.
-
-        Returns (sr, preprocess_img) — all outputs explicit for clarity.
-        """
-        with run_stage("vocrpp", cfg) as sr_v:
-            pp_img = None
-            if sr_v.ran:
-                from .vocrpp.preprocess import OcrPreprocessConfig
-                from .vocrpp.preprocess import preprocess_image_for_ocr as _pp
-
-                pp_cfg = OcrPreprocessConfig(
-                    enabled=True,
-                    grayscale=cfg.vocrpp_grayscale,
-                    autocontrast=cfg.vocrpp_autocontrast,
-                    clahe=cfg.vocrpp_clahe,
-                    clahe_clip_limit=cfg.vocrpp_clahe_clip_limit,
-                    clahe_tile_size=cfg.vocrpp_clahe_grid_size,
-                    median_denoise=cfg.vocrpp_median_denoise,
-                    median_kernel_size=cfg.vocrpp_median_kernel,
-                    adaptive_binarize=cfg.vocrpp_adaptive_binarize,
-                    adaptive_block_size=cfg.vocrpp_binarize_block_size,
-                    adaptive_c=cfg.vocrpp_binarize_constant,
-                    sharpen=cfg.vocrpp_sharpen,
-                    sharpen_radius=cfg.vocrpp_sharpen_radius,
-                    sharpen_percent=cfg.vocrpp_sharpen_percent,
-                    save_intermediate=False,
-                )
-                pp_result = _pp(raw_img, cfg=pp_cfg)
-                pp_img = pp_result.image
-                sr_v.counts = {"applied_steps": pp_result.applied_steps}
-                sr_v.status = "success"
-            return sr_v, pp_img
-
-    # Sequential execution — no thread pool overhead on CPU
-    sr_tocr, page_w, page_h, boxes = _do_tocr()
-    raw_img = ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
-    sr_vocrpp, preprocess_img = _do_vocrpp(raw_img)
-
-    pr.stages["tocr"] = sr_tocr
-    pr.stages["vocrpp"] = sr_vocrpp
-    pr.page_width = page_w
-    pr.page_height = page_h
+    boxes, page_w, page_h = _run_tocr_stage(pr, ctx, cfg)
+    preprocess_img = _run_vocrpp_stage(pr, ctx, cfg)
 
     return boxes, page_w, page_h, preprocess_img
 
@@ -229,51 +240,57 @@ def _run_vocr_stage(
     When VOCR candidates are available, runs **targeted** VOCR on those
     patches only.  Otherwise falls back to full-page OCR.
     """
-    ocr_tokens = None
-    ocr_confs = None
-    with run_stage("vocr", cfg) as sr_vocr:
-        if sr_vocr.ran:
-            ocr_img = (
-                preprocess_img
-                if preprocess_img is not None
-                else (
-                    ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
+    ocr_tokens: list = []
+    ocr_confs: list = []
+    try:
+        with run_stage("vocr", cfg) as sr_vocr:
+            if sr_vocr.ran:
+                ocr_img = (
+                    preprocess_img
+                    if preprocess_img is not None
+                    else (
+                        ctx.ocr_image
+                        if ctx.ocr_image is not None
+                        else ctx.background_image
+                    )
                 )
-            )
 
-            if pr.vocr_candidates:
-                # Targeted mode: scan only candidate patches
-                from .vocr.targeted import extract_vocr_targeted
+                if pr.vocr_candidates:
+                    # Targeted mode: scan only candidate patches
+                    from .vocr.targeted import extract_vocr_targeted
 
-                ocr_tokens, ocr_confs, pr.vocr_candidates = extract_vocr_targeted(
-                    page_image=ocr_img,
-                    candidates=pr.vocr_candidates,
-                    page_num=ctx.page_num,
-                    page_width=page_w,
-                    page_height=page_h,
-                    cfg=cfg,
-                )
-                sr_vocr.counts = {
-                    "tokens_total": len(ocr_tokens),
-                    "mode": "targeted",
-                    "patches_scanned": len(pr.vocr_candidates),
-                }
-            else:
-                # Full-page fallback
-                from .vocr import extract_vocr_tokens
+                    ocr_tokens, ocr_confs, pr.vocr_candidates = extract_vocr_targeted(
+                        page_image=ocr_img,
+                        candidates=pr.vocr_candidates,
+                        page_num=ctx.page_num,
+                        page_width=page_w,
+                        page_height=page_h,
+                        cfg=cfg,
+                    )
+                    sr_vocr.counts = {
+                        "tokens_total": len(ocr_tokens),
+                        "mode": "targeted",
+                        "patches_scanned": len(pr.vocr_candidates),
+                    }
+                else:
+                    # Full-page fallback
+                    from .vocr import extract_vocr_tokens
 
-                ocr_tokens, ocr_confs = extract_vocr_tokens(
-                    page_image=ocr_img,
-                    page_num=ctx.page_num,
-                    page_width=page_w,
-                    page_height=page_h,
-                    cfg=cfg,
-                )
-                sr_vocr.counts = {
-                    "tokens_total": len(ocr_tokens),
-                    "mode": "full_page",
-                }
-            sr_vocr.status = "success"
+                    ocr_tokens, ocr_confs = extract_vocr_tokens(
+                        page_image=ocr_img,
+                        page_num=ctx.page_num,
+                        page_width=page_w,
+                        page_height=page_h,
+                        cfg=cfg,
+                    )
+                    sr_vocr.counts = {
+                        "tokens_total": len(ocr_tokens),
+                        "mode": "full_page",
+                    }
+                sr_vocr.status = "success"
+    except Exception:  # noqa: BLE001 — VOCR failure must not abort the page
+        log.error("VOCR stage failed; continuing with TOCR tokens only", exc_info=True)
+        ocr_tokens, ocr_confs = [], []
     pr.stages["vocr"] = sr_vocr
     pr.ocr_tokens = ocr_tokens
     pr.ocr_confs = ocr_confs

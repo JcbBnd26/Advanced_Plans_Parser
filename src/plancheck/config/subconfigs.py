@@ -45,6 +45,7 @@ class VOCRConfig:
     enable_vocr: bool = True
     vocr_backend: str = "surya"
     vocr_device: str = "cpu"
+    surya_init_timeout_sec: int = 45
     surya_languages: str = "en"  # Comma-separated language codes
     vocr_resolution: int = 0
     vocr_min_confidence: float = 0.6

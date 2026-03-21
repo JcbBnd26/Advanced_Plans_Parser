@@ -206,6 +206,7 @@ def extract_ocr_tokens(
         if not need_tile:
             # Single-pass: image fits within tile limit
             img_array = np.array(page_image)
+            log.info("  OCR Stage 1: running single-pass predict...")
             all_tokens, all_confs = _ocr_one_tile(
                 backend,
                 img_array,
@@ -223,26 +224,42 @@ def extract_ocr_tokens(
             for y0, y1 in tiles_y:
                 for x0, x1 in tiles_x:
                     tile_idx += 1
-                    # Copy tile to avoid potential array mutation issues
-                    tile = img_array[y0:y1, x0:x1].copy()
-                    t_tokens, t_confs = _ocr_one_tile(
-                        backend,
-                        tile,
-                        x0,
-                        y0,
-                        sx,
-                        sy,
-                        page_num,
-                        min_conf,
-                    )
                     log.info(
-                        "    tile %d/%d (%d,%d)-(%d,%d): %d tokens",
+                        "    tile %d/%d (%d,%d)-(%d,%d): predicting...",
                         tile_idx,
                         n_tiles,
                         x0,
                         y0,
                         x1,
                         y1,
+                    )
+                    try:
+                        # Copy tile to avoid potential array mutation issues
+                        tile = img_array[y0:y1, x0:x1].copy()
+                        t_tokens, t_confs = _ocr_one_tile(
+                            backend,
+                            tile,
+                            x0,
+                            y0,
+                            sx,
+                            sy,
+                            page_num,
+                            min_conf,
+                        )
+                    except (
+                        Exception
+                    ):  # noqa: BLE001 — individual tile failure must not abort all tiles
+                        log.error(
+                            "    tile %d/%d FAILED",
+                            tile_idx,
+                            n_tiles,
+                            exc_info=True,
+                        )
+                        continue
+                    log.info(
+                        "    tile %d/%d: %d tokens",
+                        tile_idx,
+                        n_tiles,
                         len(t_tokens),
                     )
                     all_tokens.extend(t_tokens)
@@ -258,11 +275,8 @@ def extract_ocr_tokens(
                     len(all_tokens),
                 )
 
-    except (RuntimeError, ValueError, MemoryError, OSError) as e:
-        import traceback
-
-        log.error("  OCR Stage 1: EXCEPTION during predict(): %s", e)
-        traceback.print_exc()
+    except Exception as exc:  # noqa: BLE001 — VOCR must not crash the pipeline
+        log.error("  OCR Stage 1: EXCEPTION during predict(): %s", exc, exc_info=True)
         return [], []
 
     elapsed = time.perf_counter() - t0

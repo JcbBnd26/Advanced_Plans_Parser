@@ -134,6 +134,14 @@ class TestConfigValidation:
         cfg = GroupingConfig(vocr_backend="surya")
         assert cfg.vocr_backend == "surya"
 
+    def test_surya_init_timeout_zero_rejected(self):
+        with pytest.raises(ConfigValidationError, match="surya_init_timeout_sec"):
+            GroupingConfig(surya_init_timeout_sec=0)
+
+    def test_surya_init_timeout_positive_accepted(self):
+        cfg = GroupingConfig(surya_init_timeout_sec=90)
+        assert cfg.surya_init_timeout_sec == 90
+
     # ── Content band ordering ─────────────────────────────────────────
 
     def test_content_band_inverted_rejected(self):

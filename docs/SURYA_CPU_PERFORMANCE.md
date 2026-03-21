@@ -156,6 +156,17 @@ full-page fallback is the worst-case path.
   A leaner environment reduces the chance of BLAS/runtime conflicts and may
   eventually let us relax the `NUM_THREADS=1` workaround.
 
+- [ ] **Use the Surya diagnostics and timeout guard on Windows**.
+  The repository now includes:
+  - `python .\\scripts\\diagnostics\\run_surya_env_probe.py`
+  - `python .\\scripts\\diagnostics\\run_surya_init_probe.py --mode raw --trace-imports --output surya_import_trace.txt`
+  - `GroupingConfig(surya_init_timeout_sec=45)` to bound Surya import preflight.
+
+  The backend performs a child-process Surya import preflight before in-process
+  initialization. If the preflight exceeds the configured timeout, the VOCR
+  stage fails fast and downstream callers degrade to empty OCR results instead
+  of stalling indefinitely.
+
 ### Medium-Term (Performance)
 
 - [ ] **Disable full-page VOCR fallback on CPU.** When `vocr_device == "cpu"`,

@@ -279,6 +279,299 @@ def input_fingerprint(
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
+# ── Composable pipeline phase functions ─────────────────────────────────
+#
+# The pipeline is split into three phases so that ``run_document()`` can
+# batch all pages through TOCR first, then only flagged pages through
+# VOCRPP/VOCR/reconcile, then all pages through grouping/analysis/checks.
+#
+# ``run_pipeline()`` still calls all three phases sequentially for
+# backward compatibility (single-page callers).
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _build_page_context(
+    pdf_path: Path,
+    page_num: int,
+    cfg: GroupingConfig,
+    resolution: int,
+) -> "PageContext":
+    """Open the PDF once and build a PageContext for one page."""
+    from .ingest import build_page_context
+    from .tocr.extract import build_extract_words_kwargs
+
+    ocr_res = 0
+    if cfg.enable_vocr or cfg.enable_ocr_preprocess or cfg.enable_ocr_reconcile:
+        ocr_res = (
+            cfg.vocr_resolution
+            if cfg.vocr_resolution > 0
+            else cfg.ocr_reconcile_resolution
+        )
+
+    return build_page_context(
+        pdf_path,
+        page_num,
+        overlay_resolution=resolution,
+        ocr_resolution=ocr_res,
+        extract_words_kwargs=build_extract_words_kwargs(cfg, mode="full"),
+    )
+
+
+def _run_early_stages(
+    pr: "PageResult",
+    ctx: "PageContext",
+    cfg: GroupingConfig,
+    resolution: int,
+) -> tuple:
+    """Phase 1: ingest → tocr → prune/deskew → vocr_candidates.
+
+    Returns (boxes, page_w, page_h) — lightweight data safe to stash.
+    """
+    from .pipeline_stages import (
+        _run_ingest_stage,
+        _run_prune_deskew,
+        _run_tocr_stage,
+        _run_vocr_candidates_stage,
+    )
+
+    _run_ingest_stage(pr, ctx, cfg, resolution)
+
+    boxes, page_w, page_h = _run_tocr_stage(pr, ctx, cfg)
+
+    boxes, skew = _run_prune_deskew(boxes, cfg, page_w, page_h)
+    pr.skew_degrees = skew
+
+    _run_vocr_candidates_stage(pr, ctx, cfg, boxes, page_w, page_h)
+
+    return boxes, page_w, page_h
+
+
+def _run_vocr_phases(
+    pr: "PageResult",
+    ctx: "PageContext",
+    cfg: GroupingConfig,
+    boxes: list,
+    page_w: float,
+    page_h: float,
+) -> list:
+    """Phase 2: vocrpp → vocr → reconcile.  Returns updated boxes list."""
+    from .pipeline_stages import (
+        _run_reconcile_stage,
+        _run_vocr_stage,
+        _run_vocrpp_stage,
+    )
+
+    preprocess_img = _run_vocrpp_stage(pr, ctx, cfg)
+
+    ocr_tokens, ocr_confs = _run_vocr_stage(
+        pr,
+        ctx,
+        cfg,
+        page_w,
+        page_h,
+        preprocess_img,
+    )
+
+    boxes = _run_reconcile_stage(
+        pr,
+        ctx,
+        cfg,
+        boxes,
+        page_w,
+        page_h,
+        preprocess_img,
+        ocr_tokens,
+        ocr_confs,
+        pr.stages["vocr"],
+    )
+    return boxes
+
+
+def _skip_vocr_phases(pr: "PageResult", cfg: GroupingConfig) -> None:
+    """Record skipped VOCRPP/VOCR/reconcile stages for non-flagged pages."""
+    for stage_name in ("vocrpp", "vocr", "reconcile"):
+        sr = StageResult(stage=stage_name)
+        sr.enabled = True
+        sr.ran = False
+        sr.status = "skipped"
+        sr.skip_reason = "no_candidates"
+        pr.stages[stage_name] = sr
+    pr.ocr_tokens = []
+    pr.ocr_confs = []
+
+
+def _run_late_stages(
+    pr: "PageResult",
+    ctx: "PageContext",
+    cfg: GroupingConfig,
+    boxes: list,
+    page_w: float,
+    page_h: float,
+    page_num: int,
+    correction_store: "CorrectionStore | None" = None,
+    run_id: str | None = None,
+    pdf_path: Path | None = None,
+) -> list:
+    """Phase 3: grouping → analysis → checks → correction store → export.
+
+    Returns the semantic findings list.
+    """
+    from .pipeline_stages import (
+        _run_analysis_stage,
+        _run_checks_stage,
+        _run_grouping_stage,
+    )
+
+    blocks, notes_columns = _run_grouping_stage(pr, cfg, boxes, page_h)
+
+    _run_analysis_stage(
+        pr,
+        ctx,
+        cfg,
+        blocks,
+        boxes,
+        notes_columns,
+        page_w,
+        page_h,
+    )
+
+    findings = _run_checks_stage(pr, cfg, page_num)
+
+    # Optional: persist detections to correction store
+    if correction_store is not None and run_id is not None and pdf_path is not None:
+        _persist_corrections(
+            pr,
+            correction_store,
+            pdf_path,
+            page_num,
+            run_id,
+            cfg,
+        )
+
+    # Stage 9: export (no-op in library mode)
+    with run_stage("export", cfg) as sr_exp:
+        sr_exp.status = "success"
+        sr_exp.counts = {"note": "library mode — no file I/O"}
+    pr.stages["export"] = sr_exp
+
+    return findings
+
+
+def _persist_corrections(
+    pr: "PageResult",
+    correction_store: "CorrectionStore",
+    pdf_path: Path,
+    page_num: int,
+    run_id: str,
+    cfg: GroupingConfig,
+) -> None:
+    """Persist block/region detections and run ML feedback."""
+    from .analysis.zoning import classify_blocks
+    from .corrections.features import featurize, featurize_region
+
+    doc_id = correction_store.register_document(pdf_path)
+    correction_store.purge_old_detections_for_doc(doc_id, keep_run_id=run_id)
+
+    block_zone_map: dict[int, str] = {}
+    if hasattr(pr, "page_zones") and pr.page_zones:
+        _zone_assignments = classify_blocks(pr.blocks, pr.page_zones)
+        block_zone_map = {idx: tag.value for idx, tag in _zone_assignments.items()}
+
+    for block_idx, block in enumerate(pr.blocks):
+        lbl = getattr(block, "label", None)
+        if lbl in ("note_column_header", "note_column_subheader"):
+            etype = "header"
+        elif lbl == "notes_block" or getattr(block, "is_notes", False):
+            etype = "notes_column"
+        elif getattr(block, "is_header", False):
+            etype = "header"
+        else:
+            continue
+        bb = block.bbox()
+        if bb == (0, 0, 0, 0):
+            continue
+        zone = block_zone_map.get(block_idx, "unknown")
+        features = featurize(block, pr.page_width, pr.page_height, zone=zone)
+        text = " ".join(b.text for b in block.get_all_boxes())[:500]
+        correction_store.save_detection(
+            doc_id=doc_id,
+            page=page_num,
+            run_id=run_id,
+            element_type=etype,
+            bbox=bb,
+            text_content=text,
+            features=features,
+            confidence=None,
+        )
+
+    for region_list, etype in [
+        (pr.abbreviation_regions, "abbreviations"),
+        (pr.legend_regions, "legend"),
+        (pr.revision_regions, "revision"),
+        (pr.standard_detail_regions, "standard_detail"),
+        (pr.misc_title_regions, "misc_title"),
+    ]:
+        for region in region_list:
+            bbox = region.bbox()
+            if bbox == (0, 0, 0, 0):
+                continue
+            header_block = getattr(region, "header", None)
+            entry_count = len(getattr(region, "entries", []))
+            features = featurize_region(
+                etype,
+                bbox,
+                header_block,
+                pr.page_width,
+                pr.page_height,
+                entry_count=entry_count,
+            )
+            try:
+                text_content = region.header_text()
+            except Exception:  # noqa: BLE001 — fallback for missing/broken header_text
+                text_content = getattr(region, "text", "")
+            correction_store.save_detection(
+                doc_id=doc_id,
+                page=page_num,
+                run_id=run_id,
+                element_type=etype,
+                bbox=bbox,
+                text_content=text_content or "",
+                features=features,
+                confidence=getattr(region, "confidence", None),
+            )
+
+    for tb in pr.title_blocks:
+        bbox = tb.bbox
+        if bbox == (0, 0, 0, 0):
+            continue
+        features = featurize_region(
+            "title_block",
+            bbox,
+            None,
+            pr.page_width,
+            pr.page_height,
+        )
+        correction_store.save_detection(
+            doc_id=doc_id,
+            page=page_num,
+            run_id=run_id,
+            element_type="title_block",
+            bbox=bbox,
+            text_content=tb.raw_text[:500] if tb.raw_text else "",
+            features=features,
+            confidence=tb.confidence,
+        )
+
+    _drift_warnings = _apply_ml_feedback(
+        correction_store,
+        doc_id,
+        page_num,
+        cfg,
+        page_image=pr.background_image,
+    )
+    pr.drift_warnings = _drift_warnings
+
+
 # ── Single-page pipeline runner ────────────────────────────────────────
 
 
@@ -297,11 +590,11 @@ def run_pipeline(
     Python objects.  Callers (scripts, GUI, tests) are responsible for
     serialisation and overlay production.
 
-    The PDF is opened **exactly once** via :func:`build_page_context`;
+    The PDF is opened **exactly once** via :func:`_build_page_context`;
     all stages consume the pre-extracted :class:`PageContext`.
 
-    Each stage is delegated to a ``_run_*_stage`` helper for
-    maintainability; this function handles only orchestration.
+    Internally delegates to three composable phase functions so that
+    :func:`run_document` can batch pages through each phase independently.
 
     Parameters
     ----------
@@ -319,237 +612,33 @@ def run_pipeline(
     PageResult
         All artefacts produced by the pipeline.
     """
-    from .pipeline_stages import (
-        _run_analysis_stage,
-        _run_checks_stage,
-        _run_grouping_stage,
-        _run_ingest_stage,
-        _run_prune_deskew,
-        _run_reconcile_stage,
-        _run_tocr_vocrpp_stages,
-        _run_vocr_candidates_stage,
-        _run_vocr_stage,
-    )
-
     if cfg is None:
         cfg = GroupingConfig()
 
-    # ── Single PDF open: build PageContext ──────────────────────────
-    from .ingest import build_page_context
-    from .tocr.extract import build_extract_words_kwargs
-
-    # Determine OCR resolution (0 = skip OCR image render)
-    ocr_res = 0
-    if cfg.enable_vocr or cfg.enable_ocr_preprocess or cfg.enable_ocr_reconcile:
-        ocr_res = (
-            cfg.vocr_resolution
-            if cfg.vocr_resolution > 0
-            else cfg.ocr_reconcile_resolution
-        )
-
-    ctx = build_page_context(
-        pdf_path,
-        page_num,
-        overlay_resolution=resolution,
-        ocr_resolution=ocr_res,
-        extract_words_kwargs=build_extract_words_kwargs(cfg, mode="full"),
-    )
-
+    ctx = _build_page_context(pdf_path, page_num, cfg, resolution)
     pr = PageResult(page=page_num)
 
-    # Stage 1: ingest
-    _run_ingest_stage(pr, ctx, cfg, resolution)
+    # Phase 1: ingest → tocr → prune/deskew → vocr_candidates
+    boxes, page_w, page_h = _run_early_stages(pr, ctx, cfg, resolution)
 
-    # Stages 2+3: tocr → vocrpp (sequential)
-    boxes, page_w, page_h, preprocess_img = _run_tocr_vocrpp_stages(
-        pr,
-        ctx,
-        cfg,
-    )
+    # Phase 2: vocrpp → vocr → reconcile
+    boxes = _run_vocr_phases(pr, ctx, cfg, boxes, page_w, page_h)
 
-    # Prune + optional deskew
-    boxes, skew = _run_prune_deskew(boxes, cfg, page_w, page_h)
-    pr.skew_degrees = skew
-
-    # Stage 3.5: vocr candidate detection (targeted patch selection)
-    _run_vocr_candidates_stage(pr, ctx, cfg, boxes, page_w, page_h)
-
-    # Stage 4: vocr (targeted or full-page depending on candidates)
-    ocr_tokens, ocr_confs = _run_vocr_stage(
-        pr,
-        ctx,
-        cfg,
-        page_w,
-        page_h,
-        preprocess_img,
-    )
-
-    # Stage 5: reconcile
-    boxes = _run_reconcile_stage(
+    # Phase 3: grouping → analysis → checks → export
+    _run_late_stages(
         pr,
         ctx,
         cfg,
         boxes,
         page_w,
         page_h,
-        preprocess_img,
-        ocr_tokens,
-        ocr_confs,
-        pr.stages["vocr"],
+        page_num,
+        correction_store=correction_store,
+        run_id=run_id,
+        pdf_path=pdf_path,
     )
 
-    # Stage 6: grouping
-    blocks, notes_columns = _run_grouping_stage(pr, cfg, boxes, page_h)
-
-    # Stage 7: analysis
-    _run_analysis_stage(
-        pr,
-        ctx,
-        cfg,
-        blocks,
-        boxes,
-        notes_columns,
-        page_w,
-        page_h,
-    )
-
-    # Stage 8: checks
-    findings = _run_checks_stage(pr, cfg, page_num)
-
-    # Optional: persist detections to correction store
-    if correction_store is not None and run_id is not None:
-        from .analysis.zoning import classify_blocks
-        from .corrections.features import featurize, featurize_region
-
-        doc_id = correction_store.register_document(pdf_path)
-
-        # Purge old pipeline detections for this document so the DB
-        # only keeps the freshest run (manual annotations preserved).
-        correction_store.purge_old_detections_for_doc(doc_id, keep_run_id=run_id)
-
-        # Build zone map: block index → ZoneTag.value
-        block_zone_map: dict[int, str] = {}
-        if hasattr(pr, "page_zones") and pr.page_zones:
-            _zone_assignments = classify_blocks(pr.blocks, pr.page_zones)
-            block_zone_map = {idx: tag.value for idx, tag in _zone_assignments.items()}
-
-        # Block-level detections
-        for block_idx, block in enumerate(pr.blocks):
-            lbl = getattr(block, "label", None)
-            if lbl in ("note_column_header", "note_column_subheader"):
-                etype = "header"
-            elif lbl == "notes_block" or getattr(block, "is_notes", False):
-                etype = "notes_column"
-            elif getattr(block, "is_header", False):
-                etype = "header"
-            else:
-                continue
-            bb = block.bbox()
-            if bb == (0, 0, 0, 0):
-                continue
-            zone = block_zone_map.get(block_idx, "unknown")
-            features = featurize(block, pr.page_width, pr.page_height, zone=zone)
-            text = " ".join(b.text for b in block.get_all_boxes())[:500]
-            correction_store.save_detection(
-                doc_id=doc_id,
-                page=page_num,
-                run_id=run_id,
-                element_type=etype,
-                bbox=bb,
-                text_content=text,
-                features=features,
-                confidence=None,
-            )
-
-        # Region-level detections
-        for region_list, etype in [
-            (pr.abbreviation_regions, "abbreviations"),
-            (pr.legend_regions, "legend"),
-            (pr.revision_regions, "revision"),
-            (pr.standard_detail_regions, "standard_detail"),
-            (pr.misc_title_regions, "misc_title"),
-        ]:
-            for region in region_list:
-                bbox = region.bbox()
-                if bbox == (0, 0, 0, 0):
-                    continue
-                header_block = getattr(region, "header", None)
-                entry_count = len(getattr(region, "entries", []))
-                features = featurize_region(
-                    etype,
-                    bbox,
-                    header_block,
-                    pr.page_width,
-                    pr.page_height,
-                    entry_count=entry_count,
-                )
-                try:
-                    text_content = region.header_text()
-                except (
-                    Exception
-                ):  # noqa: BLE001 — fallback for missing/broken header_text
-                    text_content = getattr(region, "text", "")
-                correction_store.save_detection(
-                    doc_id=doc_id,
-                    page=page_num,
-                    run_id=run_id,
-                    element_type=etype,
-                    bbox=bbox,
-                    text_content=text_content or "",
-                    features=features,
-                    confidence=getattr(region, "confidence", None),
-                )
-
-        # Title blocks (bbox is a field, not a method)
-        for tb in pr.title_blocks:
-            bbox = tb.bbox
-            if bbox == (0, 0, 0, 0):
-                continue
-            features = featurize_region(
-                "title_block",
-                bbox,
-                None,
-                pr.page_width,
-                pr.page_height,
-            )
-            correction_store.save_detection(
-                doc_id=doc_id,
-                page=page_num,
-                run_id=run_id,
-                element_type="title_block",
-                bbox=bbox,
-                text_content=tb.raw_text[:500] if tb.raw_text else "",
-                features=features,
-                confidence=tb.confidence,
-            )
-
-        # ── ML feedback loop ────────────────────────────────────────
-        #
-        # 1.  Apply prior corrections: if the user already corrected a
-        #     detection on this page (from a previous run), carry that
-        #     label/bbox forward using spatial matching.
-        # 2.  ML re-labelling: if a trained classifier exists and it
-        #     disagrees with the rule-based label at high confidence,
-        #     override the label so the user sees improved results.
-        # 3.  Confidence scoring: write model confidence to each
-        #     detection row for display (coloured dots in the GUI).
-        #
-        _drift_warnings = _apply_ml_feedback(
-            correction_store,
-            doc_id,
-            page_num,
-            cfg,
-            page_image=pr.background_image,
-        )
-        pr.drift_warnings = _drift_warnings
-
-    # Stage 9: export (no-op in library mode)
-    with run_stage("export", cfg) as sr_exp:
-        sr_exp.status = "success"
-        sr_exp.counts = {"note": "library mode — no file I/O"}
-    pr.stages["export"] = sr_exp
-
-    log.info("run_pipeline page %d: %d findings", page_num, len(findings))
+    log.info("run_pipeline page %d complete", page_num)
     return pr
 
 
@@ -562,7 +651,16 @@ def run_document(
     cfg: GroupingConfig | None = None,
     resolution: int = 200,
 ) -> DocumentResult:
-    """Process multiple pages and run cross-page checks.
+    """Process multiple pages in batch-by-stage order.
+
+    Phase 1 — all pages run through ingest → tocr → prune/deskew →
+    vocr_candidates.  Phase 2 — only *flagged* pages (non-empty
+    ``vocr_candidates``) run through vocrpp → vocr → reconcile;
+    non-flagged pages record skipped stages.  Phase 3 — all pages run
+    through grouping → analysis → checks → export.
+
+    This avoids loading the expensive VOCR backend for documents where
+    most pages have no OCR-reconciliation candidates.
 
     Parameters
     ----------
@@ -591,13 +689,26 @@ def run_document(
 
     dr = DocumentResult(pdf_path=pdf_path, config=cfg)
 
-    for pg in pages:
+    # Per-page intermediate state needed across phases.
+    # Keys: page index in the *pages* list (not the PDF page number).
+    page_states: dict[int, dict] = {}
+
+    # ── Phase 1: early stages (all pages) ────────────────────────
+    for idx, pg in enumerate(pages):
         try:
-            pr = run_pipeline(pdf_path, pg, cfg=cfg, resolution=resolution)
+            ctx = _build_page_context(pdf_path, pg, cfg, resolution)
+            pr = PageResult(page=pg)
+            boxes, page_w, page_h = _run_early_stages(pr, ctx, cfg, resolution)
+            page_states[idx] = {
+                "pr": pr,
+                "ctx": ctx,
+                "boxes": boxes,
+                "page_w": page_w,
+                "page_h": page_h,
+            }
             dr.pages.append(pr)
-        except Exception as exc:
-            log.error("run_document page %d failed: %s", pg, exc)
-            # Create a minimal failed PageResult
+        except Exception as exc:  # noqa: BLE001 — page failure must not abort doc
+            log.error("run_document page %d Phase 1 failed: %s", pg, exc)
             failed = PageResult(page=pg)
             failed.stages["error"] = StageResult(
                 stage="pipeline",
@@ -605,6 +716,106 @@ def run_document(
                 error={"type": type(exc).__name__, "message": str(exc)},
             )
             dr.pages.append(failed)
+
+    log.info(
+        "run_document Phase 1 complete: %d/%d pages succeeded",
+        len(page_states),
+        len(pages),
+    )
+
+    # ── Phase 2: VOCR stages (flagged pages only) ────────────────
+    # A page is "flagged" when it has vocr_candidates OR when
+    # candidate detection is disabled but VOCR itself is enabled
+    # (full-page fallback mode).
+    candidates_disabled = not cfg.enable_vocr_candidates
+    vocr_enabled = cfg.enable_vocr
+
+    # Free heavy data no longer needed after Phase 1 to make room
+    # for the VOCR model (~1–1.5 GB for Surya transformers).  The
+    # chars list is only used during TOCR extraction; lines/rects/
+    # curves are still needed in Phase 3 analysis so we keep them.
+    for state in page_states.values():
+        ctx = state["ctx"]
+        ctx.chars = []
+        ctx.words = []
+
+    # Pre-release OCR images for pages that won't run VOCR.
+    for idx, state in page_states.items():
+        pr = state["pr"]
+        has_candidates = bool(getattr(pr, "vocr_candidates", None))
+        needs_vocr = vocr_enabled and (has_candidates or candidates_disabled)
+        if not needs_vocr:
+            state["ctx"].ocr_image = None
+
+    import gc
+
+    gc.collect()
+
+    for idx, state in page_states.items():
+        pr = state["pr"]
+        has_candidates = bool(getattr(pr, "vocr_candidates", None))
+        needs_vocr = vocr_enabled and (has_candidates or candidates_disabled)
+
+        if needs_vocr:
+            try:
+                state["boxes"] = _run_vocr_phases(
+                    pr,
+                    state["ctx"],
+                    cfg,
+                    state["boxes"],
+                    state["page_w"],
+                    state["page_h"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error(
+                    "run_document page %d Phase 2 failed: %s",
+                    pages[idx],
+                    exc,
+                )
+            finally:
+                # Release OCR image after VOCR is done with this page
+                state["ctx"].ocr_image = None
+        else:
+            # Record skipped VOCR stages so downstream knows
+            _skip_vocr_phases(pr, cfg)
+
+    flagged_count = sum(
+        1
+        for idx in page_states
+        if bool(getattr(page_states[idx]["pr"], "vocr_candidates", None))
+        or candidates_disabled
+    )
+    log.info(
+        "run_document Phase 2 complete: %d/%d pages ran VOCR",
+        flagged_count,
+        len(page_states),
+    )
+
+    # ── Phase 3: late stages (all pages) ─────────────────────────
+    for idx, state in page_states.items():
+        pr = state["pr"]
+        try:
+            _run_late_stages(
+                pr,
+                state["ctx"],
+                cfg,
+                state["boxes"],
+                state["page_w"],
+                state["page_h"],
+                pages[idx],
+                pdf_path=pdf_path,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "run_document page %d Phase 3 failed: %s",
+                pages[idx],
+                exc,
+            )
+        finally:
+            # Release per-page context now that all stages are done
+            state["ctx"] = None
+
+    log.info("run_document Phase 3 complete")
 
     # Cross-page checks
     dr.document_findings = _run_document_checks(dr.pages)

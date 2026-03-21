@@ -8,15 +8,31 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from plancheck import (BlockCluster, GlyphBox, GroupingConfig, StageResult,
-                       ingest_pdf, zone_summary)
+from plancheck import (
+    BlockCluster,
+    GlyphBox,
+    GroupingConfig,
+    StageResult,
+    ingest_pdf,
+    zone_summary,
+)
 from plancheck.analysis.structural_boxes import BoxType
 from plancheck.export import export_page_results
 from plancheck.export.page_data import serialize_page
 from plancheck.export.report import generate_html_report, generate_json_report
-from plancheck.pipeline import (DocumentResult, PageResult,
-                                _run_document_checks, input_fingerprint,
-                                run_pipeline, stage_callback_hook)
+from plancheck.pipeline import (
+    DocumentResult,
+    PageResult,
+    _build_page_context,
+    _run_document_checks,
+    _run_early_stages,
+    _run_late_stages,
+    _run_vocr_phases,
+    _skip_vocr_phases,
+    input_fingerprint,
+    run_pipeline,
+    stage_callback_hook,
+)
 
 from ..utils.box_serialization import save_boxes_json
 from ..utils.run_utils import make_run_dir
@@ -540,7 +556,15 @@ def run_pdf(
     cancel_event: threading.Event | None = None,
     stage_callback: Callable[[str, str], None] | None = None,
 ) -> Path:
-    """Process pages of a single PDF and create one run folder with all results."""
+    """Process pages of a single PDF using batch-by-stage ordering.
+
+    Phase 1 runs all pages through ingest → tocr → vocr_candidates.
+    Phase 2 runs only flagged pages (with VOCR candidates) through
+    vocrpp → vocr → reconcile.  Phase 3 runs all pages through
+    grouping → analysis → checks and materialises artefacts.
+    """
+    import time as _time
+
     if cfg is None:
         cfg = GroupingConfig()
 
@@ -557,38 +581,171 @@ def run_pdf(
 
     correction_store = CorrectionStore()
     _run_id = run_dir.name
+    pdf_stem = pdf.stem.replace(" ", "_")
 
     print(f"Processing {pdf.name} -> {run_dir}", flush=True)
 
-    page_results = []
+    # Per-page intermediate state across phases.
+    page_states: dict[int, dict] = {}  # keyed by page_num
     processed_pages: list[int] = []
     cancelled = False
+
+    # ── Phase 1: early stages (all pages) ────────────────────────────
     for page_num in range(start, end_page):
         if cancel_event is not None and cancel_event.is_set():
             cancelled = True
             print("Cancellation requested — stopping after current page.")
             break
+        t0 = _time.perf_counter()
         try:
-            result = process_page(
-                pdf,
-                page_num,
-                run_dir,
-                resolution,
-                color_overrides,
-                cfg=cfg,
-                correction_store=correction_store,
-                run_id=_run_id,
-                stage_callback=stage_callback,
-            )
-            page_results.append(result)
+            with stage_callback_hook(stage_callback):
+                ctx = _build_page_context(pdf, page_num, cfg, resolution)
+                pr = PageResult(page=page_num)
+                boxes, page_w, page_h = _run_early_stages(
+                    pr,
+                    ctx,
+                    cfg,
+                    resolution,
+                )
+            page_states[page_num] = {
+                "pr": pr,
+                "ctx": ctx,
+                "boxes": boxes,
+                "page_w": page_w,
+                "page_h": page_h,
+            }
             processed_pages.append(page_num)
+            elapsed = _time.perf_counter() - t0
+            cand_count = len(getattr(pr, "vocr_candidates", []))
+            print(
+                f"  page {page_num}: Phase 1 done ({elapsed:.1f}s, "
+                f"{cand_count} VOCR candidates)",
+                flush=True,
+            )
         except Exception as exc:  # pragma: no cover
             import traceback
 
             traceback.print_exc()
-            print(f"  page {page_num}: ERROR {exc}", flush=True)
-            page_results.append({"page": page_num, "error": str(exc)})
+            print(f"  page {page_num}: Phase 1 ERROR {exc}", flush=True)
             processed_pages.append(page_num)
+
+    # ── Phase 2: VOCR stages (flagged pages only) ────────────────────
+    candidates_disabled = not cfg.enable_vocr_candidates
+    vocr_enabled = cfg.enable_vocr
+    flagged_pages = []
+
+    # Free heavy Phase-1-only data to make room for Surya models
+    # (~1–1.5 GB).  words/chars are consumed during TOCR extraction;
+    # lines/rects/curves are still needed in Phase 3 analysis.
+    for state in page_states.values():
+        ctx = state["ctx"]
+        ctx.chars = []
+        ctx.words = []
+
+    # Pre-release OCR images for pages that won't run VOCR.
+    for page_num, state in page_states.items():
+        pr = state["pr"]
+        has_candidates = bool(getattr(pr, "vocr_candidates", None))
+        needs_vocr = vocr_enabled and (has_candidates or candidates_disabled)
+        if not needs_vocr:
+            state["ctx"].ocr_image = None
+
+    import gc
+
+    gc.collect()
+
+    for page_num, state in page_states.items():
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            print("Cancellation requested — stopping VOCR phase.")
+            break
+        pr = state["pr"]
+        has_candidates = bool(getattr(pr, "vocr_candidates", None))
+        needs_vocr = vocr_enabled and (has_candidates or candidates_disabled)
+
+        if needs_vocr:
+            flagged_pages.append(page_num)
+            t0 = _time.perf_counter()
+            try:
+                with stage_callback_hook(stage_callback):
+                    state["boxes"] = _run_vocr_phases(
+                        pr,
+                        state["ctx"],
+                        cfg,
+                        state["boxes"],
+                        state["page_w"],
+                        state["page_h"],
+                    )
+                elapsed = _time.perf_counter() - t0
+                print(
+                    f"  page {page_num}: Phase 2 VOCR done ({elapsed:.1f}s)",
+                    flush=True,
+                )
+            except Exception as exc:  # pragma: no cover
+                import traceback
+
+                traceback.print_exc()
+                print(f"  page {page_num}: Phase 2 ERROR {exc}", flush=True)
+            finally:
+                # Release OCR image after VOCR is done with this page
+                state["ctx"].ocr_image = None
+        else:
+            _skip_vocr_phases(pr, cfg)
+
+    print(
+        f"  Phase 2 complete: {len(flagged_pages)}/{len(page_states)} "
+        f"pages ran VOCR",
+        flush=True,
+    )
+
+    # ── Phase 3: late stages + materialisation (all pages) ───────────
+    page_results = []
+    for page_num in processed_pages:
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            print("Cancellation requested — stopping after current page.")
+            break
+
+        if page_num not in page_states:
+            # Page failed in Phase 1 — emit an error entry
+            page_results.append({"page": page_num, "error": "Phase 1 failed"})
+            continue
+
+        state = page_states[page_num]
+        pr = state["pr"]
+        t0 = _time.perf_counter()
+        try:
+            with stage_callback_hook(stage_callback):
+                _run_late_stages(
+                    pr,
+                    state["ctx"],
+                    cfg,
+                    state["boxes"],
+                    state["page_w"],
+                    state["page_h"],
+                    page_num,
+                    correction_store=correction_store,
+                    run_id=_run_id,
+                    pdf_path=pdf,
+                )
+
+            # Materialise artefacts to disk
+            _materialise_page(pr, pdf, run_dir, pdf_stem, resolution, cfg)
+
+            elapsed = _time.perf_counter() - t0
+            print(f"  page {page_num}: Phase 3 done ({elapsed:.1f}s)", flush=True)
+            print(summarize(pr.blocks), flush=True)
+
+            page_results.append(_build_page_manifest(pr, pdf_stem, run_dir, cfg))
+        except Exception as exc:  # pragma: no cover
+            import traceback
+
+            traceback.print_exc()
+            print(f"  page {page_num}: Phase 3 ERROR {exc}", flush=True)
+            page_results.append({"page": page_num, "error": str(exc)})
+        finally:
+            # Release per-page context
+            state["ctx"] = None
 
     # ── Cross-page checks ─────────────────────────────────────────────
     page_result_objects = [

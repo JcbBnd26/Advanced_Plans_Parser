@@ -1,0 +1,63 @@
+[    0.0s] env set
+[    0.0s] probe mode=backend device=cpu
+[    0.0s] step 1: importing plancheck.config
+[    0.7s] step 1 ok: imported plancheck.config
+[    0.7s] step 2: importing plancheck.vocr.backends.surya
+[    1.4s] step 2 ok: imported backend module
+[    1.4s] step 3: building GroupingConfig
+[    1.4s] step 3 ok: config ready
+[    1.4s] step 4: constructing SuryaOCRBackend
+[    1.4s] step 4 ok: backend object ready
+[    1.4s] step 5: calling backend._ensure_initialized()
+[parent] waiting... 15s elapsed
+[parent] waiting... 30s elapsed
+[parent] waiting... 45s elapsed
+Surya OCR initialization failed
+Traceback (most recent call last):
+  File "C:\Projects\Advanced_Plan_Parser\src\plancheck\vocr\backends\surya.py", line 107, in _run_import_preflight
+    completed = subprocess.run(
+                ^^^^^^^^^^^^^^^
+  File "C:\Users\jake\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 550, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jake\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 1209, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jake\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 1630, in _communicate
+    raise TimeoutExpired(self.args, orig_timeout)
+subprocess.TimeoutExpired: Command '['C:\\Projects\\Advanced_Plan_Parser\\.venv\\Scripts\\python.exe', '-u', '-c', "from surya.detection import DetectionPredictor\nfrom surya.recognition import FoundationPredictor, RecognitionPredictor\nprint('ok')\n"]' timed out after 45 seconds
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Projects\Advanced_Plan_Parser\src\plancheck\vocr\backends\surya.py", line 166, in _ensure_initialized
+    self._run_import_preflight()
+  File "C:\Projects\Advanced_Plan_Parser\src\plancheck\vocr\backends\surya.py", line 125, in _run_import_preflight
+    raise OCRBackendTimeoutError(message) from exc
+plancheck.config.exceptions.OCRBackendTimeoutError: Surya import preflight timed out after 45s
+Traceback (most recent call last):
+  File "C:\Projects\Advanced_Plan_Parser\src\plancheck\vocr\backends\surya.py", line 107, in _run_import_preflight
+    completed = subprocess.run(
+                ^^^^^^^^^^^^^^^
+  File "C:\Users\jake\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 550, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jake\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 1209, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jake\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 1630, in _communicate
+    raise TimeoutExpired(self.args, orig_timeout)
+subprocess.TimeoutExpired: Command '['C:\\Projects\\Advanced_Plan_Parser\\.venv\\Scripts\\python.exe', '-u', '-c', "from surya.detection import DetectionPredictor\nfrom surya.recognition import FoundationPredictor, RecognitionPredictor\nprint('ok')\n"]' timed out after 45 seconds
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Projects\Advanced_Plan_Parser\scripts\diagnostics\run_surya_init_probe.py", line 167, in _run_child_probe
+    _probe_backend_surya(t0, device)
+  File "C:\Projects\Advanced_Plan_Parser\scripts\diagnostics\run_surya_init_probe.py", line 131, in _probe_backend_surya
+    backend._ensure_initialized()
+  File "C:\Projects\Advanced_Plan_Parser\src\plancheck\vocr\backends\surya.py", line 166, in _ensure_initialized
+    self._run_import_preflight()
+  File "C:\Projects\Advanced_Plan_Parser\src\plancheck\vocr\backends\surya.py", line 125, in _run_import_preflight
+    raise OCRBackendTimeoutError(message) from exc
+plancheck.config.exceptions.OCRBackendTimeoutError: Surya import preflight timed out after 45s
