@@ -153,7 +153,7 @@ def _apply_ml_feedback(
                         backbone=cfg.ml_vision_backbone
                     )
             except Exception:  # noqa: BLE001 — optional dep may fail to load
-                log.debug("Vision feature extractor init failed", exc_info=True)
+                log.warning("Vision feature extractor init failed", exc_info=True)
 
         # Optionally set up text embedder
         text_embedder = None
@@ -167,7 +167,7 @@ def _apply_ml_feedback(
                 if is_embeddings_available():
                     text_embedder = TextEmbedder(model_name=cfg.ml_embeddings_model)
             except Exception:  # noqa: BLE001 — optional dep may fail to load
-                log.debug("Text embedder init failed", exc_info=True)
+                log.warning("Text embedder init failed", exc_info=True)
 
         # Refresh detections after pass 1 modifications
         dets = store.get_detections_for_page(doc_id, page_num)
@@ -201,7 +201,7 @@ def _apply_ml_feedback(
                     if raw is not None:
                         cached_vec = raw
                 except Exception:  # noqa: BLE001
-                    log.debug("Feature cache read failed for %s", did, exc_info=True)
+                    log.warning("Feature cache read failed for %s", did, exc_info=True)
 
             if cached_vec is not None:
                 # Use cached vector for prediction directly
@@ -281,7 +281,7 @@ def _apply_ml_feedback(
                         )
                         store.cache_features(did, vec.tolist(), feat_version)
                     except Exception:  # noqa: BLE001
-                        log.debug(
+                        log.warning(
                             "Feature cache write failed for %s", did, exc_info=True
                         )
 
@@ -356,9 +356,9 @@ def _apply_ml_feedback(
                             page_num,
                         )
             except Exception:  # noqa: BLE001 — drift detection is best-effort
-                log.debug("Drift detection failed", exc_info=True)
+                log.warning("Drift detection failed", exc_info=True)
 
     except Exception:  # noqa: BLE001 — ML feedback must not break pipeline
-        log.debug("ML feedback failed", exc_info=True)
+        log.warning("ML feedback failed", exc_info=True)
 
     return drift_warnings

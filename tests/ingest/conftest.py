@@ -1,16 +1,13 @@
-"""Re-export shared fixtures from the root conftest."""
+# ingest test configuration.
+# Re-export root conftest helpers so ``from conftest import ...`` works.
+import importlib.util as _ilu
+from pathlib import Path as _Path
 
-import importlib.util
-import pathlib
-import sys
-
-_root_conftest_path = str(
-    pathlib.Path(__file__).resolve().parent.parent / "conftest.py"
-)
-_spec = importlib.util.spec_from_file_location("_root_conftest", _root_conftest_path)
-_rc = importlib.util.module_from_spec(_spec)
-sys.modules["_root_conftest"] = _rc
-_spec.loader.exec_module(_rc)
-make_block = _rc.make_block  # noqa: F401
-make_box = _rc.make_box  # noqa: F401
-make_graphic = _rc.make_graphic  # noqa: F401
+_root_conftest = _Path(__file__).resolve().parent.parent / "conftest.py"
+_spec = _ilu.spec_from_file_location("_root_conftest", _root_conftest)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+for _name in dir(_mod):
+    if not _name.startswith("_"):
+        globals()[_name] = getattr(_mod, _name)
+del _name

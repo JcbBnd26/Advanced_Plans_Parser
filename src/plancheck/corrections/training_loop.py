@@ -142,6 +142,7 @@ def train_classifier(
     # ── Split ────────────────────────────────────────────────────
     train_ex = [e for e in examples if e.get("split") == "train"]
     val_ex = [e for e in examples if e.get("split") == "val"]
+    test_ex = [e for e in examples if e.get("split") == "test"]
 
     if not train_ex:
         raise ValueError("No training-split examples found")
@@ -188,23 +189,38 @@ def train_classifier(
             calibrated_on = "train"
             log.info("Calibrated on training data (validation set too small).")
 
-    # ── Evaluate on validation set (or training set if no val) ────
-    # IMPORTANT: when calibration consumed val data and no separate test
-    # split exists, metrics are computed on the calibration data itself
-    # and should be treated as optimistic.
-    eval_on_train = not bool(val_ex)
-    eval_on_cal = calibrated_on == "val"  # val used for both cal and eval
-    if eval_on_train:
+    # ── Evaluate on held-out test split ─────────────────────────
+    # Priority: test split (clean) → val split (used for calibration,
+    # so metrics may be optimistic) → train split (unreliable).
+    eval_on_train = False
+    eval_on_cal = False
+    if test_ex:
+        eval_ex = test_ex
+        log.info(
+            "Evaluating on held-out test split (%d samples).",
+            len(test_ex),
+        )
+    elif val_ex:
+        eval_ex = val_ex
+        eval_on_cal = calibrated_on == "val"
+        if eval_on_cal:
+            log.warning(
+                "No test split available — evaluating on validation data "
+                "which was also used for calibration. "
+                "Reported metrics may be optimistic."
+            )
+        else:
+            log.info(
+                "No test split available — evaluating on validation data (%d samples).",
+                len(val_ex),
+            )
+    else:
+        eval_ex = train_ex
+        eval_on_train = True
         log.warning(
-            "No validation data available — metrics computed on "
+            "No validation or test data available — metrics computed on "
             "TRAINING data and are unreliable"
         )
-    if eval_on_cal:
-        log.warning(
-            "Validation data was used for BOTH calibration and evaluation — "
-            "reported metrics may be optimistic"
-        )
-    eval_ex = val_ex if val_ex else train_ex
     X_eval = np.array([_encode(e["features"]) for e in eval_ex])
     y_eval = [e["label"] for e in eval_ex]
     eval_model = calibrated_clf if calibrated_clf is not None else clf
@@ -212,10 +228,10 @@ def train_classifier(
 
     # ── Per-example holdout predictions ──────────────────────────
     holdout_predictions: list[dict] = []
-    if val_ex:
+    if not eval_on_train:
         proba = eval_model.predict_proba(X_eval)
         proba_max = proba.max(axis=1).tolist()
-        for i, ex in enumerate(val_ex):
+        for i, ex in enumerate(eval_ex):
             holdout_predictions.append(
                 {
                     "label_true": y_eval[i],
@@ -228,6 +244,7 @@ def train_classifier(
     metrics = compute_metrics(y_eval, y_pred, labels=labels)
     metrics["n_train"] = len(train_ex)
     metrics["n_val"] = len(val_ex)
+    metrics["n_test"] = len(test_ex)
     metrics["eval_on_train"] = eval_on_train
     metrics["eval_on_calibration_data"] = eval_on_cal
     metrics["calibrated"] = calibrated_clf is not None

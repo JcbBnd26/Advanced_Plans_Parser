@@ -49,6 +49,7 @@ def _run_tocr_stage(
     cfg: GroupingConfig,
 ) -> tuple:
     """Stage 2: TOCR only.  Returns (boxes, page_w, page_h)."""
+    log.info("_run_tocr_stage: entering for page %d", ctx.page_num)
     from .tocr.extract import extract_tocr_from_words
 
     with run_stage("tocr", cfg) as sr_t:
@@ -67,6 +68,9 @@ def _run_tocr_stage(
     pr.stages["tocr"] = sr_t
     pr.page_width = pw
     pr.page_height = ph
+    # Stage boundary assertion: page dimensions must be positive
+    assert pw > 0 and ph > 0, f"TOCR produced invalid page dimensions: {pw}×{ph}"
+    log.info("_run_tocr_stage: produced %d tokens", len(b))
     return b, pw, ph
 
 
@@ -79,6 +83,7 @@ def _run_vocrpp_stage(
     cfg: GroupingConfig,
 ) -> "Image.Image | None":
     """Stage 3: VOCRPP only.  Returns preprocessed image or None."""
+    log.info("_run_vocrpp_stage: entering")
     raw_img = ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
 
     with run_stage("vocrpp", cfg) as sr_v:
@@ -110,6 +115,9 @@ def _run_vocrpp_stage(
             sr_v.status = "success"
 
     pr.stages["vocrpp"] = sr_v
+    log.info(
+        "_run_vocrpp_stage: %s", "preprocessed" if pp_img is not None else "skipped"
+    )
     return pp_img
 
 
@@ -140,7 +148,9 @@ def _run_prune_deskew(
     """Prune overlapping boxes and optionally deskew.  Returns (boxes, skew)."""
     from .tocr.preprocess import estimate_skew_degrees, nms_prune, rotate_boxes
 
+    before = len(boxes)
     boxes = nms_prune(boxes, cfg.iou_prune)
+    log.info("_run_prune_deskew: NMS pruned %d → %d boxes", before, len(boxes))
     if cfg.enable_skew:
         skew = estimate_skew_degrees(boxes, cfg.max_skew_degrees)
         boxes = rotate_boxes(
@@ -163,6 +173,7 @@ def _run_vocr_candidates_stage(
     page_h: float,
 ) -> list:
     """Stage 3.5: VOCR candidate detection.  Returns candidate list."""
+    log.info("_run_vocr_candidates_stage: entering with %d boxes", len(boxes))
     from .vocr.candidates import detect_vocr_candidates
     from .vocr.method_stats import load_method_stats
     from .vocr.producer_stats import load_producer_stats
@@ -221,6 +232,11 @@ def _run_vocr_candidates_stage(
             sr_cand.status = "success"
     pr.stages["vocr_candidates"] = sr_cand
     pr.vocr_candidates = candidates
+    log.info(
+        "_run_vocr_candidates_stage: %d candidates (ml_pruned=%d)",
+        len(candidates),
+        ml_pruned,
+    )
     return candidates
 
 
@@ -294,6 +310,9 @@ def _run_vocr_stage(
     pr.stages["vocr"] = sr_vocr
     pr.ocr_tokens = ocr_tokens
     pr.ocr_confs = ocr_confs
+    # Stage boundary assertion: confidence values in [0, 1] if present
+    for _c in ocr_confs[:10]:  # spot-check first 10
+        assert 0.0 <= _c <= 1.0, f"VOCR produced out-of-range confidence: {_c}"
     return ocr_tokens, ocr_confs
 
 
@@ -402,6 +421,7 @@ def _run_grouping_stage(
     page_h: float,
 ) -> tuple:
     """Stage 6: clustering and notes-column grouping.  Returns (blocks, notes_columns)."""
+    log.info("_run_grouping_stage: entering with %d boxes", len(boxes))
     from .grouping import (
         build_clusters_v2,
         group_notes_columns,
@@ -425,6 +445,17 @@ def _run_grouping_stage(
     pr.tokens = boxes
     pr.blocks = blocks
     pr.notes_columns = notes_columns
+    # Stage boundary assertion: blocks are valid if any exist
+    for _blk in blocks[:5]:  # spot-check first 5
+        _bb = _blk.bbox()
+        assert (
+            _bb[0] <= _bb[2] and _bb[1] <= _bb[3]
+        ), f"Grouping produced invalid bbox: {_bb}"
+    log.info(
+        "_run_grouping_stage: %d blocks, %d notes columns",
+        len(blocks),
+        len(notes_columns),
+    )
     return blocks, notes_columns
 
 
@@ -571,7 +602,7 @@ def _run_analysis_stage(
             pr.layout_predictions = layout_preds
             log.info("Layout model: %d predictions", len(layout_preds))
         except Exception:  # noqa: BLE001 — optional layout model
-            log.debug("Layout model prediction failed", exc_info=True)
+            log.warning("Layout model prediction failed", exc_info=True)
 
 
 # ── Stage 8: Checks ───────────────────────────────────────────────────

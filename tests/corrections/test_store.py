@@ -535,3 +535,44 @@ class TestTrainingRuns:
             tmp_store.compare_runs(rid, "run_nonexistent")
         with pytest.raises(ValueError, match="Run not found"):
             tmp_store.compare_runs("run_nonexistent", rid)
+
+
+class TestHasDetectionsForDoc:
+    """Tests for has_detections_for_doc()."""
+
+    def test_returns_false_when_no_detections(self, tmp_store: CorrectionStore) -> None:
+        doc_id = _mock_register(tmp_store)
+        assert tmp_store.has_detections_for_doc(doc_id) is False
+
+    def test_returns_true_after_pipeline_detection(
+        self, tmp_store: CorrectionStore, sample_features: dict
+    ) -> None:
+        doc_id = _mock_register(tmp_store)
+        tmp_store.save_detection(
+            doc_id=doc_id,
+            page=0,
+            run_id="run_20260101_000000",
+            element_type="notes_column",
+            bbox=(10.0, 20.0, 30.0, 40.0),
+            text_content="test",
+            features=sample_features,
+        )
+        assert tmp_store.has_detections_for_doc(doc_id) is True
+
+    def test_ignores_manual_only_detections(
+        self, tmp_store: CorrectionStore, sample_features: dict
+    ) -> None:
+        doc_id = _mock_register(tmp_store)
+        tmp_store.save_detection(
+            doc_id=doc_id,
+            page=0,
+            run_id="manual_abc",
+            element_type="notes_column",
+            bbox=(10.0, 20.0, 30.0, 40.0),
+            text_content="manual",
+            features=sample_features,
+        )
+        assert tmp_store.has_detections_for_doc(doc_id) is False
+
+    def test_returns_false_for_unknown_doc(self, tmp_store: CorrectionStore) -> None:
+        assert tmp_store.has_detections_for_doc("sha256:nonexistent") is False

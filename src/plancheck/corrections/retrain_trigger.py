@@ -61,6 +61,7 @@ class RetrainResult:
     stage2_skipped_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize retrain result to a plain dict for JSON/GUI consumption."""
         return {
             "retrained": self.retrained,
             "accepted": self.accepted,
@@ -262,7 +263,7 @@ def auto_retrain(
                         result.rolled_back = False
                     return result
         except Exception:  # noqa: BLE001 — auto-rollback check should not break retrain
-            log.debug("Auto-rollback check failed", exc_info=True)
+            log.warning("Auto-rollback check failed", exc_info=True)
 
         result.accepted = True
 
@@ -281,7 +282,7 @@ def auto_retrain(
             drift_det.save(drift_stats_path)
             log.info("Drift stats updated: %s", drift_stats_path)
         except Exception:  # noqa: BLE001 — drift stats update is best-effort
-            log.debug("Drift stats update failed", exc_info=True)
+            log.warning("Drift stats update failed", exc_info=True)
 
         # Train Stage 2 when subtype labels are present and sufficiently diverse.
         try:

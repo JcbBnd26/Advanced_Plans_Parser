@@ -794,6 +794,15 @@ class CorrectionStore(
             )
         return results
 
+    def has_detections_for_doc(self, doc_id: str) -> bool:
+        """Return *True* if any pipeline detection exists for *doc_id*."""
+        row = self._conn.execute(
+            "SELECT 1 FROM detections "
+            "WHERE doc_id = ? AND run_id NOT LIKE 'manual%' LIMIT 1",
+            (doc_id,),
+        ).fetchone()
+        return row is not None
+
     def get_corrections_for_page(self, doc_id: str, page: int) -> list[dict[str, Any]]:
         """Return all corrections for *doc_id* + *page*, newest first."""
         rows = self._conn.execute(

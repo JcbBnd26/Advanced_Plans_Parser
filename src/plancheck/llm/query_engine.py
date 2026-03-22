@@ -29,10 +29,7 @@ from typing import Any
 
 from plancheck.llm.client import ChatMeta, LLMClient
 from plancheck.llm.cost import CostTracker
-from plancheck.llm.index import (
-    DocumentIndex,
-    SearchResult,
-)
+from plancheck.llm.index import DocumentIndex, SearchResult
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +123,7 @@ class _ResponseCache:
         return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
     def get(self, query: str, context: str) -> QueryResult | None:
+        """Retrieve a cached result.  Returns *None* on cache miss."""
         key = self._key(query, context)
         result = self._store.get(key)
         if result is not None:

@@ -376,6 +376,9 @@ class TitleSubtypeClassifier:
         try:
             importances = np.asarray(model.feature_importances_)
         except Exception:  # noqa: BLE001 — not all models have feature_importances_
+            log.warning(
+                "feature_importances_ unavailable for model type", exc_info=True
+            )
             return {}
 
         if importances.shape[0] != len(feature_names):
@@ -447,6 +450,7 @@ class TitleSubtypeClassifier:
                 total_ece += ece * n_pos
                 total_weight += n_pos
             except Exception:  # noqa: BLE001
+                log.warning("Calibration curve calc failed for a label", exc_info=True)
                 continue
 
         weighted_ece = total_ece / total_weight if total_weight > 0 else 0.0

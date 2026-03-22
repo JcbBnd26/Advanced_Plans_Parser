@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import importlib.util as _ilu
 import os
 from pathlib import Path
+
+# Re-export root conftest helpers so ``from conftest import ...`` works.
+_root_conftest = Path(__file__).resolve().parent.parent / "conftest.py"
+_spec = _ilu.spec_from_file_location("_root_conftest", _root_conftest)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+for _name in dir(_mod):
+    if not _name.startswith("_"):
+        globals()[_name] = getattr(_mod, _name)
+del _name
 
 import pytest
 
@@ -16,15 +27,9 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 from plancheck.corrections.store import CorrectionStore
 
-
-@pytest.fixture(scope="session", autouse=True)
-def _warm_up_sklearn() -> None:  # noqa: PT004
-    """Import sklearn once at session start to pay the Windows cold-start cost.
-
-    Without this, the first test that touches sklearn can take 40+ seconds
-    initialising thread pools, which fires the pytest-timeout at 120 s.
-    """
-    import sklearn  # noqa: F401
+# Note: the OPENBLAS/OMP/MKL thread-pool env vars above are sufficient
+# to prevent the 40+ second Windows cold-start.  No session-scoped
+# sklearn warm-up fixture is needed.
 
 
 @pytest.fixture

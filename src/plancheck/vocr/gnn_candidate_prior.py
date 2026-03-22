@@ -46,15 +46,14 @@ from ..models.geometry import bbox_intersection_area as _bbox_overlap
 log = logging.getLogger(__name__)
 
 # ── Torch availability ──────────────────────────────────────────────────
+# Use find_spec() instead of importing torch — the actual import can hang
+# on some Windows machines during CUDA/MKL init.
+import importlib.util as _ilu
 
+_TORCH_INSTALLED = _ilu.find_spec("torch") is not None
+
+# Will be flipped to True only after the real import succeeds below.
 _TORCH_AVAILABLE = False
-try:
-    import torch
-    import torch.nn as nn
-
-    _TORCH_AVAILABLE = True
-except ImportError:
-    pass
 
 # Number of candidate-level features appended to GNN embeddings.
 CANDIDATE_FEATURE_DIM = 3  # count, mean_confidence, hit_rate
@@ -165,25 +164,34 @@ def annotate_graph_with_candidates(
 
 
 # ── GNN Candidate Prior Head ───────────────────────────────────────────
+# Class and training loop are defined lazily to avoid importing torch at
+# module level (which can hang on some Windows machines).
+
+_GNNCandidatePriorHead = None  # populated by _ensure_torch()
 
 
-if _TORCH_AVAILABLE:
+def _ensure_torch() -> bool:
+    """Import torch and define the NN class on first use.
 
-    class GNNCandidatePriorHead(nn.Module):
-        """Small binary MLP predicting P(true positive | region).
+    Returns True if torch is available and the class was defined.
+    """
+    global _TORCH_AVAILABLE, _GNNCandidatePriorHead  # noqa: PLW0603
 
-        Input: concatenation of GNN embedding (``embed_dim``) and
-        candidate features (3 dims).
-        Output: scalar probability via sigmoid.
+    if _TORCH_AVAILABLE:
+        return True
+    if not _TORCH_INSTALLED:
+        return False
 
-        Parameters
-        ----------
-        embed_dim : int
-            Dimensionality of the GNN penultimate-layer embeddings
-            (default 256 = hidden_channels * heads for default GNN config).
-        hidden : int
-            Hidden layer size (default 32).
-        """
+    try:
+        import torch
+        import torch.nn as nn
+
+        _TORCH_AVAILABLE = True
+    except (ImportError, OSError):
+        return False
+
+    class _Head(nn.Module):
+        """Small binary MLP predicting P(true positive | region)."""
 
         def __init__(self, embed_dim: int = 256, hidden: int = 32) -> None:
             super().__init__()
@@ -200,185 +208,187 @@ if _TORCH_AVAILABLE:
         def embed_dim(self) -> int:
             return self._embed_dim
 
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            """Return logits of shape ``[N, 1]``."""
-            return self.head(x)
+        def forward(
+            self, embeddings: "torch.Tensor", cand_features: "torch.Tensor"
+        ) -> "torch.Tensor":
+            x = torch.cat([embeddings, cand_features], dim=1)
+            return self.head(x).squeeze(-1)
 
-        def predict_proba(
-            self,
-            embeddings: np.ndarray,
-            candidate_features: np.ndarray,
-        ) -> np.ndarray:
-            """Return P(hit) for each node as a 1-D numpy array ``[N]``.
+        def predict_proba(self, embeddings, cand_features) -> "np.ndarray":
+            import numpy as _np
 
-            Parameters
-            ----------
-            embeddings : ndarray, shape [N, embed_dim]
-                GNN penultimate-layer embeddings.
-            candidate_features : ndarray, shape [N, 3]
-                Per-node candidate statistics from
-                ``GraphNode.to_candidate_features()``.
-            """
             self.eval()
-            x = np.concatenate([embeddings, candidate_features], axis=1)
             with torch.no_grad():
-                logits = self.forward(torch.from_numpy(x.astype(np.float32)))
-                return torch.sigmoid(logits).squeeze(-1).cpu().numpy()
+                if not isinstance(embeddings, torch.Tensor):
+                    embeddings = torch.from_numpy(embeddings).float()
+                if not isinstance(cand_features, torch.Tensor):
+                    cand_features = torch.from_numpy(cand_features).float()
+                logits = self.forward(embeddings, cand_features)
+                return torch.sigmoid(logits).cpu().numpy()
 
-    # ── Save / Load ────────────────────────────────────────────────
+    _GNNCandidatePriorHead = _Head
+    return True
 
-    def save_gnn_candidate_prior(head: GNNCandidatePriorHead, path: str | Path) -> None:
-        """Save the prior head to disk."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        state = {
-            "model_state_dict": head.state_dict(),
-            "embed_dim": head.embed_dim,
-        }
-        torch.save(state, path)
-        log.info("Saved GNN candidate prior head to %s", path)
 
-    def load_gnn_candidate_prior(
-        path: str | Path,
-        device: str = "cpu",
-    ) -> Optional[GNNCandidatePriorHead]:
-        """Load a saved prior head.  Returns ``None`` if file missing."""
-        path = Path(path)
-        if not path.exists():
-            return None
-        state = torch.load(path, map_location=device, weights_only=False)
-        embed_dim = state.get("embed_dim", 256)
-        head = GNNCandidatePriorHead(embed_dim=embed_dim)
-        head.load_state_dict(state["model_state_dict"])
-        head.to(device)
+# ── Module-level stubs / public wrappers ───────────────────────────────
+# These are always importable.  Functions that need torch call
+# _ensure_torch() first; if it fails they raise RuntimeError.
+
+
+class GNNCandidatePriorHead:  # type: ignore[no-redef]
+    """Stub — replaced by real class after _ensure_torch() succeeds."""
+
+    def __init__(self, *a: Any, **kw: Any) -> None:
+        raise RuntimeError("PyTorch is required for GNNCandidatePriorHead")
+
+    def predict_proba(self, *a: Any, **kw: Any) -> np.ndarray:
+        raise RuntimeError("PyTorch is required for GNNCandidatePriorHead")
+
+
+def save_gnn_candidate_prior(head: Any, path: str | Path) -> None:
+    """Save the prior head to disk."""
+    if not _ensure_torch():
+        raise RuntimeError("PyTorch is required for save_gnn_candidate_prior")
+    import torch
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    state = {
+        "model_state_dict": head.state_dict(),
+        "embed_dim": head.embed_dim,
+    }
+    torch.save(state, path)
+    log.info("Saved GNN candidate prior head to %s", path)
+
+
+def load_gnn_candidate_prior(
+    path: str | Path,
+    device: str = "cpu",
+) -> Optional[Any]:
+    """Load a saved prior head.  Returns ``None`` if file missing."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    if not _ensure_torch():
+        return None
+    import torch
+
+    state = torch.load(path, map_location=device, weights_only=False)
+    embed_dim = state.get("embed_dim", 256)
+    head = _GNNCandidatePriorHead(embed_dim=embed_dim)
+    head.load_state_dict(state["model_state_dict"])
+    head.to(device)
+    head.eval()
+    log.info("Loaded GNN candidate prior head from %s", path)
+    return head
+
+
+def train_gnn_candidate_prior(
+    embeddings: np.ndarray,
+    candidate_features: np.ndarray,
+    labels: np.ndarray,
+    *,
+    embed_dim: int = 256,
+    epochs: int = 100,
+    lr: float = 0.001,
+    val_fraction: float = 0.2,
+    verbose: bool = False,
+) -> Tuple[Any, Dict[str, Any]]:
+    """Train a :class:`GNNCandidatePriorHead` from labelled data.
+
+    Parameters
+    ----------
+    embeddings : ndarray, shape [N, embed_dim]
+        GNN penultimate-layer embeddings for each node.
+    candidate_features : ndarray, shape [N, 3]
+        Per-node candidate statistics.
+    labels : ndarray, shape [N]
+        Binary labels — 1 if any candidate in the region was a hit.
+    embed_dim : int
+        Must match ``embeddings.shape[1]``.
+    epochs, lr : training hyperparameters.
+    val_fraction : float
+        Hold-out fraction for validation.
+    verbose : bool
+        Log progress every 10 epochs.
+
+    Returns
+    -------
+    (head, metrics)
+        Trained model and a dict of training metrics.
+    """
+    if not _ensure_torch():
+        raise RuntimeError("PyTorch is required for train_gnn_candidate_prior")
+    import torch
+    import torch.nn as nn
+
+    n = len(labels)
+    x = np.concatenate([embeddings, candidate_features], axis=1).astype(np.float32)
+    y = labels.astype(np.float32)
+
+    # Train/val split
+    perm = np.random.permutation(n)
+    n_val = max(1, int(n * val_fraction))
+    val_idx = perm[:n_val]
+    train_idx = perm[n_val:]
+
+    x_train = torch.from_numpy(x[train_idx])
+    y_train = torch.from_numpy(y[train_idx]).unsqueeze(1)
+    x_val = torch.from_numpy(x[val_idx])
+    y_val = torch.from_numpy(y[val_idx]).unsqueeze(1)
+
+    head = _GNNCandidatePriorHead(embed_dim=embed_dim)
+    optimizer = torch.optim.Adam(head.parameters(), lr=lr)
+    loss_fn = nn.BCEWithLogitsLoss()
+
+    history: Dict[str, list] = {"train_loss": [], "val_loss": [], "val_acc": []}
+
+    for epoch in range(1, epochs + 1):
+        head.train()
+        optimizer.zero_grad()
+        logits = head(x_train)
+        loss = loss_fn(logits, y_train)
+        loss.backward()
+        optimizer.step()
+
+        # Validation
         head.eval()
-        log.info("Loaded GNN candidate prior head from %s", path)
-        return head
+        with torch.no_grad():
+            val_logits = head(x_val)
+            val_loss = loss_fn(val_logits, y_val).item()
+            val_preds = (torch.sigmoid(val_logits) >= 0.5).float()
+            val_acc = (val_preds == y_val).float().mean().item()
 
-    # ── Training loop ──────────────────────────────────────────────
+        history["train_loss"].append(loss.item())
+        history["val_loss"].append(val_loss)
+        history["val_acc"].append(val_acc)
 
-    def train_gnn_candidate_prior(
-        embeddings: np.ndarray,
-        candidate_features: np.ndarray,
-        labels: np.ndarray,
-        *,
-        embed_dim: int = 256,
-        epochs: int = 100,
-        lr: float = 0.001,
-        val_fraction: float = 0.2,
-        verbose: bool = False,
-    ) -> Tuple[GNNCandidatePriorHead, Dict[str, Any]]:
-        """Train a :class:`GNNCandidatePriorHead` from labelled data.
+        if verbose and epoch % 10 == 0:
+            log.info(
+                "GNN prior epoch %3d | train_loss %.4f | val_loss %.4f | val_acc %.3f",
+                epoch,
+                loss.item(),
+                val_loss,
+                val_acc,
+            )
 
-        Parameters
-        ----------
-        embeddings : ndarray, shape [N, embed_dim]
-            GNN penultimate-layer embeddings for each node.
-        candidate_features : ndarray, shape [N, 3]
-            Per-node candidate statistics.
-        labels : ndarray, shape [N]
-            Binary labels — 1 if any candidate in the region was a hit.
-        embed_dim : int
-            Must match ``embeddings.shape[1]``.
-        epochs, lr : training hyperparameters.
-        val_fraction : float
-            Hold-out fraction for validation.
-        verbose : bool
-            Log progress every 10 epochs.
-
-        Returns
-        -------
-        (head, metrics)
-            Trained model and a dict of training metrics.
-        """
-        n = len(labels)
-        x = np.concatenate([embeddings, candidate_features], axis=1).astype(np.float32)
-        y = labels.astype(np.float32)
-
-        # Train/val split
-        perm = np.random.permutation(n)
-        n_val = max(1, int(n * val_fraction))
-        val_idx = perm[:n_val]
-        train_idx = perm[n_val:]
-
-        x_train = torch.from_numpy(x[train_idx])
-        y_train = torch.from_numpy(y[train_idx]).unsqueeze(1)
-        x_val = torch.from_numpy(x[val_idx])
-        y_val = torch.from_numpy(y[val_idx]).unsqueeze(1)
-
-        head = GNNCandidatePriorHead(embed_dim=embed_dim)
-        optimizer = torch.optim.Adam(head.parameters(), lr=lr)
-        loss_fn = nn.BCEWithLogitsLoss()
-
-        history: Dict[str, list] = {"train_loss": [], "val_loss": [], "val_acc": []}
-
-        for epoch in range(1, epochs + 1):
-            head.train()
-            optimizer.zero_grad()
-            logits = head(x_train)
-            loss = loss_fn(logits, y_train)
-            loss.backward()
-            optimizer.step()
-
-            # Validation
-            head.eval()
-            with torch.no_grad():
-                val_logits = head(x_val)
-                val_loss = loss_fn(val_logits, y_val).item()
-                val_preds = (torch.sigmoid(val_logits) >= 0.5).float()
-                val_acc = (val_preds == y_val).float().mean().item()
-
-            history["train_loss"].append(loss.item())
-            history["val_loss"].append(val_loss)
-            history["val_acc"].append(val_acc)
-
-            if verbose and epoch % 10 == 0:
-                log.info(
-                    "GNN prior epoch %3d | train_loss %.4f | val_loss %.4f | val_acc %.3f",
-                    epoch,
-                    loss.item(),
-                    val_loss,
-                    val_acc,
-                )
-
-        metrics = {
-            "n_train": len(train_idx),
-            "n_val": len(val_idx),
-            "final_train_loss": (
-                history["train_loss"][-1] if history["train_loss"] else 0.0
-            ),
-            "final_val_loss": history["val_loss"][-1] if history["val_loss"] else 0.0,
-            "final_val_acc": history["val_acc"][-1] if history["val_acc"] else 0.0,
-            "epochs": epochs,
-        }
-        log.info(
-            "GNN candidate prior trained: val_acc=%.3f  (%d train, %d val)",
-            metrics["final_val_acc"],
-            metrics["n_train"],
-            metrics["n_val"],
-        )
-        return head, metrics
-
-else:
-    # ── Stubs when PyTorch not installed ───────────────────────────
-
-    class GNNCandidatePriorHead:  # type: ignore[no-redef]
-        """Stub — PyTorch not installed."""
-
-        def __init__(self, *a: Any, **kw: Any) -> None:
-            raise RuntimeError("PyTorch is required for GNNCandidatePriorHead")
-
-        def predict_proba(self, *a: Any, **kw: Any) -> np.ndarray:
-            raise RuntimeError("PyTorch is required for GNNCandidatePriorHead")
-
-    def save_gnn_candidate_prior(*a: Any, **kw: Any) -> None:
-        raise RuntimeError("PyTorch is required")
-
-    def load_gnn_candidate_prior(*a: Any, **kw: Any) -> None:
-        return None  # graceful no-op
-
-    def train_gnn_candidate_prior(*a: Any, **kw: Any) -> tuple:
-        raise RuntimeError("PyTorch is required")
+    metrics = {
+        "n_train": len(train_idx),
+        "n_val": len(val_idx),
+        "final_train_loss": (
+            history["train_loss"][-1] if history["train_loss"] else 0.0
+        ),
+        "final_val_loss": history["val_loss"][-1] if history["val_loss"] else 0.0,
+        "final_val_acc": history["val_acc"][-1] if history["val_acc"] else 0.0,
+        "epochs": epochs,
+    }
+    log.info(
+        "GNN candidate prior trained: val_acc=%.3f  (%d train, %d val)",
+        metrics["final_val_acc"],
+        metrics["n_train"],
+        metrics["n_val"],
+    )
+    return head, metrics
 
 
 # ── Confidence Adjustment ──────────────────────────────────────────────
@@ -450,7 +460,7 @@ def apply_gnn_prior(
     # 3. Get GNN embeddings
     pyg_data = graph_data.get("pyg_data")
     if pyg_data is None:
-        if not _TORCH_AVAILABLE:
+        if not _ensure_torch():
             return 0
         import torch as _torch
         from torch_geometric.data import Data as _Data

@@ -18,6 +18,15 @@ _PIPELINE_PENDING_COLOR = "#cc6600"
 class PdfLoaderMixin:
     """Mixin providing PDF loading, navigation, and zoom methods."""
 
+    @property
+    def _doc_has_detections(self) -> bool:
+        """Check the database for any pipeline detections for the current doc."""
+        return bool(
+            getattr(self, "_store", None)
+            and getattr(self, "_doc_id", None)
+            and self._store.has_detections_for_doc(self._doc_id)
+        )
+
     def _browse_pdf(self) -> None:
         f = filedialog.askopenfilename(
             title="Select PDF",
@@ -50,7 +59,6 @@ class PdfLoaderMixin:
             # Reset word overlay — it should only be active after pipeline runs
             self._word_overlay_var.set(False)
             self._word_overlay_on = False
-            self._pipeline_ran_for_doc = False
             self._canvas.delete("all")
             # Show a loading cue while the first page renders
             self._status.configure(text="Loading PDF\u2026")
@@ -128,7 +136,7 @@ class PdfLoaderMixin:
         """Toggle the pdfplumber word-boxes overlay on or off."""
         self._word_overlay_on = self._word_overlay_var.get()
         if self._word_overlay_on:
-            if not self._pipeline_ran_for_doc:
+            if not self._doc_has_detections:
                 self._word_overlay_var.set(False)
                 self._word_overlay_on = False
                 self._status.configure(
@@ -202,29 +210,29 @@ class PdfLoaderMixin:
             self._status.configure(text=f"Error rendering page: {exc}")
             return
 
-        # Load detections only after pipeline has run for this doc this session
+        # Always load detections from the database — they persist across
+        # sessions and are available immediately after any pipeline run.
         self._reopen_store()
         self._doc_id = self._store.register_document(self._pdf_path)
         self._canvas_boxes.clear()
         self._selected_box = None
         self._multi_selected.clear()
 
-        if self._pipeline_ran_for_doc:
-            # Refresh to see latest data from pipeline runs in other threads/connections
-            self._store.refresh()
-            dets = self._store.get_latest_detections_for_page(self._doc_id, self._page)
-            for d in dets:
-                self._canvas_boxes.append(
-                    CanvasBox(
-                        detection_id=d["detection_id"],
-                        element_type=d["element_type"],
-                        confidence=d["confidence"],
-                        text_content=d["text_content"],
-                        features=d["features"],
-                        pdf_bbox=d["bbox"],
-                        polygon=d.get("polygon"),
-                    )
+        # Refresh to pick up data committed by the pipeline worker thread
+        self._store.refresh()
+        dets = self._store.get_latest_detections_for_page(self._doc_id, self._page)
+        for d in dets:
+            self._canvas_boxes.append(
+                CanvasBox(
+                    detection_id=d["detection_id"],
+                    element_type=d["element_type"],
+                    confidence=d["confidence"],
+                    text_content=d["text_content"],
+                    features=d["features"],
+                    pdf_bbox=d["bbox"],
+                    polygon=d.get("polygon"),
                 )
+            )
 
         # Deduplicate overlapping same-type boxes
         self._deduplicate_boxes()
@@ -242,7 +250,7 @@ class PdfLoaderMixin:
             page_label += f" of {self._page_count}"
         if n > 0:
             self._status.configure(text=f"{page_label} — {n} detections")
-        elif self._pipeline_ran_for_doc:
+        elif self._doc_has_detections:
             # This page was NOT processed in the latest run — clear word overlay
             if self._word_overlay_on:
                 self._word_overlay_var.set(False)
@@ -325,7 +333,7 @@ class PdfLoaderMixin:
     def _update_page_summary(self) -> None:
         """Refresh the per-page element type summary in the sidebar."""
         if not self._canvas_boxes:
-            if self._pipeline_ran_for_doc:
+            if self._doc_has_detections:
                 self._page_elements_label.configure(
                     text="(no detections on this page)", foreground="gray"
                 )

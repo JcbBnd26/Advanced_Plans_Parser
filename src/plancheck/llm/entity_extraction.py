@@ -26,10 +26,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from plancheck.llm.client import ChatMeta, LLMClient
-from plancheck.llm.index import (
-    Chunk,
-    DocumentIndex,
-)
+from plancheck.llm.index import Chunk, DocumentIndex
 
 log = logging.getLogger(__name__)
 
@@ -97,20 +94,24 @@ class ExtractionResult:
 
     @property
     def materials(self) -> list[Entity]:
+        """All entities of type 'material'."""
         return self.by_type("material")
 
     @property
     def dimensions(self) -> list[Entity]:
+        """All entities of type 'dimension'."""
         return self.by_type("dimension")
 
     @property
     def equipment(self) -> list[Entity]:
+        """All entities of type 'equipment'."""
         return self.by_type("equipment")
 
-    # ── Summaries ──────────────────────────────────────────────
+    # ── Summaries ────────────────────────────────────────────────────
 
     @property
     def summary(self) -> dict:
+        """Counts of entities by type plus error/call metadata."""
         return {
             "total": len(self.entities),
             "materials": len(self.materials),

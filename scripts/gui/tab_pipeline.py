@@ -1613,13 +1613,17 @@ class PipelineTab:
         def on_done(result, error, elapsed):
             self.run_button.config(state="normal")
             self.cancel_button.config(state="disabled")
-            if error:
-                self.error_panel.add_error(str(error), "ERROR")
-            if result and not error:
+            if result:
                 self.state.last_run_dir = (
                     result[-1] if isinstance(result, list) else result
                 )
                 self.state.notify("run_completed")
+                if error:
+                    self.error_panel.add_error(
+                        f"Completed with warnings: {error}", "WARNING"
+                    )
+            elif error:
+                self.error_panel.add_error(str(error), "ERROR")
 
         self._worker.run(target, on_done=on_done)
 

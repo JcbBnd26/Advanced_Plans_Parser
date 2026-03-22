@@ -335,7 +335,7 @@ def build_page_context(
             info = pdf.metadata or {}
             producer_id = str(info.get("Producer", "") or "")
         except Exception:  # noqa: BLE001 — metadata extraction is optional
-            pass
+            log.warning("PDF metadata extraction failed", exc_info=True)
 
         # Text tokens
         words = page.extract_words(**extract_words_kwargs)

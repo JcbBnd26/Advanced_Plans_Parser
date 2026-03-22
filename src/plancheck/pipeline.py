@@ -118,51 +118,69 @@ def gate(
     if inputs is None:
         inputs = {}
 
+    should_run = True
+    skip_reason: Optional[str] = None
+
     # Stages that always run unconditionally.
     if stage in ("ingest", "grouping", "analysis", "checks", "export"):
         return True, None
 
     if stage == "tocr":
         if not cfg.enable_tocr:
-            return False, SkipReason.disabled_by_config.value
-        if not inputs.get("has_pdf", True):
-            return False, SkipReason.missing_inputs.value
+            should_run, skip_reason = False, SkipReason.disabled_by_config.value
+        elif not inputs.get("has_pdf", True):
+            should_run, skip_reason = False, SkipReason.missing_inputs.value
+        if not should_run:
+            log.info("gate: skipping '%s' — %s", stage, skip_reason)
+            return False, skip_reason
         return True, None
 
     if stage == "vocrpp":
         if not cfg.enable_ocr_preprocess:
-            return False, SkipReason.disabled_by_config.value
-        if not cfg.enable_vocr:
-            return False, SkipReason.disabled_by_config.value
-        if not _has_cv2():
-            return False, SkipReason.missing_dependency.value
+            should_run, skip_reason = False, SkipReason.disabled_by_config.value
+        elif not cfg.enable_vocr:
+            should_run, skip_reason = False, SkipReason.disabled_by_config.value
+        elif not _has_cv2():
+            should_run, skip_reason = False, SkipReason.missing_dependency.value
+        if not should_run:
+            log.info("gate: skipping '%s' — %s", stage, skip_reason)
+            return False, skip_reason
         return True, None
 
     if stage == "vocr_candidates":
         if not cfg.enable_vocr_candidates:
-            return False, SkipReason.disabled_by_config.value
-        if not cfg.enable_vocr:
-            return False, SkipReason.disabled_by_config.value
+            should_run, skip_reason = False, SkipReason.disabled_by_config.value
+        elif not cfg.enable_vocr:
+            should_run, skip_reason = False, SkipReason.disabled_by_config.value
+        if not should_run:
+            log.info("gate: skipping '%s' — %s", stage, skip_reason)
+            return False, skip_reason
         return True, None
 
     if stage == "vocr":
         if not cfg.enable_vocr:
-            return False, SkipReason.disabled_by_config.value
+            should_run, skip_reason = False, SkipReason.disabled_by_config.value
+            log.info("gate: skipping '%s' — %s", stage, skip_reason)
+            return False, skip_reason
         # Backend availability is checked lazily by get_ocr_backend()
         # which raises ImportError with a clear message if Surya is missing.
         return True, None
 
     if stage == "reconcile":
         if not cfg.enable_ocr_reconcile:
-            return False, SkipReason.disabled_by_config.value
-        if not cfg.enable_vocr:
+            should_run, skip_reason = False, SkipReason.disabled_by_config.value
+        elif not cfg.enable_vocr:
             # Reconcile requires VOCR tokens to merge.
-            return False, SkipReason.disabled_by_config.value
-        if inputs.get("vocr_failed") and not inputs.get("tocr_tokens"):
-            return False, SkipReason.upstream_failed.value
+            should_run, skip_reason = False, SkipReason.disabled_by_config.value
+        elif inputs.get("vocr_failed") and not inputs.get("tocr_tokens"):
+            should_run, skip_reason = False, SkipReason.upstream_failed.value
+        if not should_run:
+            log.info("gate: skipping '%s' — %s", stage, skip_reason)
+            return False, skip_reason
         return True, None
 
     # Unknown stage — treat as not applicable.
+    log.info("gate: skipping unknown stage '%s'", stage)
     return False, SkipReason.not_applicable.value
 
 
@@ -199,7 +217,7 @@ def run_stage(
             on_stage(stage, status)
         except Exception:  # noqa: BLE001 — callbacks must not break pipeline
             # Progress reporting must never break the pipeline.
-            log.debug("Stage callback failed: %s %s", stage, status, exc_info=True)
+            log.warning("Stage callback failed: %s %s", stage, status, exc_info=True)
 
     sr = StageResult(stage=stage)
     # A stage is "enabled" in config even if a runtime dependency is
@@ -297,6 +315,7 @@ def _build_page_context(
     resolution: int,
 ) -> "PageContext":
     """Open the PDF once and build a PageContext for one page."""
+    log.debug("_build_page_context: page %d", page_num)
     from .ingest import build_page_context
     from .tocr.extract import build_extract_words_kwargs
 
@@ -337,11 +356,23 @@ def _run_early_stages(
     _run_ingest_stage(pr, ctx, cfg, resolution)
 
     boxes, page_w, page_h = _run_tocr_stage(pr, ctx, cfg)
+    log.info(
+        "_run_early_stages: page %d — tocr produced %d tokens (%.0f×%.0f)",
+        ctx.page_num,
+        len(boxes),
+        page_w,
+        page_h,
+    )
 
     boxes, skew = _run_prune_deskew(boxes, cfg, page_w, page_h)
     pr.skew_degrees = skew
 
     _run_vocr_candidates_stage(pr, ctx, cfg, boxes, page_w, page_h)
+    log.info(
+        "_run_early_stages: page %d — %d vocr candidates detected",
+        ctx.page_num,
+        len(getattr(pr, "vocr_candidates", []) or []),
+    )
 
     return boxes, page_w, page_h
 
@@ -355,6 +386,7 @@ def _run_vocr_phases(
     page_h: float,
 ) -> list:
     """Phase 2: vocrpp → vocr → reconcile.  Returns updated boxes list."""
+    log.info("_run_vocr_phases: entering with %d boxes", len(boxes))
     from .pipeline_stages import (
         _run_reconcile_stage,
         _run_vocr_stage,
@@ -384,6 +416,7 @@ def _run_vocr_phases(
         ocr_confs,
         pr.stages["vocr"],
     )
+    log.info("_run_vocr_phases: exiting with %d boxes", len(boxes))
     return boxes
 
 
@@ -416,6 +449,7 @@ def _run_late_stages(
 
     Returns the semantic findings list.
     """
+    log.info("_run_late_stages: entering page %d with %d boxes", page_num, len(boxes))
     from .pipeline_stages import (
         _run_analysis_stage,
         _run_checks_stage,
@@ -436,6 +470,12 @@ def _run_late_stages(
     )
 
     findings = _run_checks_stage(pr, cfg, page_num)
+    log.info(
+        "_run_late_stages: page %d — %d blocks, %d findings",
+        page_num,
+        len(blocks),
+        len(findings),
+    )
 
     # Optional: persist detections to correction store
     if correction_store is not None and run_id is not None and pdf_path is not None:
@@ -466,6 +506,7 @@ def _persist_corrections(
     cfg: GroupingConfig,
 ) -> None:
     """Persist block/region detections and run ML feedback."""
+    log.info("_persist_corrections: page %d", page_num)
     from .analysis.zoning import classify_blocks
     from .corrections.features import featurize, featurize_region
 
@@ -528,6 +569,7 @@ def _persist_corrections(
             try:
                 text_content = region.header_text()
             except Exception:  # noqa: BLE001 — fallback for missing/broken header_text
+                log.warning("header_text() failed for %s region", etype, exc_info=True)
                 text_content = getattr(region, "text", "")
             correction_store.save_detection(
                 doc_id=doc_id,
@@ -749,6 +791,11 @@ def run_document(
 
     import gc
 
+    # Force garbage collection between Phase 1 (TOCR) and Phase 2 (VOCR)
+    # to reclaim ~300-500 MB of char/word data freed above.  Without
+    # this, Python's generational GC may defer collection until after
+    # Surya's 1-1.5 GB model loads, causing peak memory to exceed
+    # available RAM on 8 GB machines.
     gc.collect()
 
     for idx, state in page_states.items():
@@ -855,7 +902,7 @@ def run_document(
                             )
                     except Exception:  # noqa: BLE001
                         _include_emb = False
-                        log.debug("Text embedder init failed for GNN", exc_info=True)
+                        log.warning("Text embedder init failed for GNN", exc_info=True)
 
                 graph = build_document_graph(
                     dr.pages,

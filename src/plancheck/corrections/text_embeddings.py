@@ -156,7 +156,7 @@ class TextEmbedder:
             )
             return np.asarray(vec, dtype=np.float32).ravel()
         except Exception:  # noqa: BLE001 — graceful degradation on encode failure
-            log.debug("embed() failed for text len=%d", len(text), exc_info=True)
+            log.warning("embed() failed for text len=%d", len(text), exc_info=True)
             return np.zeros(self._embedding_dim, dtype=np.float32)
 
     def embed_batch(self, texts: Sequence[str]) -> list[np.ndarray]:
@@ -201,7 +201,7 @@ class TextEmbedder:
             for j, idx in enumerate(valid_indices):
                 results[idx] = np.asarray(embeddings[j], dtype=np.float32).ravel()
         except Exception:  # noqa: BLE001 — graceful degradation on batch encode failure
-            log.debug(
+            log.warning(
                 "embed_batch() failed for %d texts", len(valid_texts), exc_info=True
             )
 

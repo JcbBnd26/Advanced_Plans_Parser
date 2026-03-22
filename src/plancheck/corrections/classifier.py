@@ -366,6 +366,12 @@ class ElementClassifier:
             best_label = str(classes[best_idx])
             # Scale real-class confidence by (1 - p_negative) so that
             # deleted-like regions get visibly lower confidence.
+            # NOTE: This scaling is applied AFTER isotonic calibration,
+            # which breaks the calibration guarantee for elements with
+            # high p_negative.  We accept this trade-off because
+            # suppressing false-positive confidence at threshold
+            # boundaries is more important than perfectly calibrated
+            # probabilities for deletion-like regions.
             best_conf = float(proba[best_idx]) * (1.0 - p_neg)
             return best_label, best_conf, p_neg
         else:
@@ -422,6 +428,12 @@ class ElementClassifier:
         x = encode_features(feature_dict, image_features, text_embedding).reshape(1, -1)
         # If model was trained with fewer features, trim to match
         if self._n_features_in is not None and x.shape[1] > self._n_features_in:
+            log.warning(
+                "Model expects %d features but received %d — truncating. "
+                "Retrain to use newer features.",
+                self._n_features_in,
+                x.shape[1],
+            )
             x = x[:, : self._n_features_in]
         proba = self._model.predict_proba(x)[0]
         label, conf, _ = self._resolve_negative(self._model.classes_, proba)
@@ -443,6 +455,12 @@ class ElementClassifier:
         self._load_model()
         x = np.asarray(vector, dtype=np.float64).reshape(1, -1)
         if self._n_features_in is not None and x.shape[1] > self._n_features_in:
+            log.warning(
+                "Model expects %d features but received %d — truncating. "
+                "Retrain to use newer features.",
+                self._n_features_in,
+                x.shape[1],
+            )
             x = x[:, : self._n_features_in]
         proba = self._model.predict_proba(x)[0]
         label, conf, _ = self._resolve_negative(self._model.classes_, proba)
@@ -488,6 +506,12 @@ class ElementClassifier:
 
         # Trim if model expects fewer features
         if self._n_features_in is not None and X.shape[1] > self._n_features_in:
+            log.warning(
+                "Model expects %d features but received %d — truncating. "
+                "Retrain to use newer features.",
+                self._n_features_in,
+                X.shape[1],
+            )
             X = X[:, : self._n_features_in]
 
         probas = self._model.predict_proba(X)
@@ -525,6 +549,12 @@ class ElementClassifier:
             text_embedding = None
         x = encode_features(feature_dict, image_features, text_embedding).reshape(1, -1)
         if self._n_features_in is not None and x.shape[1] > self._n_features_in:
+            log.warning(
+                "Model expects %d features but received %d — truncating. "
+                "Retrain to use newer features.",
+                self._n_features_in,
+                x.shape[1],
+            )
             x = x[:, : self._n_features_in]
         proba = self._model.predict_proba(x)[0]
         _, _, p_neg = self._resolve_negative(self._model.classes_, proba)
@@ -563,6 +593,9 @@ class ElementClassifier:
         try:
             importances = np.asarray(model.feature_importances_)
         except Exception:  # noqa: BLE001 — not all models have feature_importances_
+            log.warning(
+                "feature_importances_ unavailable for model type", exc_info=True
+            )
             return {}
 
         if importances.shape[0] != len(feature_names):
@@ -650,6 +683,7 @@ class ElementClassifier:
                 total_ece += ece * n_pos
                 total_weight += n_pos
             except Exception:  # noqa: BLE001 — skip label if calibration calc fails
+                log.warning("Calibration curve calc failed for a label", exc_info=True)
                 continue
 
         weighted_ece = total_ece / total_weight if total_weight > 0 else 0.0

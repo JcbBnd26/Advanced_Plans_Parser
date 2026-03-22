@@ -99,19 +99,36 @@ class GuiState:
         self.config_file_path: Path | None = None
         self.pending_config: dict | None = None
         self._subscribers: dict[str, list] = {}
+        self._error_display_cb: Any = None
         self.experiment_tracker: ExperimentTracker | None = None
 
     def subscribe(self, event: str, callback) -> None:
         self._subscribers.setdefault(event, []).append(callback)
 
+    def set_error_display(self, callback) -> None:
+        """Register a callback to surface internal errors in the GUI."""
+        self._error_display_cb = callback
+
     def notify(self, event: str) -> None:
         for cb in self._subscribers.get(event, []):
             try:
                 cb()
-            except Exception:  # noqa: BLE001 — subscribers must not break event loop
-                logger.exception(
-                    "GuiState subscriber failed for event=%s callback=%r", event, cb
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 — subscribers must not break event loop
+                logger.error(
+                    "GuiState subscriber failed for event=%s callback=%r",
+                    event,
+                    cb,
+                    exc_info=True,
                 )
+                if self._error_display_cb:
+                    try:
+                        self._error_display_cb(
+                            f"Internal error in {event} handler: {exc}"
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
 
     def set_pdf(self, path: Path | None) -> None:
         self.pdf_path = path
@@ -264,6 +281,9 @@ class PlanParserGUI:
         # ── Status bar ────────────────────────────────────────────────
         self._status_bar = StatusBar(self.root)
         self._status_bar.grid(row=1, column=0, sticky="ew")
+
+        # Surface internal event-handler errors in the status bar
+        self.state.set_error_display(lambda msg: self._status_bar.set_status(msg))
 
         # Update status when state changes
         self.state.subscribe("pdf_changed", self._update_status)

@@ -44,28 +44,20 @@ LAYOUT_LABELS: list[str] = [
 ]
 
 # ── Availability check ─────────────────────────────────────────────────
-
-_TRANSFORMERS_AVAILABLE = False
-_TORCH_AVAILABLE = False
-
-try:
-    import torch  # noqa: F401
-
-    _TORCH_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    import transformers  # noqa: F401
-
-    _TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    pass
+# Use find_spec() instead of importing torch/transformers — the actual
+# import of torch can hang on some Windows machines during CUDA/MKL init,
+# which would block pytest collection.  Real imports happen lazily inside
+# _ensure_model().
 
 
 def is_layout_available() -> bool:
     """Return True if transformers + torch are installed."""
-    return _TRANSFORMERS_AVAILABLE and _TORCH_AVAILABLE
+    import importlib.util
+
+    return (
+        importlib.util.find_spec("torch") is not None
+        and importlib.util.find_spec("transformers") is not None
+    )
 
 
 # ── Data structures ────────────────────────────────────────────────────
@@ -319,7 +311,7 @@ class LayoutModel:
             try:
                 word_id_map = encoding.word_ids(batch_index=0)
             except Exception:  # noqa: BLE001
-                log.debug("word_ids() unavailable, falling back to CLS offset")
+                log.warning("word_ids() unavailable, falling back to CLS offset")
 
         # Per-word accumulator: word_idx → (label_id_sum, conf_sum, count)
         word_labels: dict[int, tuple[list[int], float, int]] = {}

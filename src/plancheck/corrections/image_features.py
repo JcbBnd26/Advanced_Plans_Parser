@@ -31,28 +31,20 @@ _DEFAULT_BACKBONE = "resnet18"
 _INPUT_SIZE = (224, 224)
 
 # ── Availability check ─────────────────────────────────────────────────
-
-_TORCH_AVAILABLE = False
-_TIMM_AVAILABLE = False
-
-try:
-    import torch  # noqa: F401
-
-    _TORCH_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    import timm  # noqa: F401
-
-    _TIMM_AVAILABLE = True
-except ImportError:
-    pass
+# Use find_spec() instead of importing torch/timm — the actual import of
+# torch can hang on some Windows machines during CUDA/MKL initialisation,
+# which would block pytest collection.  The real import happens lazily
+# inside _ensure_model().
 
 
 def is_vision_available() -> bool:
     """Return True if torch + timm are installed."""
-    return _TORCH_AVAILABLE and _TIMM_AVAILABLE
+    import importlib.util
+
+    return (
+        importlib.util.find_spec("torch") is not None
+        and importlib.util.find_spec("timm") is not None
+    )
 
 
 # ── Image Feature Extractor ───────────────────────────────────────────

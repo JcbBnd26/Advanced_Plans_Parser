@@ -24,6 +24,9 @@ def _run_document_checks(pages: List[PageResult]) -> List[Any]:
         return findings
 
     # 1. Duplicate sheet numbers across pages
+    # Collect all sheet numbers → page lists first so we can detect
+    # duplicates in a single pass.  Normalise to uppercase because
+    # "A-101" and "a-101" are the same sheet in practice.
     sheet_map: Dict[str, List[int]] = {}
     for pr in pages:
         for tb in pr.title_blocks:
@@ -42,6 +45,9 @@ def _run_document_checks(pages: List[PageResult]) -> List[Any]:
             )
 
     # 2. Abbreviation consistency: same code should mean the same thing
+    # Normalise to uppercase to catch case-variation false positives.
+    # Structure: code → {meaning → [pages]}.  Multiple meanings for the
+    # same code means the drawings are internally inconsistent.
     global_abbrevs: Dict[str, Dict[str, List[int]]] = {}
     for pr in pages:
         for region in pr.abbreviation_regions:
@@ -83,6 +89,9 @@ def _run_document_checks(pages: List[PageResult]) -> List[Any]:
         )
 
     # 4. Legend consistency: same symbol description shouldn't change
+    # Build a unique key from symbol type + bbox to identify the same
+    # symbol across pages.  If the same key maps to different textual
+    # descriptions then the legend disagrees with itself.
     global_legends: Dict[str, Dict[str, List[int]]] = {}
     for pr in pages:
         for region in pr.legend_regions:
@@ -116,6 +125,8 @@ def _run_document_checks(pages: List[PageResult]) -> List[Any]:
             )
 
     # 5. Revision sequence gaps: look for missing revision numbers
+    # Revisions should form a contiguous sequence 1..N.  Gaps suggest
+    # missing revision entries or OCR misreads.
     all_rev_nums: List[int] = []
     for pr in pages:
         for region in pr.revision_regions:
@@ -141,6 +152,9 @@ def _run_document_checks(pages: List[PageResult]) -> List[Any]:
             )
 
     # 6. Page quality outliers: flag pages significantly below average
+    # Need at least 3 pages to establish a meaningful average.  The
+    # 60% threshold is empirical: below that, OCR accuracy degrades
+    # noticeably and downstream analysis becomes unreliable.
     quality_scores = [pr.page_quality for pr in pages if pr.page_quality > 0]
     if len(quality_scores) >= 3:
         avg_q = sum(quality_scores) / len(quality_scores)

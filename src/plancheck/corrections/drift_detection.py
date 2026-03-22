@@ -49,6 +49,7 @@ class DriftResult:
     n_features: int = 0
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize drift result to a plain dict for JSON export."""
         return asdict(self)
 
 
@@ -63,6 +64,7 @@ class PageDriftResult:
     per_detection: list[DriftResult] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize page-level drift result to a plain dict."""
         return {
             "is_drifted": self.is_drifted,
             "drifted_fraction": self.drifted_fraction,

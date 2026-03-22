@@ -86,7 +86,6 @@ class AnnotationTab(
         self._pdf_path: Path | None = None
         self._doc_id: str | None = None
         self._run_id: str = ""
-        self._pipeline_ran_for_doc: bool = False
         self._active_drift_text: str = ""
         self._page: int = 0
         self._page_count: int = 0
@@ -1162,7 +1161,6 @@ class AnnotationTab(
         self._reopen_store()
         # Ensure our connection sees the latest data from the pipeline's commits
         self._store.refresh()
-        self._pipeline_ran_for_doc = True
         if self._pdf_path:
             self._navigate_to_page()
 
