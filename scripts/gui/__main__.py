@@ -1,18 +1,20 @@
 """Entry point for ``python -m scripts.gui``.
 
-Shows a lightweight splash screen in a **separate subprocess** so the
-timer keeps ticking while the main process does heavy imports and
-builds the UI (both of which block the tkinter event loop).
-
-The splash is a standalone script (``_splash.py``) launched via
-subprocess so it works reliably with both ``python`` and ``pythonw``.
+Launches the GUI under ``pythonw`` with an in-process splash screen,
+avoiding the detached helper window that could be left behind on Windows.
 """
 
 from __future__ import annotations
 
 import os
+import queue
 import sys
+import threading
 import time
+import tkinter as tk
+import traceback
+from pathlib import Path
+from tkinter import ttk
 
 # Under pythonw on Windows, sys.stdout / sys.stderr are None.
 # Any code that writes to them (print, logging StreamHandler, etc.)
@@ -22,67 +24,178 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
 
-import subprocess
-import tkinter as tk
-from pathlib import Path
 
-_TRACE = Path("logs/startup_trace.log")
+def _write_bootstrap_crash_log() -> None:
+    """Write a startup crash log even if gui.py was not imported yet."""
+    crash_path = Path("logs") / "gui_crash.txt"
+    crash_path.parent.mkdir(exist_ok=True)
+    crash_path.write_text(traceback.format_exc(), encoding="utf-8")
 
 
-def _t(msg: str) -> None:
+def _build_splash(root: tk.Tk) -> tuple[tk.Toplevel, tk.Label, ttk.Progressbar]:
+    """Create a lightweight in-process splash window."""
+    root.withdraw()
+
+    splash = tk.Toplevel(root)
+    splash.title("")
+    splash.overrideredirect(True)
+    splash.attributes("-topmost", True)
+    splash.configure(bg="#f3f1eb")
+
+    width, height = 360, 120
+    x = (splash.winfo_screenwidth() - width) // 2
+    y = (splash.winfo_screenheight() - height) // 2
+    splash.geometry(f"{width}x{height}+{x}+{y}")
+
+    tk.Label(
+        splash,
+        text="Advanced Plans Parser",
+        font=("Segoe UI", 13, "bold"),
+        bg="#f3f1eb",
+        fg="#1f1f1f",
+    ).pack(pady=(18, 6))
+
+    status_label = tk.Label(
+        splash,
+        text="Loading…",
+        font=("Segoe UI", 10),
+        bg="#f3f1eb",
+        fg="#555555",
+    )
+    status_label.pack(pady=(0, 6))
+
+    progress = ttk.Progressbar(
+        splash,
+        mode="indeterminate",
+        length=180,
+        orient="horizontal",
+    )
+    progress.pack(pady=(2, 0))
+    progress.start(12)
+
+    root.update_idletasks()
+    root.update()
+    return splash, status_label, progress
+
+
+def _destroy_splash(
+    splash: tk.Toplevel | None,
+    progress: ttk.Progressbar | None = None,
+) -> None:
+    """Close the splash if it still exists."""
+    if progress is not None:
+        try:
+            progress.stop()
+        except Exception:  # noqa: BLE001
+            pass
+    if splash is None:
+        return
     try:
-        with _TRACE.open("a", encoding="utf-8") as f:
-            f.write(f"[{time.perf_counter():10.2f}] {msg}\n")
+        if splash.winfo_exists():
+            splash.destroy()
     except Exception:  # noqa: BLE001
         pass
+
+
+def _bootstrap_gui(result_queue: queue.Queue) -> None:
+    """Import GUI modules and configure logging off the Tk event loop thread."""
+    try:
+        from .gui import PlanParserGUI, _setup_logging, _write_crash_log
+
+        _setup_logging()
+        result_queue.put(
+            {
+                "ok": True,
+                "PlanParserGUI": PlanParserGUI,
+                "write_crash_log": _write_crash_log,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        result_queue.put(
+            {
+                "ok": False,
+                "error": exc,
+                "traceback": traceback.format_exc(),
+            }
+        )
+
+
+def _handle_bootstrap_failure(
+    root: tk.Tk,
+    splash: tk.Toplevel | None,
+    progress: ttk.Progressbar | None,
+    payload: dict,
+) -> None:
+    """Tear down startup UI and persist bootstrap errors."""
+    _destroy_splash(splash, progress)
+    try:
+        root.destroy()
+    except Exception:  # noqa: BLE001
+        pass
+
+    trace_text = payload.get("traceback")
+    if trace_text:
+        crash_path = Path("logs") / "gui_crash.txt"
+        crash_path.parent.mkdir(exist_ok=True)
+        crash_path.write_text(trace_text, encoding="utf-8")
+    else:
+        _write_bootstrap_crash_log()
+
+    raise payload["error"]
 
 
 def _run() -> None:
-    _TRACE.parent.mkdir(exist_ok=True)
-    # Truncate old trace
-    _TRACE.write_text("", encoding="utf-8")
-
-    _t(f"step1: exe={sys.executable}")
-    _t(f"step1b: argv={sys.argv}")
-
-    # Launch the splash as a completely independent subprocess.
-    splash_script = Path(__file__).with_name("_splash.py")
-
-    _exe = Path(sys.executable)
-    _pythonw = _exe.with_name(_exe.name.replace("python", "pythonw"))
-    splash_exe = str(_pythonw) if _pythonw.exists() else sys.executable
-
-    _t(f"step2: splash_exe={splash_exe}")
-    splash_proc = subprocess.Popen([splash_exe, str(splash_script)])
-    _t(f"step3: splash pid={splash_proc.pid}")
-
-    _t("step4: importing gui...")
-    try:
-        from .gui import PlanParserGUI, _setup_logging
-
-        _t("step5: gui imported OK")
-    except Exception as exc:
-        _t(f"step5: IMPORT FAILED: {exc}")
-        raise
-
-    _setup_logging()
-    _t("step6: logging configured")
-
     root = tk.Tk()
-    _t("step7: Tk() created")
-
-    _app = PlanParserGUI(root)  # noqa: F841
-    _t("step8: PlanParserGUI created")
+    splash, status_label, progress = _build_splash(root)
+    result_queue: queue.Queue = queue.Queue()
+    write_crash_log = _write_bootstrap_crash_log
+    bootstrap_thread = threading.Thread(
+        target=_bootstrap_gui,
+        args=(result_queue,),
+        daemon=True,
+    )
 
     try:
-        splash_proc.terminate()
-        splash_proc.wait(timeout=2)
-    except Exception:  # noqa: BLE001
-        pass
-    _t("step9: splash killed, entering mainloop")
+        status_label.configure(text="Importing interface modules…")
+        bootstrap_thread.start()
 
-    root.mainloop()
-    _t("step10: mainloop exited")
+        payload: dict | None = None
+        while payload is None:
+            root.update_idletasks()
+            root.update()
+            try:
+                payload = result_queue.get_nowait()
+            except queue.Empty:
+                time.sleep(0.02)
+
+        if not payload.get("ok"):
+            _handle_bootstrap_failure(root, splash, progress, payload)
+
+        status_label.configure(text="Building workspace…")
+        root.update_idletasks()
+        root.update()
+
+        plan_parser_gui = payload["PlanParserGUI"]
+        write_crash_log = payload["write_crash_log"]
+
+        _app = plan_parser_gui(root)  # noqa: F841
+
+        _destroy_splash(splash, progress)
+        root.deiconify()
+        root.lift()
+        root.focus_force()
+        root.mainloop()
+    except Exception:
+        _destroy_splash(splash, progress)
+        try:
+            root.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            write_crash_log()
+        except Exception:  # noqa: BLE001
+            _write_bootstrap_crash_log()
+        raise
 
 
 _run()
