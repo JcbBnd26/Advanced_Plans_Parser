@@ -11,6 +11,7 @@ Note: The tests mock torch/timm to avoid needing heavy deps in CI.
 
 from __future__ import annotations
 
+import importlib.util
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -23,6 +24,7 @@ from plancheck.corrections.image_features import (
     ImageFeatureExtractor,
     is_vision_available,
 )
+from tests._torch_probe import torch_import_usable
 
 # ── Config fields ──────────────────────────────────────────────────────
 
@@ -146,7 +148,8 @@ class TestImageFeatureExtractorMocked:
 
     @pytest.fixture(autouse=True)
     def _skip_if_no_torch(self):
-        pytest.importorskip("torch")
+        if not torch_import_usable():
+            pytest.skip("torch import unavailable or hanging")
 
     def test_extract_returns_correct_shape(self):
         from PIL import Image

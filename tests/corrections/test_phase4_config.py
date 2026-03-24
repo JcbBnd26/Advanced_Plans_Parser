@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from plancheck.config import GroupingConfig
@@ -12,7 +14,7 @@ class TestPhase4ConfigFields:
     def test_defaults(self):
         cfg = GroupingConfig()
         assert cfg.ml_drift_enabled is False
-        assert cfg.ml_drift_stats_path == "data/drift_stats.json"
+        assert Path(cfg.ml_drift_stats_path) == Path("data/drift_stats.json")
         assert cfg.ml_drift_threshold == 0.3
         assert cfg.ml_retrain_threshold == 50
         assert cfg.ml_retrain_on_startup is False

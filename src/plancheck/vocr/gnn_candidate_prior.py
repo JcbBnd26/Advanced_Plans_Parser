@@ -203,30 +203,33 @@ def _ensure_torch() -> bool:
                 nn.Linear(hidden, 1),
             )
             self._embed_dim = embed_dim
+            self._hidden = hidden
 
         @property
         def embed_dim(self) -> int:
             return self._embed_dim
 
-        def forward(
-            self, embeddings: "torch.Tensor", cand_features: "torch.Tensor"
-        ) -> "torch.Tensor":
-            x = torch.cat([embeddings, cand_features], dim=1)
-            return self.head(x).squeeze(-1)
+        @property
+        def hidden(self) -> int:
+            return self._hidden
+
+        def forward(self, x: "torch.Tensor") -> "torch.Tensor":
+            return self.head(x)
 
         def predict_proba(self, embeddings, cand_features) -> "np.ndarray":
-            import numpy as _np
-
             self.eval()
             with torch.no_grad():
                 if not isinstance(embeddings, torch.Tensor):
                     embeddings = torch.from_numpy(embeddings).float()
                 if not isinstance(cand_features, torch.Tensor):
                     cand_features = torch.from_numpy(cand_features).float()
-                logits = self.forward(embeddings, cand_features)
-                return torch.sigmoid(logits).cpu().numpy()
+                x = torch.cat([embeddings, cand_features], dim=1)
+                logits = self.forward(x)
+                return torch.sigmoid(logits).squeeze(-1).cpu().numpy()
 
     _GNNCandidatePriorHead = _Head
+    # Update the public module-level name so runtime imports get the real class.
+    globals()["GNNCandidatePriorHead"] = _Head
     return True
 
 
@@ -236,9 +239,11 @@ def _ensure_torch() -> bool:
 
 
 class GNNCandidatePriorHead:  # type: ignore[no-redef]
-    """Stub — replaced by real class after _ensure_torch() succeeds."""
+    """Stub — auto-delegates to real class when torch is available."""
 
-    def __init__(self, *a: Any, **kw: Any) -> None:
+    def __new__(cls, *a: Any, **kw: Any) -> Any:
+        if _ensure_torch():
+            return _GNNCandidatePriorHead(*a, **kw)
         raise RuntimeError("PyTorch is required for GNNCandidatePriorHead")
 
     def predict_proba(self, *a: Any, **kw: Any) -> np.ndarray:
@@ -256,6 +261,7 @@ def save_gnn_candidate_prior(head: Any, path: str | Path) -> None:
     state = {
         "model_state_dict": head.state_dict(),
         "embed_dim": head.embed_dim,
+        "hidden": head.hidden,
     }
     torch.save(state, path)
     log.info("Saved GNN candidate prior head to %s", path)
@@ -275,7 +281,8 @@ def load_gnn_candidate_prior(
 
     state = torch.load(path, map_location=device, weights_only=False)
     embed_dim = state.get("embed_dim", 256)
-    head = _GNNCandidatePriorHead(embed_dim=embed_dim)
+    hidden = state.get("hidden", 32)
+    head = _GNNCandidatePriorHead(embed_dim=embed_dim, hidden=hidden)
     head.load_state_dict(state["model_state_dict"])
     head.to(device)
     head.eval()

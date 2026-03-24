@@ -13,7 +13,7 @@ Tests cover:
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Tuple
@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from plancheck.analysis.gnn.graph import GraphNode, GraphNodeType
+from tests._torch_probe import torch_import_usable
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -228,18 +229,14 @@ class TestGraphNodeCandidateFeatures:
 # ── Tests: GNNCandidatePriorHead (torch-dependent) ────────────────────
 
 
-_torch_avail = False
-try:
-    import torch
-
-    _torch_avail = True
-except ImportError:
-    pass
+_torch_avail = torch_import_usable()
 
 
-@pytest.mark.skipif(not _torch_avail, reason="torch not installed")
+@pytest.mark.skipif(not _torch_avail, reason="torch import unavailable or hanging")
 class TestGNNCandidatePriorHead:
     def test_forward_shape(self):
+        import torch
+
         from plancheck.vocr.gnn_candidate_prior import GNNCandidatePriorHead
 
         head = GNNCandidatePriorHead(embed_dim=32, hidden=16)
@@ -297,7 +294,7 @@ class TestGNNCandidatePriorHead:
 # ── Tests: train_gnn_candidate_prior ──────────────────────────────────
 
 
-@pytest.mark.skipif(not _torch_avail, reason="torch not installed")
+@pytest.mark.skipif(not _torch_avail, reason="torch import unavailable or hanging")
 class TestTrainGNNCandidatePrior:
     def test_training_runs_and_returns_metrics(self):
         from plancheck.vocr.gnn_candidate_prior import train_gnn_candidate_prior
@@ -356,6 +353,7 @@ class TestApplyGnnPrior:
         x = np.stack([n.to_feature_vector() for n in nodes])
         edge_index = np.array([[0, 1], [1, 0]], dtype=np.int64)
 
+        import torch
         from torch_geometric.data import Data
 
         pyg_data = Data(

@@ -52,23 +52,70 @@ _GNN_INSTALLED = (
 _GNN_AVAILABLE = False
 
 
+_RealDocumentGNN = None  # populated by _ensure_gnn_imports()
+
+
 def _ensure_gnn_imports() -> bool:
     """Do the real torch/pyg import on first use.  Returns True on success."""
-    global _GNN_AVAILABLE  # noqa: PLW0603
+    global _GNN_AVAILABLE, _RealDocumentGNN  # noqa: PLW0603
     if _GNN_AVAILABLE:
         return True
     if not _GNN_INSTALLED:
         return False
     try:
-        import torch  # noqa: F401
-        import torch.nn.functional  # noqa: F401
-        from torch_geometric.data import Data  # noqa: F401
-        from torch_geometric.nn import GATConv  # noqa: F401
+        import torch
+        import torch.nn.functional as F
+        from torch_geometric.nn import GATConv
 
         _GNN_AVAILABLE = True
-        return True
     except (ImportError, OSError):
         return False
+
+    class _DocumentGNN(torch.nn.Module):
+        """2-layer GAT for cross-page document understanding."""
+
+        def __init__(
+            self,
+            in_channels: int,
+            hidden_channels: int = 64,
+            num_classes: int = 9,
+            heads: int = 4,
+            dropout: float = 0.2,
+        ) -> None:
+            super().__init__()
+            self.conv1 = GATConv(in_channels, hidden_channels, heads=heads)
+            self.conv2 = GATConv(
+                hidden_channels * heads, num_classes, heads=1, concat=False
+            )
+            self.dropout = dropout
+
+        def forward(self, data: Any) -> torch.Tensor:
+            x, edge_index = data.x.float(), data.edge_index
+            x = self.conv1(x, edge_index)
+            x = F.elu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+            x = self.conv2(x, edge_index)
+            return F.log_softmax(x, dim=1)
+
+        def get_embeddings(self, data: Any) -> np.ndarray:
+            """Return penultimate-layer embeddings as a numpy array."""
+            self.eval()
+            with torch.no_grad():
+                x, edge_index = data.x.float(), data.edge_index
+                x = self.conv1(x, edge_index)
+                x = F.elu(x)
+            return x.cpu().numpy()
+
+        def predict(self, data: Any) -> np.ndarray:
+            """Return integer label predictions."""
+            self.eval()
+            with torch.no_grad():
+                out = self.forward(data)
+            return out.argmax(dim=1).cpu().numpy()
+
+    _RealDocumentGNN = _DocumentGNN
+    globals()["DocumentGNN"] = _DocumentGNN
+    return True
 
 
 def is_gnn_available() -> bool:
@@ -91,12 +138,14 @@ def is_gnn_available() -> bool:
 
 
 class DocumentGNN:  # type: ignore[no-redef]
-    """Stub — PyTorch Geometric not installed or not yet imported."""
+    """Stub — auto-delegates to real GAT class when PyG is available."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+        if _ensure_gnn_imports():
+            return _RealDocumentGNN(*args, **kwargs)
         raise RuntimeError(
             "PyTorch Geometric is required for DocumentGNN.  "
-            "Call is_gnn_available() first to trigger lazy loading."
+            "Install with: pip install torch_geometric"
         )
 
 
@@ -110,9 +159,19 @@ def save_gnn(*args: Any, **kwargs: Any) -> None:
     raise RuntimeError("PyTorch Geometric is required for save_gnn")
 
 
-def load_gnn(*args: Any, **kwargs: Any) -> Any:
-    """Stub — requires PyTorch Geometric."""
-    raise RuntimeError("PyTorch Geometric is required for load_gnn")
+def load_gnn(path: str | Path, device: str = "cpu") -> Any:
+    """Load a saved DocumentGNN model.  Returns None if unavailable."""
+    if not _ensure_gnn_imports():
+        raise RuntimeError("PyTorch Geometric is required for load_gnn")
+    import torch
+
+    path = Path(path)
+    state = torch.load(path, map_location=device, weights_only=False)
+    model = _RealDocumentGNN(**state["init_args"])
+    model.load_state_dict(state["model_state_dict"])
+    model.to(device)
+    model.eval()
+    return model
 
 
 # ── High-level prediction helper ──────────────────────────────────────

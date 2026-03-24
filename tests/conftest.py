@@ -1,5 +1,12 @@
 """Shared test fixtures for Advanced Plan Parser."""
 
+import os
+
+# Limit thread pools before any torch/numpy/MKL imports to prevent hangs on Windows.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 import pytest
 
 from plancheck.config import GroupingConfig

@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-import importlib.util as _ilu
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-# Re-export root conftest helpers so ``from conftest import ...`` works.
-_root_conftest = Path(__file__).resolve().parent.parent / "conftest.py"
-_spec = _ilu.spec_from_file_location("_root_conftest", _root_conftest)
-_mod = _ilu.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-for _name in dir(_mod):
-    if not _name.startswith("_"):
-        globals()[_name] = getattr(_mod, _name)
-del _name
+from tests.conftest import make_block, make_box, make_graphic
+
+if TYPE_CHECKING:
+    from plancheck.corrections.store import CorrectionStore
 
 import pytest
+
+__all__ = ["make_block", "make_box", "make_graphic"]
 
 # Limit OpenBLAS / MKL / OpenMP thread pools before sklearn is imported.
 # On Windows the default initialisation can take 40+ seconds under pytest,
@@ -24,8 +21,6 @@ import pytest
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
-
-from plancheck.corrections.store import CorrectionStore
 
 # Note: the OPENBLAS/OMP/MKL thread-pool env vars above are sufficient
 # to prevent the 40+ second Windows cold-start.  No session-scoped
@@ -35,6 +30,8 @@ from plancheck.corrections.store import CorrectionStore
 @pytest.fixture
 def tmp_store(tmp_path: Path) -> CorrectionStore:
     """Return a CorrectionStore backed by a temporary database."""
+    from plancheck.corrections.store import CorrectionStore
+
     return CorrectionStore(db_path=tmp_path / "test.db")
 
 
