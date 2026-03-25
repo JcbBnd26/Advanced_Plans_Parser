@@ -178,9 +178,11 @@ class PdfLoaderMixin:
         """Render the current page preview and load any existing detections.
 
         Shows a clear status message indicating whether the pipeline
-        has been run for this page.
+        has been run for this page.  Falls back to a pre-rendered PNG
+        when the original PDF is not available on disk.
         """
-        if not self._pdf_path:
+        # Allow navigation when we have either a PDF or a doc_id (offline mode)
+        if not self._pdf_path and not getattr(self, "_doc_id", None):
             return
 
         self._page = self._page_var.get()
@@ -198,31 +200,67 @@ class PdfLoaderMixin:
         self._status.configure(text=f"Loading page {self._page}…")
         self.root.update_idletasks()
 
-        # Render page preview
-        try:
-            from plancheck.ingest.ingest import render_page_image
+        # Render page preview — try PDF first, then PNG fallback
+        self._png_fallback_mode = False
+        if self._pdf_path and self._pdf_path.exists():
+            try:
+                from plancheck.ingest.ingest import render_page_image
 
-            self._bg_image = render_page_image(
-                self._pdf_path, self._page, resolution=self._resolution
+                self._bg_image = render_page_image(
+                    self._pdf_path, self._page, resolution=self._resolution
+                )
+                self._zoom_image_cache.clear()
+                self._render_background()
+            except Exception as exc:
+                self._status.configure(text=f"Error rendering page: {exc}")
+                return
+        else:
+            # PNG fallback: load pre-rendered image from DB
+            self._reopen_store()
+            run_id = getattr(self, "_selected_run_id", None)
+            png_info = self._store.get_page_image(
+                self._doc_id, self._page, run_id=run_id
             )
-            # New page image — invalidate zoom cache
-            self._zoom_image_cache.clear()
-            self._render_background()
-        except Exception as exc:
-            self._status.configure(text=f"Error rendering page: {exc}")
-            return
+            if png_info and Path(png_info["path"]).exists():
+                from PIL import Image as _Image
+
+                self._bg_image = _Image.open(png_info["path"]).convert("RGB")
+                self._scale = png_info["dpi"] / 72.0
+                self._png_fallback_mode = True
+                self._zoom_image_cache.clear()
+                self._render_background()
+            else:
+                self._canvas.delete("all")
+                self._canvas.create_text(
+                    10,
+                    10,
+                    text="No page image available — PDF not found"
+                    " and no exported PNG exists.",
+                    anchor="nw",
+                    fill="#888888",
+                    font=("TkDefaultFont", 11),
+                )
+                self._status.configure(text="No image available for this page")
+                return
 
         # Always load detections from the database — they persist across
         # sessions and are available immediately after any pipeline run.
         self._reopen_store()
-        self._doc_id = self._store.register_document(self._pdf_path)
+        if self._pdf_path and self._pdf_path.exists():
+            self._doc_id = self._store.register_document(self._pdf_path)
         self._canvas_boxes.clear()
         self._selected_box = None
         self._multi_selected.clear()
 
         # Refresh to pick up data committed by the pipeline worker thread
         self._store.refresh()
-        dets = self._store.get_latest_detections_for_page(self._doc_id, self._page)
+
+        # Load detections: use run-specific if a run is selected, else latest
+        run_id = getattr(self, "_selected_run_id", None)
+        if run_id:
+            dets = self._store.get_detections_for_run(self._doc_id, self._page, run_id)
+        else:
+            dets = self._store.get_latest_detections_for_page(self._doc_id, self._page)
         for d in dets:
             self._canvas_boxes.append(
                 CanvasBox(

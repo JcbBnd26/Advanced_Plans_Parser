@@ -208,6 +208,7 @@ class ExportConfig:
     overlay_span_outline_width: int = 2
     overlay_same_line_overlap: float = 0.5
     overlay_proximity_pts: float = 50.0
+    page_image_dpi: int = 100
 
 
 @dataclass

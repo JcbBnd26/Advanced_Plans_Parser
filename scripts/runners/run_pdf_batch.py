@@ -336,6 +336,20 @@ def _materialise_page(
             flush=True,
         )
 
+    # Page image PNG (low-res for offline annotation)
+    page_image_dpi = getattr(cfg, "page_image_dpi", 100)
+    if page_image_dpi > 0:
+        overlays_dir = run_dir / "overlays"
+        overlays_dir.mkdir(exist_ok=True)
+        png_path = overlays_dir / f"{pdf_stem}_page_{page_num}.png"
+        try:
+            from plancheck.ingest.ingest import render_page_image
+
+            img = render_page_image(pdf, page_num, resolution=page_image_dpi)
+            img.save(str(png_path), format="PNG", optimize=True)
+        except Exception as exc:  # noqa: BLE001 — PNG export is best-effort
+            print(f"  page {page_num}: PNG export warning: {exc}", flush=True)
+
 
 # ── Block / column serialisation helpers ─────────────────────────────
 
@@ -732,6 +746,19 @@ def run_pdf(
             # Materialise artefacts to disk
             _materialise_page(pr, pdf, run_dir, pdf_stem, resolution, cfg)
 
+            # Record page image in DB for offline annotation
+            _page_image_dpi = getattr(cfg, "page_image_dpi", 100)
+            if _page_image_dpi > 0:
+                _png = run_dir / "overlays" / f"{pdf_stem}_page_{page_num}.png"
+                if _png.exists():
+                    correction_store.save_page_image(
+                        doc_id=correction_store.register_document(pdf),
+                        page=page_num,
+                        run_id=_run_id,
+                        image_path=str(_png.resolve()),
+                        dpi=_page_image_dpi,
+                    )
+
             elapsed = _time.perf_counter() - t0
             print(f"  page {page_num}: Phase 3 done ({elapsed:.1f}s)", flush=True)
             print(summarize(pr.blocks), flush=True)
@@ -786,6 +813,20 @@ def run_pdf(
         "cross_page_findings": [f.to_dict() for f in cross_page_findings],
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    # Record this processing run in the corrections DB
+    try:
+        _doc_id = correction_store.register_document(pdf)
+        _config_hash = input_fingerprint(pdf, pages_list, cfg)
+        correction_store.save_processing_run(
+            run_id=_run_id,
+            doc_id=_doc_id,
+            pages_processed=pages_list,
+            config_hash=_config_hash,
+            manifest_path=str((run_dir / "manifest.json").resolve()),
+        )
+    except Exception as exc:  # noqa: BLE001 — recording is best-effort
+        print(f"  processing run recording warning: {exc}", flush=True)
 
     # ── Generate HTML + JSON reports ──────────────────────────────────
     try:

@@ -382,9 +382,10 @@ class EventHandlerMixin:
         # Prompt for group name
         name_win = tk.Toplevel(self.root)
         name_win.title("New Group")
-        name_win.geometry("280x110")
         name_win.transient(self.root)
         name_win.grab_set()
+        name_win.resizable(True, True)
+        name_win.minsize(280, 110)
 
         ttk.Label(name_win, text="Group name:").pack(padx=10, pady=(10, 4))
         name_var = tk.StringVar(value=cbox.element_type)
@@ -403,10 +404,14 @@ class EventHandlerMixin:
             name_win.destroy()
 
         entry.bind("<Return>", on_ok)
+        name_win.bind("<Escape>", lambda e: on_cancel())
         btn_f = ttk.Frame(name_win)
         btn_f.pack(pady=8)
         ttk.Button(btn_f, text="OK", command=on_ok).pack(side="left", padx=4)
-        ttk.Button(btn_f, text="ABORT", command=on_cancel).pack(side="left", padx=4)
+        ttk.Button(btn_f, text="Cancel", command=on_cancel).pack(side="left", padx=4)
+
+        name_win.update_idletasks()
+        name_win.geometry("")  # auto-size to content
 
         name_win.wait_window()
 
@@ -934,9 +939,10 @@ class EventHandlerMixin:
         # Ask for element type
         type_win = tk.Toplevel(self.root)
         type_win.title("New Element Type")
-        type_win.geometry("260x120")
         type_win.transient(self.root)
         type_win.grab_set()
+        type_win.resizable(True, True)
+        type_win.minsize(280, 220)
 
         ttk.Label(type_win, text="Element type:").pack(padx=10, pady=(10, 4))
         type_var = tk.StringVar(value=self.ELEMENT_TYPES[0])
@@ -995,8 +1001,18 @@ class EventHandlerMixin:
 
         btn_f = ttk.Frame(type_win)
         btn_f.pack(pady=10)
-        ttk.Button(btn_f, text="OK", command=on_ok).pack(side="left", padx=4)
-        ttk.Button(btn_f, text="ABORT", command=on_cancel).pack(side="left", padx=4)
+        ok_btn = ttk.Button(btn_f, text="OK", command=on_ok)
+        ok_btn.pack(side="left", padx=4)
+        ttk.Button(btn_f, text="Cancel", command=on_cancel).pack(side="left", padx=4)
+
+        # Keyboard shortcuts
+        type_win.bind("<Return>", lambda e: on_ok())
+        type_win.bind("<Escape>", lambda e: on_cancel())
+
+        # Let tkinter compute the needed size, then enforce it
+        type_win.update_idletasks()
+        type_win.geometry("")  # auto-size to content
+        combo.focus_set()
 
         type_win.wait_window()
 
@@ -2159,3 +2175,91 @@ class EventHandlerMixin:
         )
 
     # ── Filters ────────────────────────────────────────────────────
+
+    # ── Hover tooltip ──────────────────────────────────────────────
+
+    def _on_canvas_motion(self, event: tk.Event) -> None:
+        """Show a floating tooltip when hovering over a detection box."""
+        cx = self._canvas.canvasx(event.x)
+        cy = self._canvas.canvasy(event.y)
+
+        # Cancel any pending tooltip timer
+        pending = getattr(self, "_hover_after_id", None)
+        if pending is not None:
+            self._canvas.after_cancel(pending)
+            self._hover_after_id = None
+
+        # Hit-test in PDF coordinates
+        eff = self._effective_scale()
+        pdf_x = cx / eff
+        pdf_y = cy / eff
+
+        hit_box: Any = None
+        for cb in self._canvas_boxes:
+            if self._canvas.itemcget(cb.rect_id, "state") == "hidden":
+                continue
+            bx0, by0, bx1, by1 = cb.pdf_bbox
+            if bx0 <= pdf_x <= bx1 and by0 <= pdf_y <= by1:
+                hit_box = cb
+                break
+
+        if hit_box is None:
+            self._hide_hover_tooltip()
+            self._canvas.config(cursor="crosshair" if self._mode == "add" else "")
+            return
+
+        # Change cursor on box hover
+        self._canvas.config(cursor="hand2")
+
+        # Debounce tooltip display (50ms)
+        self._hover_after_id = self._canvas.after(
+            50,
+            self._show_hover_tooltip,
+            event.x_root,
+            event.y_root,
+            hit_box,
+        )
+
+    def _show_hover_tooltip(
+        self, x_root: int, y_root: int, cbox: Any
+    ) -> None:
+        """Display or update the hover tooltip near the cursor."""
+        self._hide_hover_tooltip()
+        if self._closing or not self._canvas.winfo_exists():
+            return
+        text_preview = (cbox.text_content or "")[:50]
+        corrected = "Yes" if getattr(cbox, "corrected", False) else "No"
+        lines = [
+            f"Type: {cbox.element_type}",
+            f"Confidence: {cbox.confidence:.0%}" if cbox.confidence else "",
+            f"Text: {text_preview}" if text_preview else "",
+            f"ID: {cbox.detection_id[:12]}…" if len(cbox.detection_id) > 12 else f"ID: {cbox.detection_id}",
+            f"Corrected: {corrected}",
+        ]
+        tip_text = "\n".join(ln for ln in lines if ln)
+
+        tip = tk.Toplevel(self._canvas)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x_root + 14}+{y_root + 10}")
+        lbl = tk.Label(
+            tip,
+            text=tip_text,
+            background="#ffffe0",
+            foreground="#000",
+            relief="solid",
+            borderwidth=1,
+            font=("TkDefaultFont", 9),
+            justify="left",
+        )
+        lbl.pack()
+        self._hover_tip_win = tip
+
+    def _hide_hover_tooltip(self) -> None:
+        """Destroy the hover tooltip if it exists."""
+        tip = getattr(self, "_hover_tip_win", None)
+        if tip is not None:
+            try:
+                tip.destroy()
+            except Exception:  # noqa: BLE001 — widget may already be gone
+                pass
+            self._hover_tip_win = None

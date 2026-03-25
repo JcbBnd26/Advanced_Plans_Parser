@@ -20,7 +20,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from plancheck.config import DEFAULT_CORRECTIONS_DB
 
@@ -168,12 +168,37 @@ CREATE TABLE IF NOT EXISTS candidate_outcomes (
     created_at          TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS page_images (
+    doc_id          TEXT NOT NULL,
+    page            INTEGER NOT NULL,
+    run_id          TEXT NOT NULL,
+    image_path      TEXT NOT NULL,
+    dpi             INTEGER NOT NULL,
+    created_at      TEXT NOT NULL,
+    PRIMARY KEY (doc_id, page, run_id),
+    FOREIGN KEY (doc_id) REFERENCES documents(doc_id)
+);
+
+CREATE TABLE IF NOT EXISTS processing_runs (
+    run_id          TEXT PRIMARY KEY,
+    doc_id          TEXT NOT NULL,
+    processed_at    TEXT NOT NULL,
+    pages_processed TEXT NOT NULL,
+    config_hash     TEXT DEFAULT '',
+    tag             TEXT DEFAULT '',
+    notes           TEXT DEFAULT '',
+    manifest_path   TEXT DEFAULT '',
+    FOREIGN KEY (doc_id) REFERENCES documents(doc_id)
+);
+
 -- Indices for frequently-queried patterns (efficiency fix)
 CREATE INDEX IF NOT EXISTS idx_detections_doc_page ON detections(doc_id, page);
 CREATE INDEX IF NOT EXISTS idx_detections_run ON detections(run_id);
 CREATE INDEX IF NOT EXISTS idx_corrections_doc_page ON corrections(doc_id, page);
 CREATE INDEX IF NOT EXISTS idx_corrections_detection ON corrections(detection_id);
 CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_doc_page ON candidate_outcomes(doc_id, page);
+CREATE INDEX IF NOT EXISTS idx_page_images_doc ON page_images(doc_id, page);
+CREATE INDEX IF NOT EXISTS idx_processing_runs_doc ON processing_runs(doc_id);
 """
 
 
@@ -303,6 +328,36 @@ class CorrectionStore(
             CREATE INDEX IF NOT EXISTS idx_corrections_doc_page ON corrections(doc_id, page);
             CREATE INDEX IF NOT EXISTS idx_corrections_detection ON corrections(detection_id);
             CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_doc_page ON candidate_outcomes(doc_id, page);
+            """
+        )
+        self._conn.commit()
+
+        # page_images + processing_runs tables (idempotent CREATE IF NOT EXISTS)
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS page_images (
+                doc_id       TEXT NOT NULL,
+                page         INTEGER NOT NULL,
+                run_id       TEXT NOT NULL,
+                image_path   TEXT NOT NULL,
+                dpi          INTEGER NOT NULL,
+                created_at   TEXT NOT NULL,
+                PRIMARY KEY (doc_id, page, run_id),
+                FOREIGN KEY (doc_id) REFERENCES documents(doc_id)
+            );
+            CREATE TABLE IF NOT EXISTS processing_runs (
+                run_id          TEXT PRIMARY KEY,
+                doc_id          TEXT NOT NULL,
+                processed_at    TEXT NOT NULL,
+                pages_processed TEXT NOT NULL,
+                config_hash     TEXT DEFAULT '',
+                tag             TEXT DEFAULT '',
+                notes           TEXT DEFAULT '',
+                manifest_path   TEXT DEFAULT '',
+                FOREIGN KEY (doc_id) REFERENCES documents(doc_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_page_images_doc ON page_images(doc_id, page);
+            CREATE INDEX IF NOT EXISTS idx_processing_runs_doc ON processing_runs(doc_id);
             """
         )
         self._conn.commit()
@@ -943,6 +998,148 @@ class CorrectionStore(
                 }
             )
         return results
+
+    # ── Page images ────────────────────────────────────────────────────
+
+    def save_page_image(
+        self,
+        doc_id: str,
+        page: int,
+        run_id: str,
+        image_path: str,
+        dpi: int,
+    ) -> None:
+        """Record a per-page PNG export path and its DPI."""
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT OR REPLACE INTO page_images "
+                "(doc_id, page, run_id, image_path, dpi, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (doc_id, page, run_id, image_path, dpi, _utcnow_iso()),
+            )
+            self._conn.commit()
+
+    def get_page_image(
+        self,
+        doc_id: str,
+        page: int,
+        run_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Return the page image info for *doc_id* + *page*.
+
+        If *run_id* is given, return the image for that specific run;
+        otherwise return the most recently created image.
+        """
+        if run_id:
+            row = self._conn.execute(
+                "SELECT image_path, dpi, run_id FROM page_images "
+                "WHERE doc_id = ? AND page = ? AND run_id = ? LIMIT 1",
+                (doc_id, page, run_id),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT image_path, dpi, run_id FROM page_images "
+                "WHERE doc_id = ? AND page = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (doc_id, page),
+            ).fetchone()
+        if not row:
+            return None
+        return {"path": row["image_path"], "dpi": row["dpi"], "run_id": row["run_id"]}
+
+    # ── Processing runs ────────────────────────────────────────────────
+
+    def save_processing_run(
+        self,
+        run_id: str,
+        doc_id: str,
+        pages_processed: list[int],
+        config_hash: str = "",
+        tag: str = "",
+        notes: str = "",
+        manifest_path: str = "",
+    ) -> None:
+        """Record a pipeline processing run for a document."""
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT OR REPLACE INTO processing_runs "
+                "(run_id, doc_id, processed_at, pages_processed, "
+                " config_hash, tag, notes, manifest_path) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    doc_id,
+                    _utcnow_iso(),
+                    json.dumps(pages_processed),
+                    config_hash,
+                    tag,
+                    notes,
+                    manifest_path,
+                ),
+            )
+            self._conn.commit()
+
+    def get_runs_for_doc(self, doc_id: str) -> list[dict[str, Any]]:
+        """Return all processing runs for *doc_id*, newest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM processing_runs "
+            "WHERE doc_id = ? ORDER BY processed_at DESC",
+            (doc_id,),
+        ).fetchall()
+        results: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            d["pages_processed"] = json.loads(d["pages_processed"])
+            results.append(d)
+        return results
+
+    def update_run_tag(self, run_id: str, tag: str) -> None:
+        """Update the user-editable tag on a processing run."""
+        with self._write_lock():
+            self._conn.execute(
+                "UPDATE processing_runs SET tag = ? WHERE run_id = ?",
+                (tag, run_id),
+            )
+            self._conn.commit()
+
+    # ── Project / document browsing ────────────────────────────────────
+
+    def get_all_documents(self) -> list[dict[str, Any]]:
+        """Return all registered documents with run counts, newest first."""
+        rows = self._conn.execute(
+            "SELECT d.doc_id, d.filename, d.project_tag, d.page_count, "
+            "       d.ingested_at, d.pdf_path, "
+            "       (SELECT COUNT(*) FROM processing_runs pr "
+            "        WHERE pr.doc_id = d.doc_id) AS run_count "
+            "FROM documents d "
+            "ORDER BY d.ingested_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_project_tag(self, doc_id: str, tag: str) -> None:
+        """Set or update the project tag for a document."""
+        with self._write_lock():
+            self._conn.execute(
+                "UPDATE documents SET project_tag = ? WHERE doc_id = ?",
+                (tag, doc_id),
+            )
+            self._conn.commit()
+
+    def get_detections_for_run(
+        self,
+        doc_id: str,
+        page: int,
+        run_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return detections for a specific run + manual annotations."""
+        rows = self._conn.execute(
+            "SELECT * FROM detections "
+            "WHERE doc_id = ? AND page = ? "
+            "  AND (run_id = ? OR run_id LIKE 'manual%') "
+            "ORDER BY created_at",
+            (doc_id, page, run_id),
+        ).fetchall()
+        return self._rows_to_detection_dicts(rows)
 
     # ── Database-tab helpers ───────────────────────────────────────────
     # Database overview and summary methods are provided by DbHelpersMixin

@@ -17,7 +17,7 @@ from __future__ import annotations
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import simpledialog, ttk
 from typing import Any
 from uuid import uuid4
 
@@ -336,6 +336,49 @@ class AnnotationTab(
 
         ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=6)
 
+        # ── Project / Run dropdowns ───────────────────────────────
+        ttk.Label(top, text="Project:").pack(side="left")
+        self._project_var = tk.StringVar()
+        self._project_combo = ttk.Combobox(
+            top,
+            textvariable=self._project_var,
+            state="readonly",
+            width=30,
+        )
+        self._project_combo.pack(side="left", padx=2)
+        self._project_combo.bind("<<ComboboxSelected>>", self._on_project_selected)
+        self._tooltip(
+            self._project_combo,
+            "Select a previously processed document. Allows reviewing"
+            " detections even when the original PDF is unavailable.",
+        )
+        # Internal mapping: combo index → doc_id
+        self._project_doc_ids: list[str] = []
+
+        _btn_tag = ttk.Button(top, text="✎", width=2, command=self._edit_project_tag)
+        _btn_tag.pack(side="left", padx=1)
+        self._tooltip(_btn_tag, "Set or change the project tag for this document.")
+
+        ttk.Label(top, text="Run:").pack(side="left", padx=(4, 0))
+        self._run_var = tk.StringVar()
+        self._run_combo = ttk.Combobox(
+            top,
+            textvariable=self._run_var,
+            state="readonly",
+            width=24,
+        )
+        self._run_combo.pack(side="left", padx=2)
+        self._run_combo.bind("<<ComboboxSelected>>", self._on_run_selected)
+        self._tooltip(
+            self._run_combo,
+            "Switch between processing runs for the selected document."
+            " Each run represents a separate pipeline execution.",
+        )
+        # Internal mapping: combo index → run_id
+        self._run_ids: list[str] = []
+
+        ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=6)
+
         ttk.Label(top, text="Page:").pack(side="left")
         self._page_var = tk.IntVar(value=0)
         self._page_spin = ttk.Spinbox(
@@ -457,6 +500,9 @@ class AnnotationTab(
         self._canvas.bind("<Button-2>", self._on_pan_start)
         self._canvas.bind("<B2-Motion>", self._on_pan_motion)
         self._canvas.bind("<ButtonRelease-2>", self._on_pan_end)
+        # Hover tooltip
+        self._canvas.bind("<Motion>", self._on_canvas_motion)
+        self._canvas.bind("<Leave>", lambda e: self._hide_hover_tooltip())
 
         # Mode banner: an overlay label placed at the top of the canvas in Add mode
         self._mode_banner = tk.Label(
@@ -1122,9 +1168,7 @@ class AnnotationTab(
         self._progress = ttk.Progressbar(
             self.frame, variable=self._progress_var, maximum=100
         )
-        self._progress.grid(
-            row=3, column=0, sticky="ew", padx=2, pady=(0, 2)
-        )
+        self._progress.grid(row=3, column=0, sticky="ew", padx=2, pady=(0, 2))
         self._progress.grid_remove()  # hidden by default
 
         # ── Global key bindings ───────────────────────────────────
@@ -1171,8 +1215,109 @@ class AnnotationTab(
         self._reopen_store()
         # Ensure our connection sees the latest data from the pipeline's commits
         self._store.refresh()
+        # Refresh the project dropdown to include new runs
+        self._refresh_project_dropdown()
         if self._pdf_path:
             self._navigate_to_page()
+
+    # ── Project / Run browsing ─────────────────────────────────────
+
+    def _refresh_project_dropdown(self) -> None:
+        """Populate the Project combobox from the correction store."""
+        self._reopen_store()
+        docs = self._store.get_all_documents()
+        self._project_doc_ids = [d["doc_id"] for d in docs]
+        labels: list[str] = []
+        for d in docs:
+            tag = d.get("project_tag") or ""
+            runs = d.get("run_count", 0)
+            name = d.get("filename", "?")
+            if tag:
+                labels.append(f"{name} ({tag}) — {runs} run(s)")
+            else:
+                labels.append(f"{name} — {runs} run(s)")
+        self._project_combo["values"] = labels
+        # Auto-select current doc if loaded
+        if self._doc_id and self._doc_id in self._project_doc_ids:
+            idx = self._project_doc_ids.index(self._doc_id)
+            self._project_combo.current(idx)
+
+    def _on_project_selected(self, _event: Any = None) -> None:
+        """Handle selection of a document from the Project dropdown."""
+        idx = self._project_combo.current()
+        if idx < 0 or idx >= len(self._project_doc_ids):
+            return
+        doc_id = self._project_doc_ids[idx]
+        self._reopen_store()
+        docs = self._store.get_all_documents()
+        doc_info = next((d for d in docs if d["doc_id"] == doc_id), None)
+        if not doc_info:
+            return
+        self._doc_id = doc_id
+        self._page_count = doc_info.get("page_count", 0)
+        self._page_var.set(0)
+        self._page_spin.configure(to=max(0, self._page_count - 1))
+        self._page_count_label.configure(text=f"/ {self._page_count}")
+        # Try to use the PDF on disk
+        pdf_path_str = doc_info.get("pdf_path", "")
+        pdf_path = Path(pdf_path_str) if pdf_path_str else None
+        if pdf_path and pdf_path.exists():
+            self._pdf_path = pdf_path
+            self._pdf_label.configure(text=pdf_path.name)
+        else:
+            # PDF not on disk — PNG fallback will be used in _navigate_to_page
+            self._pdf_path = None
+            self._pdf_label.configure(text=f"{doc_info.get('filename', '?')} (offline)")
+        # Populate runs dropdown
+        self._refresh_run_dropdown(doc_id)
+        self._navigate_to_page()
+
+    def _refresh_run_dropdown(self, doc_id: str) -> None:
+        """Populate the Run combobox for a given document."""
+        self._reopen_store()
+        runs = self._store.get_runs_for_doc(doc_id)
+        self._run_ids = [r["run_id"] for r in runs]
+        labels: list[str] = []
+        for r in runs:
+            tag = r.get("tag") or ""
+            run_id = r["run_id"]
+            pages = r.get("pages_processed", [])
+            suffix = f" [{len(pages)}p]"
+            if tag:
+                labels.append(f"{run_id} ({tag}){suffix}")
+            else:
+                labels.append(f"{run_id}{suffix}")
+        self._run_combo["values"] = labels
+        if labels:
+            self._run_combo.current(0)  # select latest run
+        self._selected_run_id: str | None = self._run_ids[0] if self._run_ids else None
+
+    def _on_run_selected(self, _event: Any = None) -> None:
+        """Handle selection of a run from the Run dropdown."""
+        idx = self._run_combo.current()
+        if idx < 0 or idx >= len(self._run_ids):
+            return
+        self._selected_run_id = self._run_ids[idx]
+        self._navigate_to_page()
+
+    def _edit_project_tag(self) -> None:
+        """Prompt the user to set/change the project tag."""
+        if not self._doc_id:
+            self._status.configure(text="Load a document first")
+            return
+        self._reopen_store()
+        docs = self._store.get_all_documents()
+        doc = next((d for d in docs if d["doc_id"] == self._doc_id), None)
+        current_tag = doc.get("project_tag", "") if doc else ""
+        new_tag = simpledialog.askstring(
+            "Project Tag",
+            "Enter a project tag for this document:",
+            initialvalue=current_tag,
+            parent=self.root,
+        )
+        if new_tag is not None:
+            self._store.update_project_tag(self._doc_id, new_tag.strip())
+            self._refresh_project_dropdown()
 
     # ── Mode ───────────────────────────────────────────────────────
 
