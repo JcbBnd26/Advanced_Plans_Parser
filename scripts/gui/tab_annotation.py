@@ -459,6 +459,21 @@ class AnnotationTab(
             "Show or hide word-level boxes detected from the PDF text layer. Use this when checking text extraction or selecting words for merges.",
         )
 
+        self._offline_mode_var = tk.BooleanVar(value=False)
+        self._btn_offline = ttk.Checkbutton(
+            top,
+            text="Offline",
+            variable=self._offline_mode_var,
+            command=self._on_offline_mode_toggle,
+        )
+        self._btn_offline.pack(side="left", padx=2)
+        self._tooltip(
+            self._btn_offline,
+            "Force PNG backdrop mode — uses the stored page image instead of the"
+            " live PDF. Disables the word overlay. Turns on automatically when the"
+            " original PDF is not on disk.",
+        )
+
         # ── Canvas + Inspector split (VS Code-style draggable sash) ─────
         self._h_paned = ttk.PanedWindow(self.frame, orient="horizontal")
         self._h_paned.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
@@ -1268,6 +1283,9 @@ class AnnotationTab(
             # PDF not on disk — PNG fallback will be used in _navigate_to_page
             self._pdf_path = None
             self._pdf_label.configure(text=f"{doc_info.get('filename', '?')} (offline)")
+            self._offline_mode_var.set(True)
+        else:
+            self._offline_mode_var.set(False)
         # Populate runs dropdown
         self._refresh_run_dropdown(doc_id)
         self._navigate_to_page()
@@ -1298,6 +1316,15 @@ class AnnotationTab(
         if idx < 0 or idx >= len(self._run_ids):
             return
         self._selected_run_id = self._run_ids[idx]
+        self._navigate_to_page()
+
+    def _on_offline_mode_toggle(self) -> None:
+        """Re-render the current page when the Offline toggle changes."""
+        if self._offline_mode_var.get():
+            # Turning offline on disables the word overlay
+            self._word_overlay_var.set(False)
+            self._word_overlay_on = False
+            self._clear_word_overlay()
         self._navigate_to_page()
 
     def _edit_project_tag(self) -> None:

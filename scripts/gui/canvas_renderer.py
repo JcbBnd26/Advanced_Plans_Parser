@@ -263,7 +263,10 @@ class CanvasRendererMixin:
     def _draw_word_overlay(self) -> None:
         """Draw light-gray rectangles around every word on the current page."""
         self._clear_word_overlay()
-        if not self._pdf_path:
+        _offline = (
+            getattr(self, "_offline_mode_var", None) and self._offline_mode_var.get()
+        )
+        if not self._pdf_path or _offline:
             return
 
         cache_key = (str(self._pdf_path), self._page)

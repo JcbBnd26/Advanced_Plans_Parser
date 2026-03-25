@@ -202,7 +202,10 @@ class PdfLoaderMixin:
 
         # Render page preview — try PDF first, then PNG fallback
         self._png_fallback_mode = False
-        if self._pdf_path and self._pdf_path.exists():
+        _offline = (
+            getattr(self, "_offline_mode_var", None) and self._offline_mode_var.get()
+        )  # noqa: SIM102
+        if not _offline and self._pdf_path and self._pdf_path.exists():
             try:
                 from plancheck.ingest.ingest import render_page_image
 
