@@ -179,6 +179,7 @@ def _run_vocr_candidates_stage(
     from .vocr.producer_stats import load_producer_stats
 
     candidates: list = []
+    ml_pruned = 0
     with run_stage("vocr_candidates", cfg) as sr_cand:
         if sr_cand.ran:
             # Load persistent method stats for adaptive confidence (Level 1)
@@ -209,7 +210,6 @@ def _run_vocr_candidates_stage(
                     by_method[m] = by_method.get(m, 0) + 1
 
             # Level 2: ML classifier filtering
-            ml_pruned = 0
             if cfg.vocr_cand_ml_enabled and candidates:
                 from .corrections.candidate_classifier import CandidateClassifier
 

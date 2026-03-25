@@ -14,18 +14,12 @@ from typing import Any
 
 from plancheck.analysis.box_merge import merge_boxes, polygon_bbox
 from plancheck.corrections.features import featurize_region
-from plancheck.ingest.ingest import (
-    extract_text_in_bbox,
-    extract_text_in_polygon,
-    point_in_polygon,
-)
+from plancheck.ingest.ingest import (extract_text_in_bbox,
+                                     extract_text_in_polygon, point_in_polygon)
 
-from .annotation_state import (
-    HANDLE_POSITIONS,
-    CanvasBox,
-    _reshape_bbox_from_handle,
-    _scale_polygon_to_bbox,
-)
+from .annotation_state import (HANDLE_POSITIONS, CanvasBox,
+                               _reshape_bbox_from_handle,
+                               _scale_polygon_to_bbox)
 
 
 class EventHandlerMixin:
@@ -88,7 +82,8 @@ class EventHandlerMixin:
 
         from pathlib import Path
 
-        from plancheck.corrections.hierarchical_classifier import classify_element
+        from plancheck.corrections.hierarchical_classifier import \
+            classify_element
 
         result = classify_element(
             features,
@@ -583,37 +578,47 @@ class EventHandlerMixin:
         self._suggest_detail_label.configure(text="")
         self._suggest_btn.pack_forget()
         if cbox.features:
-            try:
-                prediction = self._predict_model_suggestion_details(
-                    cbox.features,
-                    text=cbox.text_content,
-                )
-                if prediction is None:
-                    raise ValueError("No configured model is available")
-                pred_label = prediction["label"]
-                pred_text = prediction["text"]
-                show_prediction = pred_label != cbox.element_type or bool(
-                    prediction.get("detail_text")
-                )
-                if show_prediction:
-                    self._model_suggestion = pred_label
-                    self._suggest_label.configure(text=pred_text)
-                    self._suggest_detail_label.configure(
-                        text=prediction.get("detail_text", "")
-                    )
-                    if pred_label != cbox.element_type:
-                        self._suggest_btn.pack(side="left", padx=4)
-                    else:
-                        self._model_suggestion = None
-                        self._suggest_btn.pack_forget()
-            except Exception:  # noqa: BLE001 — classifier suggestion is optional
-                pass
+            # Defer ML prediction to after the UI updates so the box
+            # selection feels instant; the suggestion will appear a
+            # moment later without blocking the main thread.
+            self._canvas.after_idle(self._deferred_predict, cbox)
 
         # Update multi-select count
         self._update_multi_label()
 
         # Update group section
         self._update_group_inspector(cbox)
+
+    def _deferred_predict(self, cbox: CanvasBox) -> None:
+        """Run ML suggestion after the UI has painted the selection."""
+        # Guard: box may have been deselected before this fires
+        if self._selected_box is not cbox:
+            return
+        try:
+            prediction = self._predict_model_suggestion_details(
+                cbox.features,
+                text=cbox.text_content,
+            )
+            if prediction is None:
+                return
+            pred_label = prediction["label"]
+            pred_text = prediction["text"]
+            show_prediction = pred_label != cbox.element_type or bool(
+                prediction.get("detail_text")
+            )
+            if show_prediction:
+                self._model_suggestion = pred_label
+                self._suggest_label.configure(text=pred_text)
+                self._suggest_detail_label.configure(
+                    text=prediction.get("detail_text", "")
+                )
+                if pred_label != cbox.element_type:
+                    self._suggest_btn.pack(side="left", padx=4)
+                else:
+                    self._model_suggestion = None
+                    self._suggest_btn.pack_forget()
+        except Exception:  # noqa: BLE001 — classifier suggestion is optional
+            pass
 
     def _deselect(self) -> None:
         """Deselect the current box."""
@@ -640,18 +645,21 @@ class EventHandlerMixin:
 
     # ── Drag (reshape + move + add mode) ────────────────────────────
 
+    # Throttle interval in milliseconds (~30 fps for drag redraws)
+    _DRAG_THROTTLE_MS = 33
+
     def _on_canvas_drag(self, event: tk.Event) -> None:
         cx = self._canvas.canvasx(event.x)
         cy = self._canvas.canvasy(event.y)
 
-        # Handle reshape drag
+        # Reshape and move drags are throttled to avoid redrawing on
+        # every single mouse-motion event (>100/s on most systems).
         if self._drag_handle and self._selected_box:
-            self._do_handle_drag(cx, cy)
+            self._schedule_throttled_drag(cx, cy, self._do_handle_drag)
             return
 
-        # Handle move drag (second click on selected box)
         if self._move_dragging and self._selected_box and self._move_start_pdf:
-            self._do_move_drag(cx, cy)
+            self._schedule_throttled_drag(cx, cy, self._do_move_drag)
             return
 
         # Handle add-mode drag
@@ -684,6 +692,29 @@ class EventHandlerMixin:
                 width=1,
                 dash=(3, 3),
             )
+
+    def _schedule_throttled_drag(
+        self,
+        cx: float,
+        cy: float,
+        handler: Any,
+    ) -> None:
+        """Coalesce rapid drag events into at most one redraw per throttle tick."""
+        self._drag_pending_coords = (cx, cy)
+        if self._drag_after_id is not None:
+            # A redraw is already scheduled — just update coords
+            return
+        self._drag_after_id = self._canvas.after(
+            self._DRAG_THROTTLE_MS, self._flush_throttled_drag, handler
+        )
+
+    def _flush_throttled_drag(self, handler: Any) -> None:
+        """Execute the latest drag coordinates."""
+        self._drag_after_id = None
+        coords = self._drag_pending_coords
+        if coords is not None:
+            self._drag_pending_coords = None
+            handler(coords[0], coords[1])
 
     def _do_move_drag(self, cx: float, cy: float) -> None:
         """Update the box position during a move drag."""
@@ -758,6 +789,7 @@ class EventHandlerMixin:
                 cbox.detection_id, cbox.polygon, new_bbox
             )
         self._draw_box(cbox)
+        self._auto_refresh_text(cbox)
         self._status.configure(text="Moved box to new position")
 
     def _do_handle_drag(self, cx: float, cy: float) -> None:
@@ -793,6 +825,18 @@ class EventHandlerMixin:
     def _on_canvas_release(self, event: tk.Event) -> None:
         cx = self._canvas.canvasx(event.x)
         cy = self._canvas.canvasy(event.y)
+
+        # Flush any pending throttled drag so the final position is accurate
+        if self._drag_after_id is not None:
+            self._canvas.after_cancel(self._drag_after_id)
+            self._drag_after_id = None
+        if self._drag_pending_coords is not None:
+            pcx, pcy = self._drag_pending_coords
+            self._drag_pending_coords = None
+            if self._drag_handle and self._selected_box:
+                self._do_handle_drag(pcx, pcy)
+            elif self._move_dragging and self._selected_box:
+                self._do_move_drag(pcx, pcy)
 
         # Finalize move drag
         if self._move_dragging and self._selected_box:
@@ -859,6 +903,7 @@ class EventHandlerMixin:
                 cbox.detection_id, cbox.polygon, new_bbox
             )
         self._draw_box(cbox)
+        self._auto_refresh_text(cbox)
 
     def _finalize_add(self, cx: float, cy: float) -> None:
         """Complete adding a new detection after drawing a rectangle."""
@@ -1010,6 +1055,39 @@ class EventHandlerMixin:
 
     # ── Inspector actions ──────────────────────────────────────────
 
+    def _auto_refresh_text(self, cbox: CanvasBox) -> None:
+        """Re-extract text from the PDF for a box and persist to the DB.
+
+        Called automatically after move/reshape so the box's text content
+        stays in sync with the region it encompasses.
+        """
+        if not self._pdf_path:
+            return
+        try:
+            new_text = self._extract_text_for_box(cbox)
+        except Exception:
+            return
+
+        cbox.text_content = new_text
+
+        # Recompute features with the updated bbox
+        features = featurize_region(
+            cbox.element_type, cbox.pdf_bbox, None, 2448.0, 1584.0
+        )
+        cbox.features = features
+
+        # Persist text and features to the database
+        self._store.update_detection_text_and_features(
+            cbox.detection_id, new_text, features
+        )
+
+        # If this box is currently selected, refresh the inspector
+        if self._selected_box is cbox:
+            self._insp_text.config(state="normal")
+            self._insp_text.delete("1.0", "end")
+            self._insp_text.insert("1.0", new_text)
+            self._insp_text.config(state="disabled")
+
     def _on_rescan_text(self) -> None:
         """Re-extract text from the PDF under the selected box's current bbox."""
         if not self._selected_box:
@@ -1027,6 +1105,15 @@ class EventHandlerMixin:
             return
 
         cbox.text_content = new_text
+
+        # Recompute features and persist to DB
+        features = featurize_region(
+            cbox.element_type, cbox.pdf_bbox, None, 2448.0, 1584.0
+        )
+        cbox.features = features
+        self._store.update_detection_text_and_features(
+            cbox.detection_id, new_text, features
+        )
 
         # Update the inspector text widget
         self._insp_text.config(state="normal")

@@ -3,13 +3,14 @@
 Contains all methods that draw boxes, handles, overlays, and the
 background page image onto the tkinter Canvas.
 """
+
 from __future__ import annotations
 
 import tkinter as tk
 
 from PIL import Image, ImageTk
 
-from .annotation_state import CanvasBox, HANDLE_SIZE
+from .annotation_state import HANDLE_SIZE, CanvasBox
 
 
 class CanvasRendererMixin:
@@ -23,9 +24,19 @@ class CanvasRendererMixin:
         eff = self._effective_scale()
         # Scale relative to the base DPI rendering
         if self._zoom != 1.0:
-            new_w = int(self._bg_image.width * self._zoom)
-            new_h = int(self._bg_image.height * self._zoom)
-            display = self._bg_image.resize((new_w, new_h), Image.LANCZOS)
+            # Re-use a cached resize if available at this zoom level
+            cached = self._zoom_image_cache.get(self._zoom)
+            if cached is not None:
+                display = cached
+            else:
+                new_w = int(self._bg_image.width * self._zoom)
+                new_h = int(self._bg_image.height * self._zoom)
+                display = self._bg_image.resize((new_w, new_h), Image.LANCZOS)
+                # Evict oldest entries when the cache is full
+                if len(self._zoom_image_cache) >= self._zoom_cache_max:
+                    oldest = next(iter(self._zoom_image_cache))
+                    del self._zoom_image_cache[oldest]
+                self._zoom_image_cache[self._zoom] = display
         else:
             display = self._bg_image
 
@@ -54,7 +65,8 @@ class CanvasRendererMixin:
         ch = self._canvas.winfo_height()
         cx, cy = cw // 2, ch // 2
         self._canvas.create_text(
-            cx, cy,
+            cx,
+            cy,
             text="Run pipeline to detect elements",
             font=("Segoe UI", 18, "bold"),
             fill="#aaaaaa",
@@ -253,13 +265,18 @@ class CanvasRendererMixin:
         self._clear_word_overlay()
         if not self._pdf_path:
             return
-        try:
-            from plancheck.ingest.ingest import extract_page_words
 
-            words = extract_page_words(self._pdf_path, self._page)
-        except Exception as exc:
-            self._status.configure(text=f"Word overlay failed: {exc}")
-            return
+        cache_key = (str(self._pdf_path), self._page)
+        words = self._word_cache.get(cache_key)
+        if words is None:
+            try:
+                from plancheck.ingest.ingest import extract_page_words
+
+                words = extract_page_words(self._pdf_path, self._page)
+            except Exception as exc:
+                self._status.configure(text=f"Word overlay failed: {exc}")
+                return
+            self._word_cache[cache_key] = words
 
         eff = self._effective_scale()
         for w in words:
@@ -297,4 +314,3 @@ class CanvasRendererMixin:
         self._selected_word_rids.clear()
 
     # ── Keyboard shortcuts ─────────────────────────────────────────
-

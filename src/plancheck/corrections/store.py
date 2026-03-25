@@ -623,6 +623,38 @@ class CorrectionStore(
             )
             self._conn.commit()
 
+    def update_detection_text_and_features(
+        self,
+        detection_id: str,
+        text_content: str,
+        features: dict | None = None,
+    ) -> None:
+        """Update the text content and optionally features of a detection.
+
+        Parameters
+        ----------
+        detection_id : str
+            The ID of the detection to update.
+        text_content : str
+            The new text content extracted from the PDF region.
+        features : dict | None
+            If provided, replaces the stored features_json.
+        """
+        with self._write_lock():
+            if features is not None:
+                self._conn.execute(
+                    "UPDATE detections SET text_content = ?, features_json = ? "
+                    "WHERE detection_id = ?",
+                    (text_content, json.dumps(features), detection_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE detections SET text_content = ? "
+                    "WHERE detection_id = ?",
+                    (text_content, detection_id),
+                )
+            self._conn.commit()
+
     # ── corrections ────────────────────────────────────────────────────
 
     def save_correction(

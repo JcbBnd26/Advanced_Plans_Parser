@@ -77,8 +77,7 @@ class AnnotationTab(
         self.root = notebook.winfo_toplevel()
 
         self.frame = ttk.Frame(notebook)
-        self.frame.columnconfigure(0, weight=3)
-        self.frame.columnconfigure(1, weight=0)
+        self.frame.columnconfigure(0, weight=1)
         self.frame.rowconfigure(1, weight=1)
         notebook.add(self.frame, text="ML Trainer")
 
@@ -167,6 +166,13 @@ class AnnotationTab(
 
         # Model metrics cache
         self._last_metrics: dict | None = None
+
+        # ── Performance: drag throttle & caches ────────────────────
+        self._drag_after_id: str | None = None  # pending after() for drag
+        self._drag_pending_coords: tuple[float, float] | None = None
+        self._zoom_image_cache: dict[float, Image.Image] = {}
+        self._zoom_cache_max: int = 5
+        self._word_cache: dict[tuple[str, int], list[dict]] = {}
 
         self._build_ui()
 
@@ -410,11 +416,15 @@ class AnnotationTab(
             "Show or hide word-level boxes detected from the PDF text layer. Use this when checking text extraction or selecting words for merges.",
         )
 
-        # ── Canvas (left) ─────────────────────────────────────────
-        canvas_frame = ttk.Frame(self.frame)
-        canvas_frame.grid(row=1, column=0, sticky="nsew")
+        # ── Canvas + Inspector split (VS Code-style draggable sash) ─────
+        self._h_paned = ttk.PanedWindow(self.frame, orient="horizontal")
+        self._h_paned.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+
+        # ── Canvas (left pane) ────────────────────────────────────
+        canvas_frame = ttk.Frame(self._h_paned)
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
+        self._h_paned.add(canvas_frame, weight=3)
 
         self._canvas = tk.Canvas(
             canvas_frame,
@@ -460,11 +470,11 @@ class AnnotationTab(
         )
 
         # ── Inspector (right) ─────────────────────────────────────
-        inspector_outer = ttk.LabelFrame(self.frame, text="Inspector", width=260)
-        inspector_outer.grid(row=1, column=1, sticky="nsew", padx=6, pady=3)
-        inspector_outer.grid_propagate(False)
+        # ── Inspector (right pane) ────────────────────────────────
+        inspector_outer = ttk.LabelFrame(self._h_paned, text="Inspector")
         inspector_outer.columnconfigure(0, weight=1)
         inspector_outer.rowconfigure(0, weight=1)
+        self._h_paned.add(inspector_outer, weight=1)
 
         # Scrollable wrapper inside the inspector
         self._insp_canvas = tk.Canvas(
@@ -1103,7 +1113,7 @@ class AnnotationTab(
 
         # ── Status bar ────────────────────────────────────────────
         self._status = ttk.Label(self.frame, text="Ready", relief="sunken", anchor="w")
-        self._status.grid(row=2, column=0, columnspan=2, sticky="ew", padx=2)
+        self._status.grid(row=2, column=0, sticky="ew", padx=2)
         self._add_copy_menu(self._status)
         self._tooltip(self._status, "Current status and last operation result")
 
@@ -1113,7 +1123,7 @@ class AnnotationTab(
             self.frame, variable=self._progress_var, maximum=100
         )
         self._progress.grid(
-            row=3, column=0, columnspan=2, sticky="ew", padx=2, pady=(0, 2)
+            row=3, column=0, sticky="ew", padx=2, pady=(0, 2)
         )
         self._progress.grid_remove()  # hidden by default
 

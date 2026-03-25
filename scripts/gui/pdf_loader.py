@@ -205,6 +205,8 @@ class PdfLoaderMixin:
             self._bg_image = render_page_image(
                 self._pdf_path, self._page, resolution=self._resolution
             )
+            # New page image — invalidate zoom cache
+            self._zoom_image_cache.clear()
             self._render_background()
         except Exception as exc:
             self._status.configure(text=f"Error rendering page: {exc}")

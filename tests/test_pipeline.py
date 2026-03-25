@@ -356,3 +356,30 @@ class TestDocumentChecks:
         pr3 = PageResult(page=2, page_quality=0.82)
         findings = _run_document_checks([pr1, pr2, pr3])
         assert all(f.check_id != "DOC_LOW_QUALITY" for f in findings)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# VOCR candidates stage — skipped path regression
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestVocrCandidatesSkipped:
+    """Regression: _run_vocr_candidates_stage must not crash when the
+    stage is disabled by config (vocr_candidates gate returns False)."""
+
+    def test_skipped_does_not_raise(self):
+        from plancheck.ingest.ingest import PageContext
+        from plancheck.pipeline_stages import _run_vocr_candidates_stage
+
+        cfg = GroupingConfig(enable_vocr_candidates=False)
+        pr = PageResult(page=0)
+        ctx = PageContext(page_num=0, page_width=2448, page_height=1584)
+
+        result = _run_vocr_candidates_stage(
+            pr, ctx, cfg, boxes=[], page_w=2448, page_h=1584
+        )
+
+        assert result == []
+        assert pr.vocr_candidates == []
+        assert pr.stages["vocr_candidates"].ran is False
+        assert pr.stages["vocr_candidates"].status == "skipped"
