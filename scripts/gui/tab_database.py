@@ -286,6 +286,7 @@ class DatabaseTab:
             ("Documents", str(ov["total_documents"])),
             ("Detections", str(ov["total_detections"])),
             ("Corrections", str(ov["total_corrections"])),
+            ("Dismissed", str(ov.get("total_dismissed", 0))),
             ("Groups", str(ov["total_groups"])),
             ("Training Runs", str(ov["total_training_runs"])),
             ("Last Detection", _fmt_ts(ov["last_detection_at"])),

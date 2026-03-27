@@ -97,6 +97,8 @@ class FilterControlsMixin:
             self._filter_row_widgets[etype] = (row_frame, cb, lbl)
 
         self._update_filter_color_button_label()
+        if hasattr(self, "_update_filter_summary"):
+            self._update_filter_summary()
 
     def _set_active_filter_color_type(self, element_type: str) -> None:
         """Set the active element type target for the shared color picker."""
@@ -203,3 +205,5 @@ class FilterControlsMixin:
         self._status.configure(
             text=f"Showing {visible}/{len(self._canvas_boxes)} detections"
         )
+        if hasattr(self, "_update_filter_summary"):
+            self._update_filter_summary()

@@ -97,7 +97,6 @@ class AnnotationTab(
         self._canvas_boxes: list[CanvasBox] = []
         self._selected_box: CanvasBox | None = None
         self._multi_selected: list[CanvasBox] = []
-        self._mode: str = "select"
 
         self._draw_start: tuple[float, float] | None = None
         self._draw_rect_id: int | None = None
@@ -183,6 +182,10 @@ class AnnotationTab(
         except Exception:  # noqa: BLE001 — binding is best-effort
             pass
 
+        # Lazy-populate the Project dropdown on first tab visit
+        self._needs_project_refresh = True
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed, add="+")
+
         # Subscribe to GuiState events
         self.state.subscribe("pdf_changed", self._on_pdf_changed)
         self.state.subscribe("run_completed", self._on_run_completed)
@@ -203,6 +206,19 @@ class AnnotationTab(
             from plancheck.corrections.store import CorrectionStore
 
             self._store = CorrectionStore()
+
+    def _on_tab_changed(self, _event: tk.Event) -> None:
+        """Populate the Project dropdown on first visit to the ML Trainer tab."""
+        if not self._needs_project_refresh:
+            return
+        try:
+            selected = self.notebook.index(self.notebook.select())
+            my_index = self.notebook.index(self.frame)
+        except Exception:  # noqa: BLE001 — notebook may be in bad state
+            return
+        if selected == my_index:
+            self._refresh_project_dropdown()
+            self._needs_project_refresh = False
 
     def request_cancel(self) -> None:
         """Best-effort cancel of background model training."""
@@ -310,6 +326,83 @@ class AnnotationTab(
         widget.bind("<Enter>", _show, add="+")
         widget.bind("<Leave>", _hide, add="+")
 
+    # ── Collapsible section helper ────────────────────────────────
+
+    def _make_collapsible_section(
+        self,
+        parent: ttk.Frame,
+        title: str,
+        *,
+        collapsed: bool = True,
+    ) -> tuple[ttk.Frame, ttk.Frame, tk.BooleanVar]:
+        """Create a collapsible section with a toggle button.
+
+        Returns ``(outer_frame, content_frame, expanded_var)``.
+        *content_frame* is hidden via ``grid_remove()`` when collapsed.
+        """
+        expanded_var = tk.BooleanVar(value=not collapsed)
+        outer = ttk.Frame(parent)
+        outer.columnconfigure(0, weight=1)
+
+        def _toggle() -> None:
+            if expanded_var.get():
+                expanded_var.set(False)
+                content.grid_remove()
+                toggle_btn.configure(text=f"\u25b6 {title}")
+            else:
+                expanded_var.set(True)
+                content.grid(row=1, column=0, sticky="ew")
+                toggle_btn.configure(text=f"\u25bc {title}")
+            # Update inspector scroll region after collapse/expand
+            if hasattr(self, "_insp_canvas"):
+                self._insp_canvas.configure(scrollregion=self._insp_canvas.bbox("all"))
+
+        arrow = "\u25bc" if not collapsed else "\u25b6"
+        toggle_btn = ttk.Button(
+            outer,
+            text=f"{arrow} {title}",
+            command=_toggle,
+            style="Toolbutton",
+        )
+        toggle_btn.grid(row=0, column=0, sticky="ew")
+
+        content = ttk.Frame(outer)
+        content.columnconfigure(1, weight=1)
+        if not collapsed:
+            content.grid(row=1, column=0, sticky="ew")
+        # else: left un-gridded (collapsed)
+
+        return outer, content, expanded_var
+
+    # ── Filter summary helper ─────────────────────────────────────
+
+    def _update_filter_summary(self) -> None:
+        """Update the collapsed-state filter summary line."""
+        if not hasattr(self, "_filter_summary_label"):
+            return
+        active = sum(1 for v in self._filter_label_vars.values() if v.get())
+        total = len(self._filter_label_vars)
+        parts: list[str] = [f"{active}/{total} types"]
+        conf_min = self._filter_conf_min.get()
+        if conf_min > 0:
+            parts.append(f"conf \u2265 {conf_min:.2f}")
+        if self._filter_uncorrected_only.get():
+            parts.append("uncorrected only")
+        self._filter_summary_label.configure(text=" | ".join(parts))
+
+    # ── Auto-expand training section ──────────────────────────────
+
+    def _ensure_training_section_visible(self) -> None:
+        """Expand the Train & Evaluate section if it is collapsed."""
+        if hasattr(self, "_sec2_expanded") and not self._sec2_expanded.get():
+            self._sec2_expanded.set(True)
+            if hasattr(self, "_sec2_content"):
+                self._sec2_content.grid(row=1, column=0, sticky="ew")
+            if hasattr(self, "_sec2_toggle_btn"):
+                self._sec2_toggle_btn.configure(text="\u25bc Train & Evaluate")
+            if hasattr(self, "_insp_canvas"):
+                self._insp_canvas.configure(scrollregion=self._insp_canvas.bbox("all"))
+
     # ── UI construction ────────────────────────────────────────────
 
     def _build_ui(self) -> None:
@@ -318,23 +411,6 @@ class AnnotationTab(
         # ── Top bar ───────────────────────────────────────────────
         top = ttk.Frame(self.frame)
         top.grid(row=0, column=0, columnspan=2, sticky="ew", **pad)
-
-        ttk.Label(top, text="PDF:").pack(side="left")
-        self._pdf_label = ttk.Label(top, text="(none)", width=40)
-        self._pdf_label.pack(side="left", padx=4)
-        self._add_copy_menu(self._pdf_label)
-        self._tooltip(
-            self._pdf_label, "Currently loaded PDF for annotation and review."
-        )
-
-        _btn_browse = ttk.Button(top, text="Browse…", command=self._browse_pdf)
-        _btn_browse.pack(side="left", padx=2)
-        self._tooltip(
-            _btn_browse,
-            "Open a PDF file in the ML Trainer tab. Use this when you want to review detections or corrections directly.",
-        )
-
-        ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=6)
 
         # ── Project / Run dropdowns ───────────────────────────────
         ttk.Label(top, text="Project:").pack(side="left")
@@ -582,26 +658,34 @@ class AnnotationTab(
         # Bind once globally; handler is gated by _insp_wheel_active
         self.root.bind_all("<MouseWheel>", _on_inspector_mousewheel, add="+")
 
-        row = 0
-        ttk.Label(inspector, text="ID:").grid(
-            row=row, column=0, sticky="w", padx=4, pady=2
-        )
-        self._insp_id = ttk.Label(inspector, text="—")
-        self._insp_id.grid(row=row, column=1, sticky="w", padx=4, pady=2)
+        # ═══════════════════════════════════════════════════════════
+        # SECTION 1: Review & Correct (always visible)
+        # ═══════════════════════════════════════════════════════════
+        sec1 = ttk.LabelFrame(inspector, text="Review & Correct")
+        sec1.grid(row=0, column=0, columnspan=2, sticky="ew", padx=4, pady=(4, 2))
+        sec1.columnconfigure(1, weight=1)
+
+        s1r = 0  # section 1 row counter
+
+        # ── Detection ID ──────────────────────────────────────────
+        ttk.Label(sec1, text="ID:").grid(row=s1r, column=0, sticky="w", padx=4, pady=2)
+        self._insp_id = ttk.Label(sec1, text="—")
+        self._insp_id.grid(row=s1r, column=1, sticky="w", padx=4, pady=2)
         self._add_copy_menu(self._insp_id)
         self._tooltip(
             self._insp_id,
             "Unique identifier for the selected detection. Useful when cross-checking saved corrections or debugging a specific item.",
         )
 
-        row += 1
-        ttk.Label(inspector, text="Type:").grid(
-            row=row, column=0, sticky="w", padx=4, pady=2
+        # ── Element type ──────────────────────────────────────────
+        s1r += 1
+        ttk.Label(sec1, text="Type:").grid(
+            row=s1r, column=0, sticky="w", padx=4, pady=2
         )
         self._type_var = tk.StringVar()
         self._type_var.trace_add("write", self._on_type_selection_changed)
-        type_row_frame = ttk.Frame(inspector)
-        type_row_frame.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+        type_row_frame = ttk.Frame(sec1)
+        type_row_frame.grid(row=s1r, column=1, sticky="ew", padx=4, pady=2)
         self._type_combo = ttk.Combobox(
             type_row_frame,
             textvariable=self._type_var,
@@ -623,43 +707,46 @@ class AnnotationTab(
             "Register a new element type so it can be used in this session and future reviews.",
         )
 
-        row += 1
-        ttk.Label(inspector, text="Subtype:").grid(
-            row=row, column=0, sticky="w", padx=4, pady=2
+        # ── Subtype ───────────────────────────────────────────────
+        s1r += 1
+        ttk.Label(sec1, text="Subtype:").grid(
+            row=s1r, column=0, sticky="w", padx=4, pady=2
         )
         self._subtype_var = tk.StringVar()
         self._subtype_combo = ttk.Combobox(
-            inspector,
+            sec1,
             textvariable=self._subtype_var,
             values=self._title_subtypes(),
             width=18,
             state="disabled",
         )
-        self._subtype_combo.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+        self._subtype_combo.grid(row=s1r, column=1, sticky="ew", padx=4, pady=2)
         self._subtype_combo.bind("<<ComboboxSelected>>", self._on_subtype_selected)
         self._tooltip(
             self._subtype_combo,
             "Optional Stage 2 title subtype. Use this for title-related elements when a more specific label is needed.",
         )
 
-        row += 1
-        ttk.Label(inspector, text="Conf:").grid(
-            row=row, column=0, sticky="w", padx=4, pady=2
+        # ── Confidence ────────────────────────────────────────────
+        s1r += 1
+        ttk.Label(sec1, text="Conf:").grid(
+            row=s1r, column=0, sticky="w", padx=4, pady=2
         )
-        self._insp_conf = ttk.Label(inspector, text="—")
-        self._insp_conf.grid(row=row, column=1, sticky="w", padx=4, pady=2)
+        self._insp_conf = ttk.Label(sec1, text="—")
+        self._insp_conf.grid(row=s1r, column=1, sticky="w", padx=4, pady=2)
         self._add_copy_menu(self._insp_conf)
         self._tooltip(
             self._insp_conf,
             "Confidence score for the selected detection. Lower values usually deserve closer review.",
         )
 
-        row += 1
-        ttk.Label(inspector, text="Text:").grid(
-            row=row, column=0, sticky="nw", padx=4, pady=2
+        # ── Text + Rescan ─────────────────────────────────────────
+        s1r += 1
+        ttk.Label(sec1, text="Text:").grid(
+            row=s1r, column=0, sticky="nw", padx=4, pady=2
         )
-        text_frame = ttk.Frame(inspector)
-        text_frame.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+        text_frame = ttk.Frame(sec1)
+        text_frame.grid(row=s1r, column=1, sticky="ew", padx=4, pady=2)
         text_frame.columnconfigure(0, weight=1)
         self._insp_text = tk.Text(
             text_frame, width=24, height=6, wrap="word", state="disabled"
@@ -676,7 +763,7 @@ class AnnotationTab(
             "Extracted text for the selected detection. Review this when checking OCR quality or deciding how to relabel an item.",
         )
         _btn_rescan = ttk.Button(
-            text_frame, text="Rescan ↻", width=10, command=self._on_rescan_text
+            text_frame, text="Rescan \u21bb", width=10, command=self._on_rescan_text
         )
         _btn_rescan.grid(row=1, column=0, sticky="w", pady=(2, 0))
         self._tooltip(
@@ -684,51 +771,11 @@ class AnnotationTab(
             "Re-extract text from the current PDF region. Use this after moving or resizing a box.",
         )
 
-        # ── Buttons ───────────────────────────────────────────────
-        row += 1
-        btn_frame = ttk.Frame(inspector)
-        btn_frame.grid(row=row, column=0, columnspan=2, pady=6)
-
-        _btn_accept = ttk.Button(btn_frame, text="Accept ✓", command=self._on_accept)
-        _btn_accept.pack(side="left", padx=3)
-        self._tooltip(
-            _btn_accept, "Confirm that the selected detection is correct. Shortcut: A."
-        )
-        _btn_relabel = ttk.Button(btn_frame, text="Relabel", command=self._on_relabel)
-        _btn_relabel.pack(side="left", padx=3)
-        self._tooltip(
-            _btn_relabel,
-            "Save the selected type as a correction for this detection. Use this when the box is correct but the label is wrong. Shortcut: R.",
-        )
-        _btn_delete = ttk.Button(btn_frame, text="Reject ✗", command=self._on_delete)
-        _btn_delete.pack(side="left", padx=3)
-        self._tooltip(
-            _btn_delete, "Mark the selected detection as a false positive. Shortcut: D."
-        )
-
-        # ── Merge button ──────────────────────────────────────────
-        row += 1
-        batch_frame = ttk.Frame(inspector)
-        batch_frame.grid(row=row, column=0, columnspan=2, pady=2)
-        _btn_merge = ttk.Button(batch_frame, text="Merge ⊞", command=self._on_merge)
-        _btn_merge.pack(side="left", padx=3)
-        self._tooltip(
-            _btn_merge,
-            "Combine selected boxes or words into one detection. Use this when the pipeline split a single logical item into multiple pieces. Shortcut: M.",
-        )
-        row += 1
-        self._multi_label = ttk.Label(inspector, text="", foreground="blue")
-        self._multi_label.grid(row=row, column=0, columnspan=2, sticky="w", padx=4)
-        self._tooltip(
-            self._multi_label,
-            "Shows how many boxes are selected together. Use multi-selection for merges, grouping, and batch review actions.",
-        )
-
-        # ── Model suggestion ──────────────────────────────────────
-        row += 1
-        self._suggest_frame = ttk.Frame(inspector)
+        # ── Model suggestion (moved before action buttons) ────────
+        s1r += 1
+        self._suggest_frame = ttk.Frame(sec1)
         self._suggest_frame.grid(
-            row=row, column=0, columnspan=2, sticky="ew", padx=4, pady=2
+            row=s1r, column=0, columnspan=2, sticky="ew", padx=4, pady=2
         )
         self._suggest_label = ttk.Label(
             self._suggest_frame, text="", foreground="#0060c0"
@@ -759,14 +806,70 @@ class AnnotationTab(
         )
         self._model_suggestion: str | None = None
 
-        # ── Group membership ──────────────────────────────────────
-        row += 1
-        ttk.Label(inspector, text="Group:").grid(
-            row=row, column=0, sticky="nw", padx=4, pady=2
+        # ── Action buttons ────────────────────────────────────────
+        s1r += 1
+        btn_frame = ttk.Frame(sec1)
+        btn_frame.grid(row=s1r, column=0, columnspan=2, pady=6)
+
+        _btn_accept = ttk.Button(
+            btn_frame, text="Accept \u2713", command=self._on_accept
         )
-        group_frame = ttk.Frame(inspector)
-        group_frame.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
-        self._insp_group_label = ttk.Label(group_frame, text="—", wraplength=180)
+        _btn_accept.pack(side="left", padx=3)
+        self._tooltip(
+            _btn_accept, "Confirm that the selected detection is correct. Shortcut: A."
+        )
+        _btn_relabel = ttk.Button(btn_frame, text="Relabel", command=self._on_relabel)
+        _btn_relabel.pack(side="left", padx=3)
+        self._tooltip(
+            _btn_relabel,
+            "Save the selected type as a correction for this detection. Use this when the box is correct but the label is wrong. Shortcut: R.",
+        )
+        _btn_delete = ttk.Button(
+            btn_frame, text="Reject \u2717", command=self._on_delete
+        )
+        _btn_delete.pack(side="left", padx=3)
+        self._tooltip(
+            _btn_delete, "Mark the selected detection as a false positive. Shortcut: D."
+        )
+        _btn_dismiss = ttk.Button(
+            btn_frame, text="Skip \u2298", command=self._on_dismiss
+        )
+        _btn_dismiss.pack(side="left", padx=3)
+        self._tooltip(
+            _btn_dismiss,
+            "Dismiss this detection without affecting training data. "
+            "Use when you're unsure of the label or want to skip for now. "
+            "Shortcut: X.",
+        )
+
+        # ── Merge + Multi-select ──────────────────────────────────
+        s1r += 1
+        batch_frame = ttk.Frame(sec1)
+        batch_frame.grid(row=s1r, column=0, columnspan=2, pady=2)
+        _btn_merge = ttk.Button(
+            batch_frame, text="Merge \u229e", command=self._on_merge
+        )
+        _btn_merge.pack(side="left", padx=3)
+        self._tooltip(
+            _btn_merge,
+            "Combine selected boxes or words into one detection. Use this when the pipeline split a single logical item into multiple pieces. Shortcut: M.",
+        )
+        s1r += 1
+        self._multi_label = ttk.Label(sec1, text="", foreground="blue")
+        self._multi_label.grid(row=s1r, column=0, columnspan=2, sticky="w", padx=4)
+        self._tooltip(
+            self._multi_label,
+            "Shows how many boxes are selected together. Use multi-selection for merges, grouping, and batch review actions.",
+        )
+
+        # ── Group membership ──────────────────────────────────────
+        s1r += 1
+        ttk.Label(sec1, text="Group:").grid(
+            row=s1r, column=0, sticky="nw", padx=4, pady=2
+        )
+        group_frame = ttk.Frame(sec1)
+        group_frame.grid(row=s1r, column=1, sticky="ew", padx=4, pady=2)
+        self._insp_group_label = ttk.Label(group_frame, text="\u2014", wraplength=180)
         self._insp_group_label.pack(side="top", anchor="w")
         self._add_copy_menu(self._insp_group_label)
         self._tooltip(
@@ -805,60 +908,23 @@ class AnnotationTab(
         )
         self._btn_remove_group.pack_forget()
 
-        # ── Mode selector ─────────────────────────────────────────
-        row += 1
-        ttk.Separator(inspector).grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=4
+        # ── Filters (collapsible sub-section) ─────────────────────
+        s1r += 1
+        flt_outer, flt_content, self._filters_expanded = self._make_collapsible_section(
+            sec1, "Filters", collapsed=True
         )
+        flt_outer.grid(row=s1r, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
 
-        row += 1
-        ttk.Label(inspector, text="Mode:", font=("TkDefaultFont", 9, "bold")).grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=4
+        # Summary label visible when filters are collapsed
+        self._filter_summary_label = ttk.Label(
+            flt_outer, text="", foreground="gray", font=("TkDefaultFont", 8)
         )
+        self._filter_summary_label.grid(row=2, column=0, sticky="w", padx=20)
 
-        row += 1
-        self._mode_var = tk.StringVar(value="select")
-        _rb_select = ttk.Radiobutton(
-            inspector,
-            text="Select / Edit",
-            variable=self._mode_var,
-            value="select",
-            command=self._on_mode_change,
-        )
-        _rb_select.grid(row=row, column=0, columnspan=2, sticky="w", padx=12)
-        self._tooltip(
-            _rb_select,
-            "Use this mode to inspect, move, resize, relabel, merge, or group existing detections.",
-        )
-
-        row += 1
-        _rb_add = ttk.Radiobutton(
-            inspector,
-            text="Add New Element",
-            variable=self._mode_var,
-            value="add",
-            command=self._on_mode_change,
-        )
-        _rb_add.grid(row=row, column=0, columnspan=2, sticky="w", padx=12)
-        self._tooltip(
-            _rb_add,
-            "Use this mode to draw a new detection box on the page when something important was missed.",
-        )
-
-        # ── Filters ───────────────────────────────────────────────
-        row += 1
-        ttk.Separator(inspector).grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=4
-        )
-        row += 1
-        ttk.Label(inspector, text="Filters:", font=("TkDefaultFont", 9, "bold")).grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=4
-        )
-
-        row += 1
-        filter_btns = ttk.Frame(inspector)
+        fr = 0  # filter content row counter
+        filter_btns = ttk.Frame(flt_content)
         filter_btns.grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=8, pady=(2, 0)
+            row=fr, column=0, columnspan=2, sticky="w", padx=8, pady=(2, 0)
         )
         _btn_show_all = ttk.Button(
             filter_btns,
@@ -894,16 +960,16 @@ class AnnotationTab(
             "Choose the display color for the currently selected filter type.",
         )
 
-        row += 1
-        self._filter_frame = ttk.Frame(inspector)
-        self._filter_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=8)
+        fr += 1
+        self._filter_frame = ttk.Frame(flt_content)
+        self._filter_frame.grid(row=fr, column=0, columnspan=2, sticky="ew", padx=8)
         if self.ELEMENT_TYPES:
             self._active_filter_color_type = self.ELEMENT_TYPES[0]
         self._rebuild_filter_controls()
 
-        row += 1
-        conf_frame = ttk.Frame(inspector)
-        conf_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
+        fr += 1
+        conf_frame = ttk.Frame(flt_content)
+        conf_frame.grid(row=fr, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
         ttk.Label(conf_frame, text="Min conf:").pack(side="left")
         self._conf_value_label = ttk.Label(conf_frame, text="0.00", width=4)
         self._conf_value_label.pack(side="right", padx=(4, 0))
@@ -916,6 +982,7 @@ class AnnotationTab(
             command=lambda v: (
                 self._conf_value_label.configure(text=f"{float(v):.2f}"),
                 self._apply_filters(),
+                self._update_filter_summary(),
             ),
         )
         _conf_scale.pack(side="left", fill="x", expand=True)
@@ -924,74 +991,85 @@ class AnnotationTab(
             "Hide detections below the selected confidence threshold. Use this to focus on stronger predictions or isolate weaker ones for review.",
         )
 
-        row += 1
+        fr += 1
         _cb_uncorrected = ttk.Checkbutton(
-            inspector,
+            flt_content,
             text="Uncorrected only",
             variable=self._filter_uncorrected_only,
-            command=self._apply_filters,
+            command=lambda: (self._apply_filters(), self._update_filter_summary()),
         )
-        _cb_uncorrected.grid(row=row, column=0, columnspan=2, sticky="w", padx=8)
+        _cb_uncorrected.grid(row=fr, column=0, columnspan=2, sticky="w", padx=8)
         self._tooltip(
             _cb_uncorrected,
             "Show only detections that have not been corrected yet. Use this to focus on unfinished review work.",
         )
 
-        # ── Session info ──────────────────────────────────────────
-        row += 1
-        ttk.Separator(inspector).grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=4
-        )
+        self._update_filter_summary()
 
-        row += 1
-        self._session_label = ttk.Label(inspector, text="Session: 0 saved")
-        self._session_label.grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=4, pady=2
+        # ═══════════════════════════════════════════════════════════
+        # SECTION 2: Train & Evaluate (collapsible, collapsed)
+        # ═══════════════════════════════════════════════════════════
+        sec2_outer, sec2, self._sec2_expanded = self._make_collapsible_section(
+            inspector, "Train & Evaluate", collapsed=True
         )
-        self._add_copy_menu(self._session_label)
+        sec2_outer.grid(row=1, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
+        # Store references for auto-expand helper
+        self._sec2_content = sec2
+        # Find the toggle button (first child of sec2_outer)
+        for child in sec2_outer.winfo_children():
+            if isinstance(child, ttk.Button):
+                self._sec2_toggle_btn = child
+                break
+
+        s2r = 0  # section 2 row counter
+
+        # ── Model status ──────────────────────────────────────────
+        self._model_status_label = ttk.Label(
+            sec2, text="No model trained", foreground="gray"
+        )
+        self._model_status_label.grid(
+            row=s2r, column=0, columnspan=2, sticky="w", padx=4, pady=2
+        )
+        self._add_copy_menu(self._model_status_label)
         self._tooltip(
-            self._session_label,
-            "Number of corrections saved during the current session.",
+            self._model_status_label,
+            "Current model status, including whether a model is loaded and whether retraining is approaching or past the threshold.",
         )
 
-        # ── Page Elements ─────────────────────────────────────────
-        row += 1
-        ttk.Separator(inspector).grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=4
-        )
-        row += 1
-        ttk.Label(
-            inspector, text="Page Elements:", font=("TkDefaultFont", 9, "bold")
-        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=4)
-        row += 1
-        self._page_elements_label = ttk.Label(
-            inspector,
-            text="(no page loaded)",
+        # ── Runtime summary ───────────────────────────────────────
+        s2r += 1
+        self._runtime_summary_label = ttk.Label(
+            sec2,
+            text="",
             foreground="gray",
+            wraplength=220,
+            justify="left",
             font=("TkDefaultFont", 8),
         )
-        self._page_elements_label.grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=8, pady=2
+        self._runtime_summary_label.grid(
+            row=s2r, column=0, columnspan=2, sticky="w", padx=4, pady=1
         )
-        self._add_copy_menu(self._page_elements_label)
+        self._add_copy_menu(self._runtime_summary_label)
         self._tooltip(
-            self._page_elements_label,
-            "Shows how many detections of each type are on the current page. Use this for a quick sense of page content and coverage.",
+            self._runtime_summary_label,
+            "Quick summary of the current ML session: routing mode, drift posture, and retrain readiness.",
         )
 
-        # ── Model Performance ─────────────────────────────────────
-        row += 1
-        ttk.Separator(inspector).grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=4
+        # ── Drift indicator ───────────────────────────────────────
+        s2r += 1
+        self._drift_indicator = ttk.Label(sec2, text="", foreground="orange")
+        self._drift_indicator.grid(
+            row=s2r, column=0, columnspan=2, sticky="w", padx=4, pady=1
         )
-        row += 1
-        ttk.Label(inspector, text="Model:", font=("TkDefaultFont", 9, "bold")).grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=4
+        self._tooltip(
+            self._drift_indicator,
+            "Warns when the current page looks different from the data used to build the drift reference. Treat predictions more cautiously when drift is active.",
         )
 
-        row += 1
-        model_btns = ttk.Frame(inspector)
-        model_btns.grid(row=row, column=0, columnspan=2, padx=4, pady=2)
+        # ── Model buttons ────────────────────────────────────────
+        s2r += 1
+        model_btns = ttk.Frame(sec2)
+        model_btns.grid(row=s2r, column=0, columnspan=2, padx=4, pady=2)
         _btn_train = ttk.Button(
             model_btns, text="Train Model", command=self._on_train_model
         )
@@ -1008,8 +1086,12 @@ class AnnotationTab(
             _btn_bootstrap,
             "Create starter training data from stronger existing detections. Use this when you do not yet have enough manual corrections for a normal retrain.",
         )
+
+        s2r += 1
+        model_btns2 = ttk.Frame(sec2)
+        model_btns2.grid(row=s2r, column=0, columnspan=2, padx=4, pady=2)
         _btn_metrics = ttk.Button(
-            model_btns, text="Metrics", command=self._on_show_metrics
+            model_btns2, text="Metrics", command=self._on_show_metrics
         )
         _btn_metrics.pack(side="left", padx=3)
         self._tooltip(
@@ -1017,7 +1099,7 @@ class AnnotationTab(
             "Open the latest training metrics, including accuracy and class-level performance.",
         )
         _btn_history = ttk.Button(
-            model_btns, text="History", command=self._on_show_training_history
+            model_btns2, text="History", command=self._on_show_training_history
         )
         _btn_history.pack(side="left", padx=3)
         self._tooltip(
@@ -1025,7 +1107,7 @@ class AnnotationTab(
             "Show past training runs so you can compare how the model has changed over time.",
         )
         _btn_importance = ttk.Button(
-            model_btns, text="Importance", command=self._on_show_feature_importance
+            model_btns2, text="Importance", command=self._on_show_feature_importance
         )
         _btn_importance.pack(side="left", padx=3)
         self._tooltip(
@@ -1033,106 +1115,86 @@ class AnnotationTab(
             "Show which input features influenced the trained model most strongly.",
         )
 
-        row += 1
-        self._model_status_label = ttk.Label(
-            inspector, text="No model trained", foreground="gray"
+        # ═══════════════════════════════════════════════════════════
+        # SECTION 3: Manage & Maintain (collapsible, collapsed)
+        # ═══════════════════════════════════════════════════════════
+        sec3_outer, sec3, self._sec3_expanded = self._make_collapsible_section(
+            inspector, "Manage & Maintain", collapsed=True
         )
-        self._model_status_label.grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=4, pady=2
-        )
-        self._add_copy_menu(self._model_status_label)
-        self._tooltip(
-            self._model_status_label,
-            "Current model status, including whether a model is loaded and whether retraining is approaching or past the threshold.",
-        )
+        sec3_outer.grid(row=2, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
 
-        # ── Drift Warning Indicator ───────────────────────────────
-        row += 1
-        self._drift_indicator = ttk.Label(inspector, text="", foreground="orange")
-        self._drift_indicator.grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=4, pady=1
-        )
-        self._tooltip(
-            self._drift_indicator,
-            "Warns when the current page looks different from the data used to build the drift reference. Treat predictions more cautiously when drift is active.",
-        )
+        s3r = 0  # section 3 row counter
 
-        row += 1
-        self._runtime_summary_label = ttk.Label(
-            inspector,
-            text="",
-            foreground="gray",
-            wraplength=220,
-            justify="left",
-            font=("TkDefaultFont", 8),
+        # ── Stats ─────────────────────────────────────────────────
+        ttk.Label(sec3, text="Stats:", font=("TkDefaultFont", 9, "bold")).grid(
+            row=s3r, column=0, columnspan=2, sticky="w", padx=4
         )
-        self._runtime_summary_label.grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=4, pady=1
-        )
-        self._add_copy_menu(self._runtime_summary_label)
-        self._tooltip(
-            self._runtime_summary_label,
-            "Quick summary of the current ML session: routing mode, drift posture, and retrain readiness.",
-        )
-
-        # ── Annotation Stats ──────────────────────────────────────
-        row += 1
-        ttk.Separator(inspector).grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=4
-        )
-        row += 1
-        ttk.Label(inspector, text="Stats:", font=("TkDefaultFont", 9, "bold")).grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=4
-        )
-        row += 1
+        s3r += 1
         self._stats_label = ttk.Label(
-            inspector, text="", foreground="gray", font=("TkDefaultFont", 8)
+            sec3, text="", foreground="gray", font=("TkDefaultFont", 8)
         )
         self._stats_label.grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=8, pady=2
+            row=s3r, column=0, columnspan=2, sticky="w", padx=8, pady=2
         )
         self._add_copy_menu(self._stats_label)
         self._tooltip(
             self._stats_label,
             "Summary of documents, detections, corrections, training examples, and retrain readiness.",
         )
-        row += 1
-        _btn_stats = ttk.Button(
-            inspector, text="Refresh Stats", command=self._refresh_stats
+
+        # ── Page Elements ─────────────────────────────────────────
+        s3r += 1
+        ttk.Label(sec3, text="Page Elements:", font=("TkDefaultFont", 9, "bold")).grid(
+            row=s3r, column=0, columnspan=2, sticky="w", padx=4
         )
-        _btn_stats.grid(row=row, column=0, padx=4, pady=2)
+        s3r += 1
+        self._page_elements_label = ttk.Label(
+            sec3,
+            text="(no page loaded)",
+            foreground="gray",
+            font=("TkDefaultFont", 8),
+        )
+        self._page_elements_label.grid(
+            row=s3r, column=0, columnspan=2, sticky="w", padx=8, pady=2
+        )
+        self._add_copy_menu(self._page_elements_label)
+        self._tooltip(
+            self._page_elements_label,
+            "Shows how many detections of each type are on the current page. Use this for a quick sense of page content and coverage.",
+        )
+
+        # ── Refresh / Clear buttons ───────────────────────────────
+        s3r += 1
+        _btn_stats = ttk.Button(sec3, text="Refresh Stats", command=self._refresh_stats)
+        _btn_stats.grid(row=s3r, column=0, padx=4, pady=2)
         self._tooltip(
             _btn_stats,
             "Recalculate annotation and training statistics from the correction database.",
         )
         _btn_clear_runs = ttk.Button(
-            inspector, text="Clear Old Runs", command=self._on_clear_old_runs
+            sec3, text="Clear Old Runs", command=self._on_clear_old_runs
         )
-        _btn_clear_runs.grid(row=row, column=1, padx=4, pady=2)
+        _btn_clear_runs.grid(row=s3r, column=1, padx=4, pady=2)
         self._tooltip(
             _btn_clear_runs,
             "Remove saved detection data from older pipeline runs while keeping corrections and training data.",
         )
 
-        # ── Active Learning ───────────────────────────────────────
-        row += 1
-        ttk.Separator(inspector).grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=4
-        )
-        row += 1
+        # ── Suggest Next Page ─────────────────────────────────────
+        s3r += 1
         _btn_suggest = ttk.Button(
-            inspector, text="Suggest Next Page", command=self._on_suggest_next
+            sec3, text="Suggest Next Page", command=self._on_suggest_next
         )
-        _btn_suggest.grid(row=row, column=0, columnspan=2, padx=4, pady=2)
+        _btn_suggest.grid(row=s3r, column=0, columnspan=2, padx=4, pady=2)
         self._tooltip(
             _btn_suggest,
             "Jump to the page that is most likely to benefit from more annotation work.",
         )
 
         # ── Snapshots ─────────────────────────────────────────────
-        row += 1
-        snap_btns = ttk.Frame(inspector)
-        snap_btns.grid(row=row, column=0, columnspan=2, padx=4, pady=2)
+        s3r += 1
+        snap_btns = ttk.Frame(sec3)
+        snap_btns.grid(row=s3r, column=0, columnspan=2, padx=4, pady=2)
         _btn_snap = ttk.Button(snap_btns, text="Snapshot", command=self._on_snapshot)
         _btn_snap.pack(side="left", padx=3)
         self._tooltip(
@@ -1140,7 +1202,7 @@ class AnnotationTab(
             "Save a timestamped backup of the correction database before major edits or retraining.",
         )
         _btn_restore = ttk.Button(
-            snap_btns, text="Restore…", command=self._on_restore_snapshot
+            snap_btns, text="Restore\u2026", command=self._on_restore_snapshot
         )
         _btn_restore.pack(side="left", padx=3)
         self._tooltip(
@@ -1148,16 +1210,29 @@ class AnnotationTab(
             "Restore corrections from a previous snapshot if you need to recover older annotation work.",
         )
 
-        # ── Keyboard legend ───────────────────────────────────────
-        row += 1
-        ttk.Separator(inspector).grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=4
+        # ═══════════════════════════════════════════════════════════
+        # PINNED FOOTER (always visible, outside sections)
+        # ═══════════════════════════════════════════════════════════
+
+        # ── Session counter ───────────────────────────────────────
+        self._session_label = ttk.Label(inspector, text="Session: 0 saved")
+        self._session_label.grid(
+            row=3, column=0, columnspan=2, sticky="w", padx=4, pady=2
         )
-        row += 1
+        self._add_copy_menu(self._session_label)
+        self._tooltip(
+            self._session_label,
+            "Number of corrections saved during the current session.",
+        )
+
+        # ── Keyboard legend ───────────────────────────────────────
+        ttk.Separator(inspector).grid(
+            row=4, column=0, columnspan=2, sticky="ew", pady=4
+        )
         kb_text = (
             "Shortcuts: A=Accept  D=Reject\n"
             "R=Relabel  M=Merge\n"
-            "Esc=Deselect  ←→ Cycle\n"
+            "Esc=Deselect  \u2190\u2192 Cycle\n"
             "F=Fit  +/- Zoom  Scroll=Pan\n"
             "Ctrl+Z/Y Undo/Redo\n"
             "Shift+Click Multi-select boxes\n"
@@ -1165,12 +1240,14 @@ class AnnotationTab(
             "Ctrl+A Select all\n"
             "Ctrl+C Copy box/word text\n"
             "Ctrl+V Paste box\n"
+            "Ctrl+Drag Draw new box\n"
             "G=Group  L=Link Column\n"
-            "W=Words  Right-click: menu"
+            "W=Words  X=Skip/Dismiss\n"
+            "Right-click: menu"
         )
         ttk.Label(
             inspector, text=kb_text, foreground="gray", font=("TkDefaultFont", 8)
-        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=4)
+        ).grid(row=5, column=0, columnspan=2, sticky="w", padx=4)
 
         # ── Status bar ────────────────────────────────────────────
         self._status = ttk.Label(self.frame, text="Ready", relief="sunken", anchor="w")
@@ -1208,6 +1285,7 @@ class AnnotationTab(
         self.root.bind("<Key-g>", self._key_group)
         self.root.bind("<Key-l>", self._key_link_column)
         self.root.bind("<Key-w>", self._key_toggle_words)
+        self.root.bind("<Key-x>", self._key_dismiss)
 
         # Load any persisted element types from data/label_registry.json.
         # This must run after the inspector/filter UI exists because
@@ -1257,6 +1335,12 @@ class AnnotationTab(
             idx = self._project_doc_ids.index(self._doc_id)
             self._project_combo.current(idx)
 
+    def _sync_dropdowns(self) -> None:
+        """Refresh Project and Run dropdowns to match the current document."""
+        self._refresh_project_dropdown()
+        if self._doc_id:
+            self._refresh_run_dropdown(self._doc_id)
+
     def _on_project_selected(self, _event: Any = None) -> None:
         """Handle selection of a document from the Project dropdown."""
         idx = self._project_combo.current()
@@ -1268,27 +1352,16 @@ class AnnotationTab(
         doc_info = next((d for d in docs if d["doc_id"] == doc_id), None)
         if not doc_info:
             return
-        self._doc_id = doc_id
-        self._page_count = doc_info.get("page_count", 0)
-        self._page_var.set(0)
-        self._page_spin.configure(to=max(0, self._page_count - 1))
-        self._page_count_label.configure(text=f"/ {self._page_count}")
-        # Try to use the PDF on disk
+        # Resolve PDF path
         pdf_path_str = doc_info.get("pdf_path", "")
-        pdf_path = Path(pdf_path_str) if pdf_path_str else None
-        if pdf_path and pdf_path.exists():
-            self._pdf_path = pdf_path
-            self._pdf_label.configure(text=pdf_path.name)
-        else:
-            # PDF not on disk — PNG fallback will be used in _navigate_to_page
-            self._pdf_path = None
-            self._pdf_label.configure(text=f"{doc_info.get('filename', '?')} (offline)")
-            self._offline_mode_var.set(True)
-        else:
-            self._offline_mode_var.set(False)
-        # Populate runs dropdown
-        self._refresh_run_dropdown(doc_id)
-        self._navigate_to_page()
+        pdf_path = (
+            Path(pdf_path_str) if pdf_path_str and Path(pdf_path_str).exists() else None
+        )
+        self._load_document(
+            pdf_path,
+            doc_id=doc_id,
+            page_count=doc_info.get("page_count", 0),
+        )
 
     def _refresh_run_dropdown(self, doc_id: str) -> None:
         """Populate the Run combobox for a given document."""
@@ -1345,18 +1418,3 @@ class AnnotationTab(
         if new_tag is not None:
             self._store.update_project_tag(self._doc_id, new_tag.strip())
             self._refresh_project_dropdown()
-
-    # ── Mode ───────────────────────────────────────────────────────
-
-    def _on_mode_change(self) -> None:
-        self._mode = self._mode_var.get()
-        if self._mode == "add":
-            self._canvas.config(cursor="crosshair")
-            self._deselect()
-            self._mode_banner.configure(
-                text="  ➕  ADD MODE — click and drag to draw a new detection box  "
-            )
-            self._mode_banner.place(relx=0.0, rely=0.0, relwidth=1.0, anchor="nw")
-        else:
-            self._canvas.config(cursor="")
-            self._mode_banner.place_forget()

@@ -67,6 +67,14 @@ class DbHelpersMixin:
         ).fetchone()
         last_corr = row["ts"] if row else None
         db_size = self._db_path.stat().st_size if self._db_path.exists() else 0
+        # Dismissed detections (table may not exist in older DBs)
+        try:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM dismissed_detections"
+            ).fetchone()
+            dismissed = row["n"] if row else 0
+        except Exception:  # noqa: BLE001 — table may not exist yet
+            dismissed = 0
         return {
             "db_path": str(self._db_path.resolve()),
             "db_size_bytes": db_size,
@@ -76,6 +84,7 @@ class DbHelpersMixin:
             "total_groups": groups,
             "total_training_runs": trains,
             "total_training_examples": examples,
+            "total_dismissed": dismissed,
             "last_detection_at": last_det,
             "last_correction_at": last_corr,
         }

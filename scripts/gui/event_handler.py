@@ -14,12 +14,18 @@ from typing import Any
 
 from plancheck.analysis.box_merge import merge_boxes, polygon_bbox
 from plancheck.corrections.features import featurize_region
-from plancheck.ingest.ingest import (extract_text_in_bbox,
-                                     extract_text_in_polygon, point_in_polygon)
+from plancheck.ingest.ingest import (
+    extract_text_in_bbox,
+    extract_text_in_polygon,
+    point_in_polygon,
+)
 
-from .annotation_state import (HANDLE_POSITIONS, CanvasBox,
-                               _reshape_bbox_from_handle,
-                               _scale_polygon_to_bbox)
+from .annotation_state import (
+    HANDLE_POSITIONS,
+    CanvasBox,
+    _reshape_bbox_from_handle,
+    _scale_polygon_to_bbox,
+)
 
 
 class EventHandlerMixin:
@@ -82,8 +88,7 @@ class EventHandlerMixin:
 
         from pathlib import Path
 
-        from plancheck.corrections.hierarchical_classifier import \
-            classify_element
+        from plancheck.corrections.hierarchical_classifier import classify_element
 
         result = classify_element(
             features,
@@ -140,14 +145,15 @@ class EventHandlerMixin:
         }
 
     def _on_word_click(self, event: tk.Event) -> str | None:
-        """Handle Ctrl+Click for word overlay selection / lasso."""
+        """Handle Ctrl+Click for word overlay selection or new-box drawing."""
         cx = self._canvas.canvasx(event.x)
         cy = self._canvas.canvasy(event.y)
 
         if not (self._word_overlay_on and self._word_overlay_items):
-            # Word overlay not active — fall through to normal click
-            self._on_canvas_click(event)
-            return None
+            # Word overlay not active — Ctrl+click starts drawing a new box
+            self._draw_start = (cx, cy)
+            self._canvas.config(cursor="crosshair")
+            return "break"
 
         # Hit-test using PDF coordinates
         eff = self._effective_scale()
@@ -172,10 +178,6 @@ class EventHandlerMixin:
         # Get canvas coordinates (accounting for scroll)
         cx = self._canvas.canvasx(event.x)
         cy = self._canvas.canvasy(event.y)
-
-        if self._mode == "add":
-            self._draw_start = (cx, cy)
-            return
 
         # Shift+click for multi-select
         shift_held = bool(event.state & 0x0001)
@@ -667,8 +669,8 @@ class EventHandlerMixin:
             self._schedule_throttled_drag(cx, cy, self._do_move_drag)
             return
 
-        # Handle add-mode drag
-        if self._mode == "add" and self._draw_start:
+        # Handle add-mode drag (Ctrl+drag to draw new box)
+        if self._draw_start:
             if self._draw_rect_id:
                 self._canvas.delete(self._draw_rect_id)
             sx, sy = self._draw_start
@@ -684,7 +686,7 @@ class EventHandlerMixin:
             return
 
         # Lasso selection drag
-        if self._lasso_start and self._mode == "select":
+        if self._lasso_start:
             if self._lasso_rect_id:
                 self._canvas.delete(self._lasso_rect_id)
             sx, sy = self._lasso_start
@@ -860,8 +862,8 @@ class EventHandlerMixin:
             self._drag_orig_polygon = None
             return
 
-        # Finalize add-mode draw
-        if self._mode == "add" and self._draw_start:
+        # Finalize add-mode draw (Ctrl+drag)
+        if self._draw_start:
             self._finalize_add(cx, cy)
             return
 
@@ -915,6 +917,8 @@ class EventHandlerMixin:
         if self._draw_rect_id:
             self._canvas.delete(self._draw_rect_id)
             self._draw_rect_id = None
+
+        self._canvas.config(cursor="")
 
         if not self._draw_start or not self._doc_id:
             self._draw_start = None
@@ -1270,6 +1274,47 @@ class EventHandlerMixin:
         self._update_page_summary()
         self._status.configure(text=f"Rejected {n} detection(s)")
 
+    def _on_dismiss(self) -> None:
+        """Remove detection(s) from the canvas without creating training data."""
+        targets = list(self._multi_selected)
+        if self._selected_box and self._selected_box not in targets:
+            targets.append(self._selected_box)
+        if not targets or not self._doc_id:
+            self._status.configure(text="No box selected")
+            return
+
+        for cbox in targets:
+            self._push_undo("dismiss", cbox)
+            self._store.dismiss_detection(
+                detection_id=cbox.detection_id,
+                doc_id=self._doc_id,
+                page=self._page,
+                session_id=self._session_id,
+            )
+
+            # Remove from canvas (same cleanup as _on_delete)
+            if cbox.rect_id:
+                self._canvas.delete(cbox.rect_id)
+            if cbox.label_id:
+                self._canvas.delete(cbox.label_id)
+            if cbox.conf_dot_id:
+                self._canvas.delete(cbox.conf_dot_id)
+            for hid in cbox.handle_ids:
+                self._canvas.delete(hid)
+            if cbox in self._canvas_boxes:
+                self._canvas_boxes.remove(cbox)
+            # NOTE: Do NOT increment _session_count.
+            # Dismiss is not a correction — it shouldn't count toward
+            # the "corrections this session" metric.
+
+        n = len(targets)
+        self._selected_box = None
+        self._multi_selected.clear()
+        self._deselect()
+        self._update_multi_label()
+        self._update_page_summary()
+        self._status.configure(text=f"Dismissed {n} detection(s)")
+
     def _on_mousewheel(self, event: tk.Event) -> None:
         """Scroll vertically with the mouse wheel."""
         self._canvas.yview_scroll(-1 * (event.delta // 120), "units")
@@ -1292,10 +1337,7 @@ class EventHandlerMixin:
 
     def _on_pan_end(self, event: tk.Event) -> None:
         self._pan_start = None
-        if self._mode == "add":
-            self._canvas.config(cursor="crosshair")
-        else:
-            self._canvas.config(cursor="")
+        self._canvas.config(cursor="")
 
     # ── Polygon-aware text extraction ────────────────────────────────
 
@@ -1317,6 +1359,12 @@ class EventHandlerMixin:
             event.widget, (tk.Entry, tk.Text, ttk.Entry, ttk.Spinbox)
         ):
             self._on_delete()
+
+    def _key_dismiss(self, event: tk.Event) -> None:
+        if self._is_active_tab() and not isinstance(
+            event.widget, (tk.Entry, tk.Text, ttk.Entry, ttk.Spinbox)
+        ):
+            self._on_dismiss()
 
     def _key_relabel(self, event: tk.Event) -> None:
         if self._is_active_tab() and not isinstance(
@@ -1451,6 +1499,26 @@ class EventHandlerMixin:
                 self._canvas_boxes.append(cbox)
                 self._draw_box(cbox)
                 self._status.configure(text="Undo reject")
+        elif action == "dismiss":
+            self._store.undismiss_detection(rec["detection_id"])
+            already_exists = any(
+                cb.detection_id == rec["detection_id"] for cb in self._canvas_boxes
+            )
+            if already_exists:
+                self._status.configure(text="Undo dismiss (box already restored)")
+            else:
+                cbox = CanvasBox(
+                    detection_id=rec["detection_id"],
+                    element_type=rec["element_type"],
+                    confidence=rec.get("confidence"),
+                    text_content="",
+                    features={},
+                    pdf_bbox=rec["pdf_bbox"],
+                    corrected=rec.get("corrected", False),
+                )
+                self._canvas_boxes.append(cbox)
+                self._draw_box(cbox)
+                self._status.configure(text="Undo dismiss")
         elif action == "accept" and target:
             target.corrected = rec.get("corrected", False)
             self._draw_box(target)
@@ -1532,6 +1600,25 @@ class EventHandlerMixin:
             if self._selected_box is target:
                 self._deselect()
             self._status.configure(text="Redo reject")
+        elif action == "dismiss" and target:
+            self._store.dismiss_detection(
+                detection_id=target.detection_id,
+                doc_id=self._doc_id,
+                page=self._page,
+                session_id=self._session_id,
+            )
+            if target.rect_id:
+                self._canvas.delete(target.rect_id)
+            if target.label_id:
+                self._canvas.delete(target.label_id)
+            if target.conf_dot_id:
+                self._canvas.delete(target.conf_dot_id)
+            for hid in target.handle_ids:
+                self._canvas.delete(hid)
+            self._canvas_boxes.remove(target)
+            if self._selected_box is target:
+                self._deselect()
+            self._status.configure(text="Redo dismiss")
         elif action == "accept" and target:
             target.corrected = True
             self._draw_box(target)
@@ -2205,7 +2292,7 @@ class EventHandlerMixin:
 
         if hit_box is None:
             self._hide_hover_tooltip()
-            self._canvas.config(cursor="crosshair" if self._mode == "add" else "")
+            self._canvas.config(cursor="")
             return
 
         # Change cursor on box hover
@@ -2220,9 +2307,7 @@ class EventHandlerMixin:
             hit_box,
         )
 
-    def _show_hover_tooltip(
-        self, x_root: int, y_root: int, cbox: Any
-    ) -> None:
+    def _show_hover_tooltip(self, x_root: int, y_root: int, cbox: Any) -> None:
         """Display or update the hover tooltip near the cursor."""
         self._hide_hover_tooltip()
         if self._closing or not self._canvas.winfo_exists():
@@ -2233,7 +2318,11 @@ class EventHandlerMixin:
             f"Type: {cbox.element_type}",
             f"Confidence: {cbox.confidence:.0%}" if cbox.confidence else "",
             f"Text: {text_preview}" if text_preview else "",
-            f"ID: {cbox.detection_id[:12]}…" if len(cbox.detection_id) > 12 else f"ID: {cbox.detection_id}",
+            (
+                f"ID: {cbox.detection_id[:12]}…"
+                if len(cbox.detection_id) > 12
+                else f"ID: {cbox.detection_id}"
+            ),
             f"Corrected: {corrected}",
         ]
         tip_text = "\n".join(ln for ln in lines if ln)

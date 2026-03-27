@@ -454,6 +454,11 @@ class ModelTrainingMixin:
         )
         self._model_status_label.configure(text=text, foreground=color)
         self._update_annotation_runtime_summary()
+        # Auto-expand Training section when retrain is recommended
+        if color in ("orange", "red") and hasattr(
+            self, "_ensure_training_section_visible"
+        ):
+            self._ensure_training_section_visible()
 
     # ── Annotation stats ─────────────────────────────────────────
 

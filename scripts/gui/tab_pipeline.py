@@ -817,6 +817,7 @@ class PipelineTab:
             text="Run Processing",
             command=self._run_processing,
             style="Run.TButton",
+            state="disabled",
         )
         self.run_button.grid(row=0, column=0, sticky="ew", pady=(0, 4), padx=(0, 8))
 
@@ -1481,6 +1482,7 @@ class PipelineTab:
             path = Path(f)
             self.pdf_files = [path]
             self.file_label_var.set(path.name)
+            self.run_button.config(state="normal")
             # Update shared state
             self.state.pdf_path = path
             self.state.notify("pdf_changed")
@@ -1488,6 +1490,7 @@ class PipelineTab:
     def _clear_file(self) -> None:
         self.pdf_files.clear()
         self.file_label_var.set("No file selected")
+        self.run_button.config(state="disabled")
         self.state.pdf_path = None
         self.state.notify("pdf_changed")
 
@@ -1611,7 +1614,7 @@ class PipelineTab:
             return results
 
         def on_done(result, error, elapsed):
-            self.run_button.config(state="normal")
+            self.run_button.config(state="normal" if self.pdf_files else "disabled")
             self.cancel_button.config(state="disabled")
             if result:
                 self.state.last_run_dir = (

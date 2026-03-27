@@ -199,6 +199,21 @@ CREATE INDEX IF NOT EXISTS idx_corrections_detection ON corrections(detection_id
 CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_doc_page ON candidate_outcomes(doc_id, page);
 CREATE INDEX IF NOT EXISTS idx_page_images_doc ON page_images(doc_id, page);
 CREATE INDEX IF NOT EXISTS idx_processing_runs_doc ON processing_runs(doc_id);
+
+CREATE TABLE IF NOT EXISTS dismissed_detections (
+    dismiss_id    TEXT PRIMARY KEY,
+    detection_id  TEXT NOT NULL,
+    doc_id        TEXT NOT NULL,
+    page          INTEGER NOT NULL,
+    dismissed_at  TEXT NOT NULL,
+    session_id    TEXT DEFAULT '',
+    reason        TEXT DEFAULT '',
+    FOREIGN KEY (detection_id) REFERENCES detections(detection_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dismissed_doc_page
+    ON dismissed_detections(doc_id, page);
+CREATE INDEX IF NOT EXISTS idx_dismissed_detection
+    ON dismissed_detections(detection_id);
 """
 
 
@@ -704,8 +719,7 @@ class CorrectionStore(
                 )
             else:
                 self._conn.execute(
-                    "UPDATE detections SET text_content = ? "
-                    "WHERE detection_id = ?",
+                    "UPDATE detections SET text_content = ? " "WHERE detection_id = ?",
                     (text_content, detection_id),
                 )
             self._conn.commit()
@@ -1140,6 +1154,58 @@ class CorrectionStore(
             (doc_id, page, run_id),
         ).fetchall()
         return self._rows_to_detection_dicts(rows)
+
+    # ── Dismissed detections ──────────────────────────────────────────
+
+    def dismiss_detection(
+        self,
+        detection_id: str,
+        doc_id: str,
+        page: int,
+        session_id: str = "",
+        reason: str = "",
+    ) -> str:
+        """Dismiss a detection without creating a training signal.
+
+        Returns the ``dis_…`` dismiss_id.
+        """
+        dismiss_id = _gen_id("dis_")
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO dismissed_detections "
+                "(dismiss_id, detection_id, doc_id, page, "
+                " dismissed_at, session_id, reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    dismiss_id,
+                    detection_id,
+                    doc_id,
+                    page,
+                    _utcnow_iso(),
+                    session_id,
+                    reason,
+                ),
+            )
+            self._conn.commit()
+        return dismiss_id
+
+    def undismiss_detection(self, detection_id: str) -> None:
+        """Remove a detection from the dismissed table (undo support)."""
+        with self._write_lock():
+            self._conn.execute(
+                "DELETE FROM dismissed_detections WHERE detection_id = ?",
+                (detection_id,),
+            )
+            self._conn.commit()
+
+    def get_dismissed_ids_for_page(self, doc_id: str, page: int) -> set[str]:
+        """Return detection_ids that were dismissed on this page."""
+        rows = self._conn.execute(
+            "SELECT detection_id FROM dismissed_detections "
+            "WHERE doc_id = ? AND page = ?",
+            (doc_id, page),
+        ).fetchall()
+        return {r["detection_id"] for r in rows}
 
     # ── Database-tab helpers ───────────────────────────────────────────
     # Database overview and summary methods are provided by DbHelpersMixin

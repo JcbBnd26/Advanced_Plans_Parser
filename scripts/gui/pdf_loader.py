@@ -36,11 +36,34 @@ class PdfLoaderMixin:
         if f:
             self.state.set_pdf(Path(f))
 
-    def _on_pdf_changed(self) -> None:
-        self._pdf_path = self.state.pdf_path
-        if self._pdf_path:
-            self._pdf_label.configure(text=self._pdf_path.name)
-            # Count pages
+    def _load_document(
+        self,
+        pdf_path: Path | None,
+        *,
+        doc_id: str | None = None,
+        page_count: int | None = None,
+    ) -> None:
+        """Unified document-loading entry point used by both Browse and Project flows.
+
+        Parameters
+        ----------
+        pdf_path:
+            Path to the PDF on disk, or ``None`` for offline/PNG mode.
+        doc_id:
+            Pre-resolved document ID (from the Project dropdown).  When
+            ``None`` the ID will be obtained by registering *pdf_path* in
+            the correction store during the first ``_navigate_to_page``.
+        page_count:
+            Page count from the database.  When ``None`` the count is
+            derived by opening the PDF.
+        """
+        self._pdf_path = pdf_path
+        self._doc_id = doc_id
+
+        # ── Page count ─────────────────────────────────────────────
+        if page_count is not None:
+            self._page_count = page_count
+        elif self._pdf_path:
             try:
                 import pdfplumber
 
@@ -48,36 +71,63 @@ class PdfLoaderMixin:
                     self._page_count = len(pdf.pages)
             except Exception:  # noqa: BLE001 — best-effort page count
                 self._page_count = 0
-            # Reset page selection to first page
-            self._page_var.set(0)
-            self._page_spin.configure(to=max(0, self._page_count - 1))
-            self._page_count_label.configure(text=f"/ {self._page_count}")
-            # Clear prior state
-            self._canvas_boxes.clear()
-            self._selected_box = None
-            self._multi_selected.clear()
-            # Reset word overlay — it should only be active after pipeline runs
-            self._word_overlay_var.set(False)
-            self._word_overlay_on = False
-            self._canvas.delete("all")
-            # Show a loading cue while the first page renders
-            self._status.configure(text="Loading PDF\u2026")
-            self._canvas.create_text(
-                10,
-                10,
-                text="Loading PDF, please wait\u2026",
-                anchor="nw",
-                fill="#888888",
-                font=("TkDefaultFont", 11),
-            )
-            self.root.update_idletasks()
-            # Render first page preview
-            self._navigate_to_page()
         else:
-            self._pdf_label.configure(text="(none)")
             self._page_count = 0
-            self._page_count_label.configure(text="/ ?")
+
+        # ── UI reset ───────────────────────────────────────────────
+        self._page_var.set(0)
+        self._page_spin.configure(to=max(0, self._page_count - 1))
+        self._page_count_label.configure(text=f"/ {self._page_count}")
+
+        # Offline mode
+        if self._pdf_path:
+            self._offline_mode_var.set(False)
+        elif doc_id:
+            self._offline_mode_var.set(True)
+        # (no else — offline_mode_var stays unchanged when clearing)
+
+        # Clear prior canvas / selection state
+        self._canvas_boxes.clear()
+        self._selected_box = None
+        self._multi_selected.clear()
+        self._word_overlay_var.set(False)
+        self._word_overlay_on = False
+        self._canvas.delete("all")
+
+        if not self._pdf_path and not self._doc_id:
             self._page_spin.configure(to=999)
+            return
+
+        # Show loading cue
+        self._status.configure(text="Loading PDF\u2026")
+        self._canvas.create_text(
+            10,
+            10,
+            text="Loading PDF, please wait\u2026",
+            anchor="nw",
+            fill="#888888",
+            font=("TkDefaultFont", 11),
+        )
+        self.root.update_idletasks()
+
+        # Populate dropdowns via the tab (Project ➜ Runs)
+        self._sync_dropdowns()
+
+        # Render first page
+        self._navigate_to_page()
+
+    def _sync_dropdowns(self) -> None:
+        """Refresh Project and Run dropdowns to match the current document.
+
+        Overridden in AnnotationTab where the widgets exist.
+        """
+
+    def _on_pdf_changed(self) -> None:
+        pdf_path = self.state.pdf_path
+        if pdf_path:
+            self._load_document(pdf_path)
+        else:
+            self._load_document(None)
 
     def _effective_scale(self) -> float:
         """Combined DPI scale × zoom factor."""
@@ -264,6 +314,11 @@ class PdfLoaderMixin:
             dets = self._store.get_detections_for_run(self._doc_id, self._page, run_id)
         else:
             dets = self._store.get_latest_detections_for_page(self._doc_id, self._page)
+
+        # Filter out dismissed detections so they don't reappear
+        dismissed_ids = self._store.get_dismissed_ids_for_page(self._doc_id, self._page)
+        dets = [d for d in dets if d["detection_id"] not in dismissed_ids]
+
         for d in dets:
             self._canvas_boxes.append(
                 CanvasBox(

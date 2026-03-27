@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "C:\Projects\Advanced_Plan_Parser\scripts\gui\__main__.py", line 181, in _run
+    _app = plan_parser_gui(root)  # noqa: F841
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Projects\Advanced_Plan_Parser\scripts\gui\gui.py", line 183, in __init__
+    self._build_ui()
+  File "C:\Projects\Advanced_Plan_Parser\scripts\gui\gui.py", line 264, in _build_ui
+    from .tab_annotation import AnnotationTab
+  File "C:\Projects\Advanced_Plan_Parser\scripts\gui\tab_annotation.py", line 1287
+    else:
+    ^^^^
+SyntaxError: invalid syntax
