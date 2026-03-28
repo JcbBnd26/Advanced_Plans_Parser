@@ -218,6 +218,8 @@ class AnnotationTab(
             return
         if selected == my_index:
             self._refresh_project_dropdown()
+            if self._doc_id:
+                self._refresh_run_dropdown(self._doc_id)
             self._needs_project_refresh = False
 
     def request_cancel(self) -> None:
@@ -452,6 +454,7 @@ class AnnotationTab(
         )
         # Internal mapping: combo index → run_id
         self._run_ids: list[str] = []
+        self._run_pages: dict[str, list[int]] = {}
 
         ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=6)
 
@@ -1308,8 +1311,10 @@ class AnnotationTab(
         self._reopen_store()
         # Ensure our connection sees the latest data from the pipeline's commits
         self._store.refresh()
-        # Refresh the project dropdown to include new runs
+        # Refresh the project and run dropdowns to include new runs
         self._refresh_project_dropdown()
+        if self._doc_id:
+            self._refresh_run_dropdown(self._doc_id)
         if self._pdf_path:
             self._navigate_to_page()
 
@@ -1368,11 +1373,13 @@ class AnnotationTab(
         self._reopen_store()
         runs = self._store.get_runs_for_doc(doc_id)
         self._run_ids = [r["run_id"] for r in runs]
+        self._run_pages: dict[str, list[int]] = {}
         labels: list[str] = []
         for r in runs:
             tag = r.get("tag") or ""
             run_id = r["run_id"]
             pages = r.get("pages_processed", [])
+            self._run_pages[run_id] = sorted(pages)
             suffix = f" [{len(pages)}p]"
             if tag:
                 labels.append(f"{run_id} ({tag}){suffix}")
@@ -1382,6 +1389,8 @@ class AnnotationTab(
         if labels:
             self._run_combo.current(0)  # select latest run
         self._selected_run_id: str | None = self._run_ids[0] if self._run_ids else None
+        # Navigate to the first processed page of the selected run
+        self._jump_to_run_page()
 
     def _on_run_selected(self, _event: Any = None) -> None:
         """Handle selection of a run from the Run dropdown."""
@@ -1389,6 +1398,14 @@ class AnnotationTab(
         if idx < 0 or idx >= len(self._run_ids):
             return
         self._selected_run_id = self._run_ids[idx]
+        self._jump_to_run_page()
+
+    def _jump_to_run_page(self) -> None:
+        """Navigate to the first processed page of the currently selected run."""
+        run_id = self._selected_run_id
+        pages = self._run_pages.get(run_id or "", []) if run_id else []
+        if pages:
+            self._page_var.set(pages[0])
         self._navigate_to_page()
 
     def _on_offline_mode_toggle(self) -> None:
