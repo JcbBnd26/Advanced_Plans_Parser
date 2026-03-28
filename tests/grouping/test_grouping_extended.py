@@ -233,7 +233,7 @@ class TestGroupNotesColumns:
         cfg = GroupingConfig()
         from plancheck.grouping import build_clusters_v2
 
-        blocks = build_clusters_v2(tokens, 800.0, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
         mark_headers(blocks)
         mark_notes(blocks)
         return blocks, cfg
@@ -259,7 +259,7 @@ class TestGroupNotesColumns:
         ]
         from plancheck.grouping import build_clusters_v2
 
-        blocks = build_clusters_v2(tokens, 800.0, default_cfg)
+        blocks = build_clusters_v2(tokens, default_cfg)
         # Don't call mark_headers — no header detectable
         for b in blocks:
             b.is_notes = True

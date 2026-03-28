@@ -81,7 +81,7 @@ class TestEndToEndGrouping:
     def test_clusters_produced(self):
         tokens, page_h = _build_synthetic_tokens()
         cfg = GroupingConfig()
-        blocks = build_clusters_v2(tokens, page_h, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
         assert len(blocks) >= 2  # at least notes block + legend block
         # All tokens should be accounted for in total
         total_boxes = sum(len(b.get_all_boxes()) for b in blocks)
@@ -90,7 +90,7 @@ class TestEndToEndGrouping:
     def test_header_detected(self):
         tokens, page_h = _build_synthetic_tokens()
         cfg = GroupingConfig()
-        blocks = build_clusters_v2(tokens, page_h, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
         mark_headers(blocks)
         headers = [b for b in blocks if b.is_header]
         assert len(headers) >= 1
@@ -101,7 +101,7 @@ class TestEndToEndGrouping:
     def test_notes_detected(self):
         tokens, page_h = _build_synthetic_tokens()
         cfg = GroupingConfig()
-        blocks = build_clusters_v2(tokens, page_h, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
         mark_headers(blocks)
         mark_notes(blocks)
         # mark_notes requires >= 2 rows; with synthetic data each note may
@@ -118,7 +118,7 @@ class TestEndToEndZoning:
         tokens, page_h = _build_synthetic_tokens()
         page_w = 600.0
         cfg = GroupingConfig()
-        blocks = build_clusters_v2(tokens, page_h, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
         mark_headers(blocks)
         mark_notes(blocks)
         zones = detect_zones(page_w, page_h, blocks, cfg=cfg)
@@ -136,7 +136,7 @@ class TestEndToEndExport:
     def test_blocks_csv(self, tmp_path):
         tokens, page_h = _build_synthetic_tokens()
         cfg = GroupingConfig()
-        blocks = build_clusters_v2(tokens, page_h, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
         mark_headers(blocks)
         mark_notes(blocks)
 
@@ -190,7 +190,7 @@ class TestNotesColumnsIntegration:
     def test_notes_columns_created(self):
         tokens, page_h = _build_synthetic_tokens()
         cfg = GroupingConfig()
-        blocks = build_clusters_v2(tokens, page_h, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
         mark_headers(blocks)
         mark_notes(blocks)
         columns = group_notes_columns(blocks, cfg=cfg)

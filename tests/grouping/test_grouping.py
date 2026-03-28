@@ -63,22 +63,22 @@ class TestBuildLines:
 
 class TestBuildClustersV2:
     def test_single_block(self, simple_boxes, default_cfg):
-        blocks = build_clusters_v2(simple_boxes, 800.0, default_cfg)
+        blocks = build_clusters_v2(simple_boxes, default_cfg)
         assert len(blocks) >= 1
         total_lines = sum(len(blk.lines or []) for blk in blocks)
         assert total_lines == 1
 
     def test_multi_block(self, multi_block_boxes, default_cfg):
-        blocks = build_clusters_v2(multi_block_boxes, 800.0, default_cfg)
+        blocks = build_clusters_v2(multi_block_boxes, default_cfg)
         # Should get at least 2 blocks due to large vertical gap
         assert len(blocks) >= 2
 
     def test_empty_input(self, default_cfg):
-        assert build_clusters_v2([], 800.0, default_cfg) == []
+        assert build_clusters_v2([], default_cfg) == []
 
     def test_rows_populated_for_compat(self, simple_boxes, default_cfg):
         """v2 pipeline should also populate .rows for backward compatibility."""
-        blocks = build_clusters_v2(simple_boxes, 800.0, default_cfg)
+        blocks = build_clusters_v2(simple_boxes, default_cfg)
         for blk in blocks:
             if blk.lines:
                 # rows should be populated from lines
@@ -141,7 +141,7 @@ class TestMarkHeaders:
             make_box(50, 100, 130, 112, "GENERAL"),
             make_box(140, 100, 200, 112, "NOTES:"),
         ]
-        blocks = build_clusters_v2(boxes, 800.0, default_cfg)
+        blocks = build_clusters_v2(boxes, default_cfg)
         mark_headers(blocks)
         # At least one block should be marked as header
         has_header = any(b.is_header for b in blocks)
@@ -158,7 +158,7 @@ class TestMarkNotes:
             make_box(50, 118, 65, 130, "2."),
             make_box(70, 118, 200, 130, "DO THAT WORK"),
         ]
-        blocks = build_clusters_v2(boxes, 800.0, default_cfg)
+        blocks = build_clusters_v2(boxes, default_cfg)
         mark_notes(blocks)
         # Check notes markers — heuristic, so we just ensure no crash
         for b in blocks:
@@ -273,7 +273,7 @@ class TestSplitRowOnGaps:
 class TestMarkTables:
     def test_single_row_not_table(self, default_cfg):
         boxes = [make_box(10, 100, 60, 112, "HELLO")]
-        blocks = build_clusters_v2(boxes, 800.0, default_cfg)
+        blocks = build_clusters_v2(boxes, default_cfg)
         mark_tables(blocks, default_cfg)
         for b in blocks:
             assert b.is_table is False
@@ -286,7 +286,7 @@ class TestMarkTables:
             make_box(10, 118, 60, 130, "VAL1"),
             make_box(80, 118, 130, 130, "VAL2"),
         ]
-        blocks = build_clusters_v2(boxes, 800.0, default_cfg)
+        blocks = build_clusters_v2(boxes, default_cfg)
         mark_tables(blocks, default_cfg)
         # At least the logic runs without error
         for b in blocks:
@@ -347,7 +347,7 @@ class TestThreeColumnLayout:
             tokens.append(make_box(780, y, 890, y + 10, f"C3R{row}B"))
 
         cfg = GroupingConfig()
-        blocks = build_clusters_v2(tokens, 800.0, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
 
         # Pipeline should produce at least 1 block without crashing
         assert len(blocks) >= 1
@@ -368,7 +368,7 @@ class TestThreeColumnLayout:
             tokens.append(make_box(400, y, 470, y + 10, f"C2R{row}"))
 
         cfg = GroupingConfig()
-        blocks = build_clusters_v2(tokens, 800.0, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
 
         # Should get at least 2 blocks since y-ranges don't overlap
         assert len(blocks) >= 2

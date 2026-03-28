@@ -215,7 +215,6 @@ def _split_wide_blocks(
 
 def build_clusters_v2(
     tokens: List[GlyphBox],
-    page_height: float,
     settings: GroupingConfig,
 ) -> List[BlockCluster]:
     """Build clusters using the row-truth pipeline.
@@ -229,7 +228,6 @@ def build_clusters_v2(
 
     Args:
         tokens: GlyphBox tokens from PDF extraction
-        page_height: Page height in points (unused, kept for API compat)
         settings: GroupingConfig
 
     Returns:

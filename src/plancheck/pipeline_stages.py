@@ -431,7 +431,7 @@ def _run_grouping_stage(
     )
 
     with run_stage("grouping", cfg) as sr_grp:
-        blocks = build_clusters_v2(boxes, page_h, cfg)
+        blocks = build_clusters_v2(boxes, cfg)
         mark_headers(blocks)
         mark_notes(blocks)
         notes_columns = group_notes_columns(blocks, cfg=cfg)

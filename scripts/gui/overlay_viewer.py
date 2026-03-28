@@ -611,7 +611,7 @@ def render_overlay(
                     list(page.curves),
                 )
         tokens = nms_prune(tokens, cfg.iou_prune)
-        blocks = build_clusters_v2(tokens, page_h, cfg)
+        blocks = build_clusters_v2(tokens, cfg)
         notes_columns = group_notes_columns(blocks, cfg=cfg)
         link_continued_columns(notes_columns, blocks=blocks, cfg=cfg)
 
