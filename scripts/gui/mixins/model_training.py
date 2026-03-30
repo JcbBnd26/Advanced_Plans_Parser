@@ -342,6 +342,152 @@ class ModelTrainingMixin:
 
         threading.Thread(target=_bootstrap, daemon=True).start()
 
+    # ── Training session lifecycle ───────────────────────────────
+
+    def _start_training_session(self) -> None:
+        """Begin a page-by-page training session with micro-retrains.
+
+        Records baseline metrics, sets the session-active flag, and
+        updates the UI to reflect the active session state.
+        """
+        self._training_session_active = True
+        self._session_page_has_corrections = False
+        self._session_baseline_metrics = (
+            dict(self._last_metrics) if self._last_metrics else {}
+        )
+        self._session_baseline_f1 = self._session_baseline_metrics.get(
+            "f1_weighted", 0.0
+        )
+        self._session_corrections_total = 0
+        self._session_pages_reviewed = 0
+
+        # Persist flag so auto_retrain() skips while session is active
+        try:
+            self._reopen_store()
+            self._store.set_session_active(True)
+        except Exception:  # noqa: BLE001 — flag is defensive, not critical
+            log.debug("Could not set session_active flag in DB", exc_info=True)
+
+        # Update UI
+        if hasattr(self, "_training_session_btn"):
+            self._training_session_btn.configure(text="End Training Session")
+        self._model_status_label.configure(
+            text="Training session active — corrections propagate on Next Page",
+            foreground="#2196F3",
+        )
+        log.info(
+            "Training session started (baseline F1=%.4f)",
+            self._session_baseline_f1,
+        )
+
+    def _end_training_session(self) -> None:
+        """End the active training session and run deferred work.
+
+        Deferred work includes Stage-2 subtype training (if enough
+        examples) and a rollback check against session baseline.
+        """
+        if not getattr(self, "_training_session_active", False):
+            return
+
+        self._training_session_active = False
+        self._session_page_has_corrections = False
+
+        # Clear DB flag
+        try:
+            self._reopen_store()
+            self._store.set_session_active(False)
+        except Exception:  # noqa: BLE001 — best-effort
+            log.debug("Could not clear session_active flag in DB", exc_info=True)
+
+        # Update UI
+        if hasattr(self, "_training_session_btn"):
+            self._training_session_btn.configure(text="Start Training Session")
+
+        current_f1 = (
+            self._last_metrics.get("f1_weighted", 0.0) if self._last_metrics else 0.0
+        )
+        delta = current_f1 - self._session_baseline_f1
+
+        # Deferred Stage-2 training
+        stage2_msg = ""
+        try:
+            self._reopen_store()
+            from plancheck.corrections.retrain_trigger import (
+                _export_stage2_training_jsonl,
+            )
+
+            db_parent = self._store._db_path.parent
+            jsonl_path = db_parent / "training_data.jsonl"
+            stage2_jsonl_path = db_parent / "training_data_stage2.jsonl"
+
+            if jsonl_path.exists():
+                stage2_count, _ = _export_stage2_training_jsonl(
+                    jsonl_path, stage2_jsonl_path
+                )
+                if stage2_count >= 10:
+                    from plancheck.corrections.subtype_classifier import (
+                        TitleSubtypeClassifier,
+                    )
+
+                    s2_path = Path(self.state.config.ml_stage2_model_path)
+                    s2_clf = TitleSubtypeClassifier(model_path=s2_path)
+                    s2_metrics = s2_clf.train(stage2_jsonl_path, calibrate=True)
+                    s2_f1 = s2_metrics.get("f1_weighted", 0.0)
+                    stage2_msg = f"; S2 F1 {s2_f1:.1%}"
+                    log.info("Session-end Stage-2 trained: F1=%.4f", s2_f1)
+        except Exception:  # noqa: BLE001 — deferred Stage-2 is best-effort
+            log.warning("Session-end Stage-2 training failed", exc_info=True)
+
+        # Session summary
+        summary = (
+            f"Session complete: {self._session_pages_reviewed} pages, "
+            f"{self._session_corrections_total} corrections, "
+            f"F1 {self._session_baseline_f1:.1%} → {current_f1:.1%} "
+            f"({delta:+.1%}){stage2_msg}"
+        )
+        self._model_status_label.configure(
+            text=summary,
+            foreground="green" if delta >= 0 else "orange",
+        )
+        log.info(summary)
+
+        # Refresh classifiers and status
+        self._reload_classifiers()
+        self._update_model_status()
+
+    def _toggle_training_session(self) -> None:
+        """Toggle the training session on or off (button callback)."""
+        if getattr(self, "_training_session_active", False):
+            self._end_training_session()
+        else:
+            self._start_training_session()
+
+    @staticmethod
+    def _format_micro_retrain_status(
+        retrain_result,
+        repredict_result,
+        *,
+        prev_f1: float = 0.0,
+    ) -> tuple[str, str]:
+        """Format micro-retrain + repredict outcome for the status bar."""
+        if retrain_result.error:
+            return f"Micro-retrain failed: {retrain_result.error}", "red"
+
+        curr_f1 = retrain_result.metrics.get("f1_weighted", 0.0)
+        parts = [f"Model updated: F1 {prev_f1:.1%} → {curr_f1:.1%}"]
+
+        n_ex = retrain_result.n_examples
+        parts.append(f"{n_ex} examples")
+
+        parts.append(f"{retrain_result.elapsed_s:.1f}s")
+
+        if repredict_result:
+            parts.append(f"{repredict_result.n_updated} re-predicted")
+
+        text = " | ".join(parts)
+        color = "green" if curr_f1 >= prev_f1 else "orange"
+        return text, color
+
     # ── Metrics display ──────────────────────────────────────────
 
     def _on_show_metrics(self) -> None:

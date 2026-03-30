@@ -1207,6 +1207,60 @@ class CorrectionStore(
         ).fetchall()
         return {r["detection_id"] for r in rows}
 
+    # ── Micro-retrain support ─────────────────────────────────────────
+
+    def update_detection_prediction(
+        self,
+        detection_id: str,
+        element_type: str,
+        confidence: float,
+    ) -> None:
+        """Update the ML-predicted label and confidence for a detection.
+
+        Used by :func:`page_repredict.repredict_page` to write back
+        re-scored predictions without touching features or geometry.
+        """
+        with self._write_lock():
+            self._conn.execute(
+                "UPDATE detections SET element_type = ?, confidence = ? "
+                "WHERE detection_id = ?",
+                (element_type, confidence, detection_id),
+            )
+            self._conn.commit()
+
+    def set_session_active(self, active: bool) -> None:
+        """Set or clear the training-session-active flag.
+
+        This prevents :func:`auto_retrain` from firing while a
+        page-by-page training session is in progress.
+        """
+        self._ensure_metadata_table()
+        with self._write_lock():
+            self._conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) "
+                "VALUES ('session_active', ?)",
+                ("1" if active else "0",),
+            )
+            self._conn.commit()
+
+    def is_session_active(self) -> bool:
+        """Return *True* if a training session is currently active."""
+        self._ensure_metadata_table()
+        row = self._conn.execute(
+            "SELECT value FROM metadata WHERE key = 'session_active'"
+        ).fetchone()
+        return row is not None and row["value"] == "1"
+
+    def _ensure_metadata_table(self) -> None:
+        """Create the metadata key-value table if it doesn't exist yet."""
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS metadata ("
+            "  key   TEXT PRIMARY KEY,"
+            "  value TEXT NOT NULL"
+            ")"
+        )
+        self._conn.commit()
+
     # ── Database-tab helpers ───────────────────────────────────────────
     # Database overview and summary methods are provided by DbHelpersMixin
     # (see module docstring for full list of mixins)

@@ -111,6 +111,14 @@ class AnnotationTab(
         self._worker: PipelineWorker | None = None
         self._classifier = ElementClassifier()
 
+        # Training session state (page-by-page micro-retrain)
+        self._training_session_active: bool = False
+        self._session_page_has_corrections: bool = False
+        self._session_baseline_metrics: dict = {}
+        self._session_baseline_f1: float = 0.0
+        self._session_corrections_total: int = 0
+        self._session_pages_reviewed: int = 0
+
         # Shutdown safety: avoid scheduling after() onto a destroyed root
         self._closing: bool = False
 
@@ -1088,6 +1096,19 @@ class AnnotationTab(
         self._tooltip(
             _btn_bootstrap,
             "Create starter training data from stronger existing detections. Use this when you do not yet have enough manual corrections for a normal retrain.",
+        )
+        self._training_session_btn = ttk.Button(
+            model_btns,
+            text="Start Training Session",
+            command=self._toggle_training_session,
+        )
+        self._training_session_btn.pack(side="left", padx=3)
+        self._tooltip(
+            self._training_session_btn,
+            "Page-by-page training mode: after reviewing each page, the model "
+            "micro-retrains on all corrections and re-predicts the next page. "
+            "Construction plans are repetitive — fix it once, the model "
+            "propagates it forward.",
         )
 
         s2r += 1

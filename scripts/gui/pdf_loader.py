@@ -135,6 +135,12 @@ class PdfLoaderMixin:
 
     def _update_session_label(self) -> None:
         self._session_label.configure(text=f"Session: {self._session_count} saved")
+        # Track corrections for training session micro-retrain
+        if getattr(self, "_training_session_active", False):
+            self._session_page_has_corrections = True
+            self._session_corrections_total = (
+                getattr(self, "_session_corrections_total", 0) + 1
+            )
 
     # ── Zoom ───────────────────────────────────────────────────────
 
@@ -213,12 +219,121 @@ class PdfLoaderMixin:
             self._navigate_to_page()
 
     def _on_next_page(self) -> None:
-        """Navigate to the next page."""
+        """Navigate to the next page.
+
+        During an active training session, fires a micro-retrain +
+        re-predict cycle before advancing so the next page benefits
+        from corrections made on the current page.
+        """
         upper = self._page_count - 1 if self._page_count > 0 else 0
         cur = self._page_var.get()
-        if cur < upper:
-            self._page_var.set(cur + 1)
+        if cur >= upper:
+            return
+
+        next_page = cur + 1
+
+        # If a training session is active and corrections were made,
+        # run micro-retrain → re-predict before showing the next page.
+        if getattr(self, "_training_session_active", False) and getattr(
+            self, "_session_page_has_corrections", False
+        ):
+            self._run_session_retrain_and_advance(next_page)
+            return
+
+        # Normal (non-session or no-correction) advance
+        self._page_var.set(next_page)
+        self._navigate_to_page()
+
+    def _run_session_retrain_and_advance(self, next_page: int) -> None:
+        """Micro-retrain, re-predict next page, then advance (background)."""
+        import threading
+
+        from plancheck.corrections.micro_retrain import micro_retrain
+        from plancheck.corrections.page_repredict import repredict_page
+
+        self._status.configure(text="Updating model…")
+        # Disable navigation to prevent re-entry
+        if hasattr(self, "_prev_btn"):
+            self._prev_btn.configure(state="disabled")
+        if hasattr(self, "_next_btn"):
+            self._next_btn.configure(state="disabled")
+
+        prev_f1 = (
+            self._last_metrics.get("f1_weighted", 0.0)
+            if getattr(self, "_last_metrics", None)
+            else 0.0
+        )
+        model_path = Path(self.state.config.ml_model_path)
+        doc_id = getattr(self, "_doc_id", None)
+
+        def _work():
+            retrain_result = None
+            repredict_result = None
+            try:
+                from plancheck.corrections.store import CorrectionStore as _CS
+
+                store = _CS()
+                retrain_result = micro_retrain(store, model_path)
+                if retrain_result.retrained and doc_id:
+                    repredict_result = repredict_page(
+                        store, doc_id, next_page, model_path
+                    )
+                store.close()
+            except Exception as exc:  # noqa: BLE001 — must not crash navigation
+                import logging
+
+                logging.getLogger(__name__).error(
+                    "Session retrain failed: %s", exc, exc_info=True
+                )
+            return retrain_result, repredict_result
+
+        def _on_done(retrain_result, repredict_result):
+            # Re-enable navigation
+            if hasattr(self, "_prev_btn"):
+                self._prev_btn.configure(state="normal")
+            if hasattr(self, "_next_btn"):
+                self._next_btn.configure(state="normal")
+
+            # Update metrics and classifiers
+            if retrain_result and retrain_result.retrained:
+                if retrain_result.metrics:
+                    self._last_metrics = retrain_result.metrics
+                self._reload_classifiers()
+
+                # Refresh the store connection so navigate sees updated labels
+                try:
+                    self._reopen_store()
+                except Exception:  # noqa: BLE001
+                    pass
+
+                status_text, status_color = self._format_micro_retrain_status(
+                    retrain_result,
+                    repredict_result,
+                    prev_f1=prev_f1,
+                )
+                self._model_status_label.configure(
+                    text=status_text, foreground=status_color
+                )
+
+            # Track session stats
+            self._session_pages_reviewed = (
+                getattr(self, "_session_pages_reviewed", 0) + 1
+            )
+            self._session_page_has_corrections = False
+
+            # Advance to the next page
+            self._page_var.set(next_page)
             self._navigate_to_page()
+
+        def _thread_target():
+            retrain_result, repredict_result = _work()
+            # Post back to UI thread
+            self._safe_after(
+                0,
+                lambda: _on_done(retrain_result, repredict_result),
+            )
+
+        threading.Thread(target=_thread_target, daemon=True).start()
 
     def _on_page_spin_enter(self, _event: Any = None) -> None:
         """Handle Enter key or manual spinbox changes."""

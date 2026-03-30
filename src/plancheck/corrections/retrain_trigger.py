@@ -168,6 +168,15 @@ def auto_retrain(
     stage2_model_path = Path(stage2_model_path or DEFAULT_SUBTYPE_MODEL)
     result = RetrainResult(threshold=threshold)
 
+    # Skip if a page-by-page training session is active
+    try:
+        if store.is_session_active():
+            log.info("Skipping auto_retrain: training session is active")
+            result.error = "Training session active"
+            return result
+    except Exception:  # noqa: BLE001 — guard is best-effort
+        log.debug("Session-active check failed", exc_info=True)
+
     # Backup existing model before training (for rollback)
     backup_path = model_path.with_suffix(".pkl.bak")
     model_existed = model_path.exists()
