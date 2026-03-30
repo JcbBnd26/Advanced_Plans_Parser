@@ -160,3 +160,20 @@ When splitting:
 - Do not create new top-level scripts without discussing placement first
 - Do not use f-strings in logging calls
 - Do not add heavyweight deps to the core dependency list — use optional groups
+
+---
+
+## Git Workflow
+
+After completing a set of changes, **always stage, commit, and push** before
+finishing:
+
+```bash
+git add -A
+git commit -m "<type>: <concise summary>"
+git push
+```
+
+Use conventional commit prefixes: `feat:`, `fix:`, `refactor:`, `test:`,
+`docs:`, `chore:`. Include a body with bullet points when the diff touches
+multiple files or adds new modules.
