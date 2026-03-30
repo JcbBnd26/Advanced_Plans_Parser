@@ -198,6 +198,7 @@ class ModelTrainingMixin:
         self._train_cancel_event.clear()
         self._train_gen += 1
         my_gen = self._train_gen
+        db_path = self._db_path
 
         def _train():
             try:
@@ -211,7 +212,7 @@ class ModelTrainingMixin:
                 from plancheck.corrections.retrain_trigger import auto_retrain
                 from plancheck.corrections.store import CorrectionStore as _CS
 
-                store = _CS()
+                store = _CS(db_path)
 
                 # Force retrain by setting threshold=0 when user explicitly requests
                 result = auto_retrain(

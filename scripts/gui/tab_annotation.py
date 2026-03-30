@@ -107,6 +107,7 @@ class AnnotationTab(
         self._word_click_candidate_rid: int | None = None
         self._session_id: str = uuid4().hex[:8]
         self._session_count: int = 0
+        self._db_path: Path | None = None
         self._store: CorrectionStore | None = None
         self._worker: PipelineWorker | None = None
         self._classifier = ElementClassifier()
@@ -213,7 +214,7 @@ class AnnotationTab(
         if self._store is None:
             from plancheck.corrections.store import CorrectionStore
 
-            self._store = CorrectionStore()
+            self._store = CorrectionStore(self._db_path)
 
     def _on_tab_changed(self, _event: tk.Event) -> None:
         """Populate the Project dropdown on first visit to the ML Trainer tab."""

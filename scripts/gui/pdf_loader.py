@@ -266,13 +266,15 @@ class PdfLoaderMixin:
         model_path = Path(self.state.config.ml_model_path)
         doc_id = getattr(self, "_doc_id", None)
 
+        db_path = self._db_path
+
         def _work():
             retrain_result = None
             repredict_result = None
             try:
                 from plancheck.corrections.store import CorrectionStore as _CS
 
-                store = _CS()
+                store = _CS(db_path)
                 retrain_result = micro_retrain(store, model_path)
                 if retrain_result.retrained and doc_id:
                     repredict_result = repredict_page(
