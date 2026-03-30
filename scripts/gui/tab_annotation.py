@@ -1139,6 +1139,18 @@ class AnnotationTab(
             _btn_importance,
             "Show which input features influenced the trained model most strongly.",
         )
+        _btn_reset = ttk.Button(
+            model_btns2,
+            text="Reset Training Data",
+            command=self._on_reset_training_data,
+        )
+        _btn_reset.pack(side="left", padx=3)
+        self._tooltip(
+            _btn_reset,
+            "Clear all corrections, training examples, detections, and the "
+            "trained model. Creates a safety snapshot first. Use this when "
+            "starting fresh with the online learning workflow.",
+        )
 
         # ═══════════════════════════════════════════════════════════
         # SECTION 3: Manage & Maintain (collapsible, collapsed)

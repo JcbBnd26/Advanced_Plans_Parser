@@ -45,7 +45,6 @@ from plancheck.tocr.extract import extract_tocr_from_page
 from ..utils.run_utils import latest_overlays_dir
 from ..utils.run_utils import scale as _scale
 
-
 # ---------------------------------------------------------------------------
 # Font helper
 # ---------------------------------------------------------------------------

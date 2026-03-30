@@ -13,7 +13,6 @@ from typing import Any
 from ..widgets import CollapsibleFrame, LogPanel
 from ..worker import PipelineWorker
 
-
 # ---------------------------------------------------------------------------
 # Section 5 – Layout Model (LayoutLMv3)
 # ---------------------------------------------------------------------------

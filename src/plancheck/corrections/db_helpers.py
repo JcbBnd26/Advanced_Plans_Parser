@@ -1,16 +1,19 @@
 """Database-tab helper mixin for CorrectionStore.
 
-Provides read-only convenience queries used by the GUI's Database tab.
-These methods aggregate statistics and provide summary views.
+Provides read-only convenience queries used by the GUI's Database tab,
+plus the training-data reset workflow.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import sqlite3
     from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 class DbHelpersMixin:
@@ -193,3 +196,129 @@ class DbHelpersMixin:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── Training data reset ────────────────────────────────────────
+
+    def _safe_table_count(self, table: str) -> int:
+        """Return ``COUNT(*)`` for *table*, returning 0 if the table doesn't exist."""
+        try:
+            row = self._conn.execute(
+                f"SELECT COUNT(*) AS n FROM [{table}]"  # noqa: S608
+            ).fetchone()
+            return row["n"] if row else 0
+        except Exception:  # noqa: BLE001 — table may not exist in older schemas
+            return 0
+
+    def get_training_data_summary(self) -> dict[str, int | bool]:
+        """Return counts for every table affected by a training-data reset.
+
+        Also checks whether associated model/data files exist on disk.
+        Used by the confirmation dialog so the user sees exactly what
+        will be cleared.
+        """
+        from pathlib import Path
+
+        data_dir = self._db_path.parent
+
+        summary: dict[str, int | bool] = {}
+
+        # Tables that would be cleared
+        for table in (
+            "corrections",
+            "training_examples",
+            "training_runs",
+            "detections",
+            "feature_cache",
+            "candidate_outcomes",
+            "dismissed_detections",
+            "box_groups",
+            "box_group_members",
+        ):
+            summary[table] = self._safe_table_count(table)
+
+        # File existence checks
+        summary["model_file_exists"] = (data_dir / "element_classifier.pkl").exists()
+        summary["drift_stats_exists"] = (data_dir / "drift_stats.json").exists()
+        summary["jsonl_exists"] = (data_dir / "training_data.jsonl").exists()
+        summary["stage2_jsonl_exists"] = (
+            data_dir / "training_data_stage2.jsonl"
+        ).exists()
+        summary["subtype_model_exists"] = (
+            data_dir / "subtype_classifier.pkl"
+        ).exists()
+
+        return summary
+
+    def reset_training_data(self) -> dict[str, int]:
+        """Clear all ML training signal from the database.
+
+        Creates an automatic ``pre-reset`` snapshot first (the user can
+        restore from it via the existing Restore Snapshot button).
+
+        **Preserved:** ``documents``, ``processing_runs``, ``page_images``
+        tables and all schema structures.
+
+        **Cleared:** ``corrections``, ``training_examples``, ``training_runs``,
+        ``detections``, ``feature_cache``, ``candidate_outcomes``,
+        ``dismissed_detections``, ``box_groups``, ``box_group_members``,
+        and the ``session_active`` metadata flag.
+
+        Returns a dict mapping each cleared table name to the number of
+        rows that were deleted.
+
+        .. note::
+           This method only handles SQLite data.  Associated files on
+           disk (model ``.pkl``, JSONL, drift stats) must be deleted
+           by the caller (typically the GUI handler).
+        """
+        # Safety snapshot — snapshot() acquires its own write lock
+        snapshot_path = self.snapshot(tag="pre-reset")
+        log.info("Pre-reset snapshot saved: %s", snapshot_path.name)
+
+        deleted: dict[str, int] = {}
+
+        # FK-safe deletion order: children before parents
+        delete_order = [
+            "box_group_members",
+            "box_groups",
+            "feature_cache",
+            "dismissed_detections",
+            "training_examples",
+            "corrections",
+            "candidate_outcomes",
+            "detections",
+            "training_runs",
+        ]
+
+        with self._write_lock():
+            for table in delete_order:
+                try:
+                    cur = self._conn.execute(
+                        f"DELETE FROM [{table}]"  # noqa: S608
+                    )
+                    deleted[table] = cur.rowcount
+                except Exception:  # noqa: BLE001 — table may not exist
+                    log.debug("Table %s not found during reset", table)
+                    deleted[table] = 0
+
+            # Clear stale session-active flag (preserve other metadata)
+            try:
+                self._conn.execute(
+                    "DELETE FROM metadata WHERE key = 'session_active'"
+                )
+            except Exception:  # noqa: BLE001 — metadata table may not exist
+                pass
+
+            self._conn.commit()
+
+        # VACUUM must run outside the write-lock transaction
+        try:
+            self._conn.execute("VACUUM")
+        except Exception:  # noqa: BLE001 — non-critical space reclamation
+            log.warning("VACUUM failed after reset (non-critical)", exc_info=True)
+
+        log.info(
+            "Training data reset complete: %s",
+            ", ".join(f"{t}={n}" for t, n in deleted.items() if n),
+        )
+        return deleted

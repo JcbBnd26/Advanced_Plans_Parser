@@ -10,7 +10,6 @@ from typing import Any
 from ..widgets import CollapsibleFrame, LogPanel
 from ..worker import PipelineWorker
 
-
 # ---------------------------------------------------------------------------
 # Section 1 – Font Diagnostics
 # ---------------------------------------------------------------------------
@@ -206,14 +205,13 @@ class BenchmarkSection(CollapsibleFrame):
         def target():
             from plancheck.config import GroupingConfig
 
-            from ...runners.run_pdf_batch import run_pdf
-
             from ...diagnostics.run_benchmark import (
                 _CONDITIONS,
                 _build_comparison,
                 _print_table,
                 _read_manifest,
             )
+            from ...runners.run_pdf_batch import run_pdf
 
             manifests = {}
             for cond in conditions:

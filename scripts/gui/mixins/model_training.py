@@ -660,6 +660,138 @@ class ModelTrainingMixin:
         except Exception as exc:
             messagebox.showerror("Error", str(exc), parent=self.root)
 
+    def _on_reset_training_data(self) -> None:
+        """Clear all ML training signal and delete model/data files."""
+        # Guard: block if training session is active
+        if getattr(self, "_training_session_active", False):
+            messagebox.showwarning(
+                "Session Active",
+                "End the training session before resetting training data.",
+                parent=self.root,
+            )
+            return
+
+        # Guard: block if background training is in progress
+        status_text = ""
+        try:
+            status_text = self._model_status_label.cget("text")
+        except Exception:  # noqa: BLE001
+            pass
+        if "Training" in status_text and "…" in status_text:
+            messagebox.showwarning(
+                "Training In Progress",
+                "Wait for the current training run to finish before resetting.",
+                parent=self.root,
+            )
+            return
+
+        # Gather summary for confirmation dialog
+        try:
+            self._reopen_store()
+            summary = self._store.get_training_data_summary()
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc), parent=self.root)
+            return
+
+        # Build a descriptive confirmation message
+        lines = ["This will permanently clear:"]
+        table_labels = [
+            ("corrections", "corrections"),
+            ("training_examples", "training examples"),
+            ("detections", "detections"),
+            ("training_runs", "training runs"),
+            ("feature_cache", "cached features"),
+            ("candidate_outcomes", "candidate outcomes"),
+            ("dismissed_detections", "dismissed detections"),
+            ("box_groups", "box groups"),
+            ("box_group_members", "box group members"),
+        ]
+        for key, label in table_labels:
+            count = summary.get(key, 0)
+            if count:
+                lines.append(f"  \u2022 {count:,} {label}")
+
+        file_items = []
+        if summary.get("model_file_exists"):
+            file_items.append("trained model (element_classifier.pkl)")
+        if summary.get("subtype_model_exists"):
+            file_items.append("subtype model (subtype_classifier.pkl)")
+        if summary.get("drift_stats_exists"):
+            file_items.append("drift statistics")
+        if summary.get("jsonl_exists"):
+            file_items.append("training data (JSONL)")
+        if summary.get("stage2_jsonl_exists"):
+            file_items.append("stage-2 training data (JSONL)")
+        for item in file_items:
+            lines.append(f"  \u2022 {item}")
+
+        # Check if there's actually anything to clear
+        has_data = any(summary.get(k, 0) for k, _ in table_labels)
+        has_files = any(
+            summary.get(k)
+            for k in (
+                "model_file_exists",
+                "subtype_model_exists",
+                "drift_stats_exists",
+                "jsonl_exists",
+                "stage2_jsonl_exists",
+            )
+        )
+        if not has_data and not has_files:
+            messagebox.showinfo(
+                "Nothing to Reset",
+                "The database is already empty and no model files exist.",
+                parent=self.root,
+            )
+            return
+
+        lines.append("")
+        lines.append("A snapshot will be saved automatically before reset.")
+        lines.append("You will need to re-run the pipeline before training.")
+        lines.append("")
+        lines.append("Documents and label registry are preserved.")
+        lines.append("")
+        lines.append("Continue?")
+
+        ok = messagebox.askyesno(
+            "Reset Training Data",
+            "\n".join(lines),
+            parent=self.root,
+        )
+        if not ok:
+            return
+
+        # Perform the reset
+        try:
+            deleted = self._store.reset_training_data()
+
+            # Delete associated files on disk
+            data_dir = self._db_path.parent
+            for fname in (
+                "element_classifier.pkl",
+                "element_classifier.pkl.bak",
+                "training_data.jsonl",
+                "training_data_stage2.jsonl",
+                "drift_stats.json",
+                "subtype_classifier.pkl",
+            ):
+                (data_dir / fname).unlink(missing_ok=True)
+
+            self._reload_classifiers()
+            self._refresh_stats()
+            if self._pdf_path:
+                self._navigate_to_page()
+
+            total = sum(deleted.values())
+            self._status.configure(
+                text=f"Training data reset ({total} rows cleared). "
+                "Snapshot saved as pre-reset. "
+                "Run the pipeline to begin fresh training."
+            )
+        except Exception as exc:
+            log.error("Training data reset failed", exc_info=True)
+            messagebox.showerror("Reset Error", str(exc), parent=self.root)
+
     # ── Active learning ──────────────────────────────────────────
 
     def _on_suggest_next(self) -> None:

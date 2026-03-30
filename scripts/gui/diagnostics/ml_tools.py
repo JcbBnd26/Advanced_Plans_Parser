@@ -10,7 +10,6 @@ from typing import Any
 from ..widgets import CollapsibleFrame, LogPanel
 from ..worker import PipelineWorker
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
