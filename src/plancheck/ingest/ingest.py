@@ -21,11 +21,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-import pdfplumber
-from PIL import Image
-
 if TYPE_CHECKING:
-    pass
+    import pdfplumber
+    from PIL import Image
 
 log = logging.getLogger(__name__)
 
@@ -190,6 +188,8 @@ def ingest_pdf(pdf_path: Path | str) -> PdfMeta:
     IngestError
         When the file is missing, empty, or cannot be opened as a PDF.
     """
+    import pdfplumber
+
     pdf_path = Path(pdf_path)
     _validate_pdf_path(pdf_path)
 
@@ -269,6 +269,8 @@ def render_page_image(
     PIL.Image.Image
         RGB image of the rendered page.
     """
+    import pdfplumber
+
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[page_num]
         img_page = page.to_image(resolution=resolution)
@@ -281,6 +283,8 @@ def render_page_image(
 
 def _render_page_rgb(page, resolution: int) -> Image.Image:
     """Render an already-opened pdfplumber page to an RGB PIL Image."""
+    from PIL import Image  # noqa: F811
+
     img = page.to_image(resolution=resolution).original.copy()
     if img.mode != "RGB":
         img = img.convert("RGB")
@@ -320,6 +324,8 @@ def build_page_context(
     -------
     PageContext
     """
+    import pdfplumber
+
     if extract_words_kwargs is None:
         extract_words_kwargs = {"keep_blank_chars": False}
 
@@ -404,6 +410,8 @@ def extract_page_words(
         Word dicts as produced by ``pdfplumber.Page.extract_words()``.
         Empty list on failure.
     """
+    import pdfplumber
+
     try:
         with pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[page_num]
@@ -465,6 +473,8 @@ def extract_text_in_polygon(
     str
         Space-joined text of matched words, or empty string on failure.
     """
+    import pdfplumber
+
     try:
         xs = [p[0] for p in polygon]
         ys = [p[1] for p in polygon]
@@ -516,6 +526,8 @@ def extract_text_in_bbox(
     str
         Extracted text, or empty string on failure.
     """
+    import pdfplumber
+
     try:
         with pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[page_num]

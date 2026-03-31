@@ -13,10 +13,6 @@ from __future__ import annotations
 import logging
 from typing import List, Sequence, Tuple
 
-from shapely.geometry import MultiPolygon, Polygon
-from shapely.geometry import box as shapely_box
-from shapely.ops import unary_union
-
 from ..models.geometry import bboxes_overlap as boxes_overlap  # noqa: F401 — re-export
 
 logger = logging.getLogger("plancheck.box_merge")
@@ -55,6 +51,10 @@ def merge_boxes(bboxes: Sequence[Bbox]) -> PolygonCoords:
     if not bboxes:
         raise ValueError("merge_boxes requires at least one bbox")
 
+    from shapely.geometry import MultiPolygon
+    from shapely.geometry import box as shapely_box
+    from shapely.ops import unary_union
+
     polys = [shapely_box(x0, y0, x1, y1) for x0, y0, x1, y1 in bboxes]
     merged = unary_union(polys)
 
@@ -78,6 +78,10 @@ def merge_boxes_multi(bboxes: Sequence[Bbox]) -> List[PolygonCoords]:
     """
     if not bboxes:
         return []
+
+    from shapely.geometry import MultiPolygon
+    from shapely.geometry import box as shapely_box
+    from shapely.ops import unary_union
 
     polys = [shapely_box(x0, y0, x1, y1) for x0, y0, x1, y1 in bboxes]
     merged = unary_union(polys)
@@ -131,6 +135,8 @@ def simplify_polygon(
     list[(x, y)]
         Simplified exterior ring.
     """
+    from shapely.geometry import Polygon
+
     poly = Polygon(coords)
     simplified = poly.simplify(tolerance, preserve_topology=True)
     return list(simplified.exterior.coords)

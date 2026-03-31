@@ -143,7 +143,7 @@ class TestIngestPdf:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             meta = ingest_pdf(pdf_path)
 
         assert meta.num_pages == 3
@@ -161,7 +161,7 @@ class TestIngestPdf:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             meta = ingest_pdf(pdf_path)
 
         assert meta.num_pages == 1
@@ -177,7 +177,7 @@ class TestIngestPdf:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             meta = ingest_pdf(pdf_path)
 
         assert "AutoCAD" in meta.pdf_metadata["Producer"]
@@ -191,7 +191,7 @@ class TestIngestPdf:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             meta = ingest_pdf(pdf_path)
 
         assert meta.file_size_bytes > 0
@@ -206,7 +206,7 @@ class TestIngestPdf:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             meta = ingest_pdf(str(pdf_path))
 
         assert meta.num_pages == 1
@@ -223,7 +223,7 @@ class TestIngestPdf:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             with pytest.raises(IngestError, match="password-protected"):
                 ingest_pdf(pdf_path)
 
@@ -239,7 +239,7 @@ class TestIngestPdf:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             meta = ingest_pdf(pdf_path)
 
         assert meta.num_pages == 1
@@ -262,7 +262,7 @@ class TestRenderPageImage:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             img = render_page_image(Path("dummy.pdf"), 0, resolution=150)
 
         assert isinstance(img, PILImage.Image)
@@ -281,7 +281,7 @@ class TestRenderPageImage:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             img = render_page_image(Path("dummy.pdf"), 0)
 
         assert img.mode == "RGB"
@@ -299,7 +299,7 @@ class TestRenderPageImage:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             render_page_image(Path("dummy.pdf"), 0, resolution=300)
 
         mock_page.to_image.assert_called_once_with(resolution=300)
@@ -323,7 +323,7 @@ class TestExtractTextInBbox:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             text = extract_text_in_bbox(Path("dummy.pdf"), 0, (50, 100, 200, 300))
 
         assert text == "GENERAL NOTES"
@@ -334,7 +334,7 @@ class TestExtractTextInBbox:
         mock_pdf.__enter__ = MagicMock(side_effect=Exception("bad"))
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             text = extract_text_in_bbox(Path("dummy.pdf"), 0, (0, 0, 100, 100))
 
         assert text == ""
@@ -351,7 +351,7 @@ class TestExtractTextInBbox:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             text = extract_text_in_bbox(Path("dummy.pdf"), 0, (-10, -10, 200, 200))
 
         # Should clamp to (0, 0, 100, 100)
@@ -367,7 +367,7 @@ class TestExtractTextInBbox:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             text = extract_text_in_bbox(Path("dummy.pdf"), 0, (50, 50, 50, 50))
 
         assert text == ""
@@ -384,7 +384,7 @@ class TestExtractTextInBbox:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             text = extract_text_in_bbox(Path("dummy.pdf"), 0, (0, 0, 100, 100))
 
         assert text == "some text"
@@ -401,7 +401,7 @@ class TestExtractTextInBbox:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             text = extract_text_in_bbox(Path("dummy.pdf"), 0, (0, 0, 100, 100))
 
         assert text == ""
@@ -424,7 +424,7 @@ class TestExtractPageWords:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             words = extract_page_words(Path("dummy.pdf"), 0)
 
         assert len(words) == 2
@@ -439,14 +439,14 @@ class TestExtractPageWords:
         mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
         mock_pdf.__exit__ = MagicMock(return_value=False)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             words = extract_page_words(Path("dummy.pdf"), 0)
 
         assert words == []
 
     def test_returns_empty_on_error(self) -> None:
         with patch(
-            "plancheck.ingest.ingest.pdfplumber.open",
+            "pdfplumber.open",
             side_effect=RuntimeError("bad pdf"),
         ):
             words = extract_page_words(Path("dummy.pdf"), 0)
@@ -507,7 +507,7 @@ class TestExtractTextInPolygon:
         polygon = [(0, 0), (100, 0), (100, 100), (0, 100)]
         mock_pdf = self._make_mock_pdf(words)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             text = extract_text_in_polygon(Path("test.pdf"), 0, polygon)
 
         assert text == "inside"
@@ -533,14 +533,14 @@ class TestExtractTextInPolygon:
         l_shape = [(0, 0), (50, 0), (50, 50), (100, 50), (100, 100), (0, 100)]
         mock_pdf = self._make_mock_pdf(words)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             text = extract_text_in_polygon(Path("test.pdf"), 0, l_shape)
 
         assert text == "hello"
 
     def test_returns_empty_on_error(self) -> None:
         with patch(
-            "plancheck.ingest.ingest.pdfplumber.open",
+            "pdfplumber.open",
             side_effect=RuntimeError("fail"),
         ):
             text = extract_text_in_polygon(
@@ -556,7 +556,7 @@ class TestExtractTextInPolygon:
         polygon = [(0, 0), (100, 0), (100, 100), (0, 100)]
         mock_pdf = self._make_mock_pdf(words)
 
-        with patch("plancheck.ingest.ingest.pdfplumber.open", return_value=mock_pdf):
+        with patch("pdfplumber.open", return_value=mock_pdf):
             text = extract_text_in_polygon(Path("test.pdf"), 0, polygon)
 
         assert text == "a b"

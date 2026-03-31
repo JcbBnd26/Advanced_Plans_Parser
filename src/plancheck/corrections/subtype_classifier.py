@@ -32,7 +32,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 from .classifier import _NUMERIC_KEYS, ZONE_VALUES, ElementClassifier, encode_features
 
@@ -91,6 +92,8 @@ def encode_subtype_features(
     numpy.ndarray
         1-D float64 array.
     """
+    import numpy as np
+
     # Base features (numeric + zone one-hot)
     base = encode_features(feature_dict, image_features=None, text_embedding=None)
 
@@ -318,6 +321,8 @@ class TitleSubtypeClassifier:
         tuple[str, float]
             ``(subtype_label, confidence)``
         """
+        import numpy as np
+
         self._load_model()
         x = encode_subtype_features(
             feature_dict, image_features, text_embedding
@@ -349,6 +354,8 @@ class TitleSubtypeClassifier:
         list[tuple[str, float]]
             ``[(subtype_label, confidence), …]`` ordered highest-first.
         """
+        import numpy as np
+
         self._load_model()
         x = encode_subtype_features(
             feature_dict, image_features, text_embedding
@@ -372,6 +379,8 @@ class TitleSubtypeClassifier:
             + [f"zone_{z}" for z in ZONE_VALUES]
             + list(_SUBTYPE_EXTRA_KEYS)
         )
+
+        import numpy as np
 
         try:
             importances = np.asarray(model.feature_importances_)
@@ -409,6 +418,8 @@ class TitleSubtypeClassifier:
             val_ex = examples
         if not val_ex:
             return {"curves": {}, "ece": 0.0}
+
+        import numpy as np
 
         X = np.array([encode_subtype_features(e["features"]) for e in val_ex])
         y_true = [e["label"] for e in val_ex]

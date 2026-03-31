@@ -17,9 +17,10 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import List, Tuple
+from typing import TYPE_CHECKING, List, Tuple
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +127,8 @@ def encode_features(
         1-D float64 array of length ``len(_NUMERIC_KEYS) + len(ZONE_VALUES)``
         (+ image dims when vision active, + embedding dims when embeddings active).
     """
+    import numpy as np
+
     numeric = [float(feature_dict.get(k, 0.0)) for k in _NUMERIC_KEYS]
     zone = feature_dict.get("zone", "unknown")
     one_hot = [1.0 if zone == z else 0.0 for z in ZONE_VALUES]
@@ -354,6 +357,8 @@ class ElementClassifier:
         tuple[str, float, float]
             ``(best_label, best_confidence, p_negative)``
         """
+        import numpy as np
+
         neg_label = ElementClassifier.NEGATIVE_LABEL
         classes_list = list(classes)
         if neg_label in classes_list:
@@ -452,6 +457,8 @@ class ElementClassifier:
         tuple[str, float]
             ``(predicted_label, confidence)``.
         """
+        import numpy as np
+
         self._load_model()
         x = np.asarray(vector, dtype=np.float64).reshape(1, -1)
         if self._n_features_in is not None and x.shape[1] > self._n_features_in:
@@ -496,6 +503,8 @@ class ElementClassifier:
         if self._n_features_in is not None and self._n_features_in <= base_dim:
             image_features_list = None  # model doesn't expect vision dims
             text_embeddings_list = None  # model doesn't expect embedding dims
+
+        import numpy as np
 
         rows = []
         for i, f in enumerate(feature_dicts):
@@ -588,6 +597,8 @@ class ElementClassifier:
             except (IndexError, AttributeError):
                 pass
 
+        import numpy as np
+
         feature_names = list(_NUMERIC_KEYS) + [f"zone_{z}" for z in ZONE_VALUES]
 
         try:
@@ -641,6 +652,8 @@ class ElementClassifier:
             val_ex = examples
         if not val_ex:
             return {"curves": {}, "ece": 0.0}
+
+        import numpy as np
 
         X = np.array([encode_features(e["features"]) for e in val_ex])
         y_true = [e["label"] for e in val_ex]

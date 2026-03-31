@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from typing import List
 
-import pdfplumber
-
 from ..models import GraphicElement
 
 logger = logging.getLogger("plancheck.graphics")
@@ -132,6 +130,8 @@ def extract_graphics(pdf_path: str, page_num: int) -> List[GraphicElement]:
     .. note:: For pipeline use prefer :func:`extract_graphics_from_data`
        with a :class:`PageContext` to avoid an additional ``pdfplumber.open()``.
     """
+    import pdfplumber
+
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[page_num]
         return _parse_graphics_dicts(

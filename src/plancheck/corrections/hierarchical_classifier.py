@@ -42,9 +42,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 log = logging.getLogger(__name__)
 
