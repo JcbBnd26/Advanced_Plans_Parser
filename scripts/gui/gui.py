@@ -26,7 +26,7 @@ import logging
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from plancheck.config import GroupingConfig
 
@@ -260,23 +260,43 @@ class PlanParserGUI:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.grid(row=0, column=0, sticky="nsew")
 
-        # ── Import and create each tab ────────────────────────────────
-        from .tab_annotation import AnnotationTab
-        from .tab_database import DatabaseTab
-        from .tab_diagnostics import DiagnosticsTab
         from .tab_pipeline import PipelineTab
-        from .tab_query import QueryTab
-        from .tab_recreation import RecreationTab
-        from .tab_runs import RunsTab
         from .widgets import StatusBar
 
+        # Build PipelineTab eagerly — it is the first visible tab and
+        # its construction time is covered by the splash screen.
         self._pipeline_tab = PipelineTab(self.notebook, self.state)
-        self._runs_tab = RunsTab(self.notebook, self.state)
-        self._database_tab = DatabaseTab(self.notebook, gui_state=self.state)
-        self._diagnostics_tab = DiagnosticsTab(self.notebook, self.state)
-        self._recreation_tab = RecreationTab(self.notebook, self.state)
-        self._annotation_tab = AnnotationTab(self.notebook, gui_state=self.state)
-        self._query_tab = QueryTab(self.notebook, self.state)
+
+        # All other tabs are lazy: add lightweight placeholders now and
+        # import + build the real tab on first selection.  This avoids
+        # heavy imports (PIL, shapely, sklearn, pdfplumber) and large
+        # widget trees until the user actually needs them.
+        self._lazy_tab_defs: dict[int, tuple[str, str]] = {}  # idx → (attr, key)
+        self._lazy_placeholders: dict[int, ttk.Frame] = {}
+
+        _lazy_specs: list[tuple[str, str, str]] = [
+            ("Runs & Reports",  "_runs_tab",        "runs"),
+            ("Database",        "_database_tab",    "database"),
+            ("Diagnostics",     "_diagnostics_tab", "diagnostics"),
+            ("Sheet Recreation","_recreation_tab",  "recreation"),
+            ("ML Trainer",      "_annotation_tab",  "annotation"),
+            ("Query",           "_query_tab",       "query"),
+        ]
+
+        for tab_text, attr_name, key in _lazy_specs:
+            placeholder = ttk.Frame(self.notebook)
+            ttk.Label(
+                placeholder,
+                text="Loading…",
+                font=("Segoe UI", 10),
+                foreground="gray",
+            ).place(relx=0.5, rely=0.5, anchor="center")
+            self.notebook.add(placeholder, text=tab_text)
+            idx = self.notebook.index("end") - 1
+            self._lazy_tab_defs[idx] = (attr_name, key)
+            self._lazy_placeholders[idx] = placeholder
+
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_lazy_tab, add="+")
 
         # ── Status bar ────────────────────────────────────────────────
         self._status_bar = StatusBar(self.root)
@@ -288,6 +308,52 @@ class PlanParserGUI:
         # Update status when state changes
         self.state.subscribe("pdf_changed", self._update_status)
         self.state.subscribe("run_completed", self._update_status)
+
+    # ------------------------------------------------------------------
+    # Lazy tab materialisation
+    # ------------------------------------------------------------------
+
+    def _on_lazy_tab(self, _event: Any) -> None:
+        """Build a tab on first selection, replacing its placeholder."""
+        idx = self.notebook.index("current")
+        if idx not in self._lazy_tab_defs:
+            return
+
+        attr_name, key = self._lazy_tab_defs.pop(idx)
+        placeholder = self._lazy_placeholders.pop(idx)
+
+        tab = self._materialise_tab(key)
+        setattr(self, attr_name, tab)
+
+        # The tab's __init__ already appended its frame to the notebook
+        # (via notebook.add).  Swap it into the placeholder's position.
+        self.notebook.forget(placeholder)
+        placeholder.destroy()
+        self.notebook.insert(idx, tab.frame)
+        self.notebook.select(idx)
+
+    def _materialise_tab(self, key: str) -> Any:
+        """Import and construct a single lazy tab."""
+        if key == "runs":
+            from .tab_runs import RunsTab
+            return RunsTab(self.notebook, self.state)
+        if key == "database":
+            from .tab_database import DatabaseTab
+            return DatabaseTab(self.notebook, gui_state=self.state)
+        if key == "diagnostics":
+            from .tab_diagnostics import DiagnosticsTab
+            return DiagnosticsTab(self.notebook, self.state)
+        if key == "recreation":
+            from .tab_recreation import RecreationTab
+            return RecreationTab(self.notebook, self.state)
+        if key == "annotation":
+            from .tab_annotation import AnnotationTab
+            return AnnotationTab(self.notebook, gui_state=self.state)
+        if key == "query":
+            from .tab_query import QueryTab
+            return QueryTab(self.notebook, self.state)
+        msg = f"Unknown lazy tab key: {key!r}"
+        raise ValueError(msg)
 
     def _bind_shortcuts(self) -> None:
         """Global keyboard shortcuts."""
