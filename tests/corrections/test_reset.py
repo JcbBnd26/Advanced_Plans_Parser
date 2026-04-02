@@ -8,7 +8,6 @@ import pytest
 
 from plancheck.corrections.store import CorrectionStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -155,9 +154,7 @@ class TestGetTrainingDataSummary:
             assert summary[table] == 0, f"{table} should be 0 on empty DB"
 
     @pytest.mark.unit
-    def test_file_booleans_all_false_on_empty(
-        self, tmp_store: CorrectionStore
-    ) -> None:
+    def test_file_booleans_all_false_on_empty(self, tmp_store: CorrectionStore) -> None:
         """File-existence booleans should be False when no files exist."""
         summary = tmp_store.get_training_data_summary()
         assert summary["model_file_exists"] is False

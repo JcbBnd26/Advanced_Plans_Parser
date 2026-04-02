@@ -168,13 +168,11 @@ class NewProjectDialog(tk.Toplevel):
             row=0, column=0, sticky="w", **pad
         )
         self._retrain_var = tk.IntVar(value=50)
-        ttk.Spinbox(sec3, textvariable=self._retrain_var, from_=5, to=500, width=8).grid(
-            row=0, column=1, sticky="w", **pad
-        )
+        ttk.Spinbox(
+            sec3, textvariable=self._retrain_var, from_=5, to=500, width=8
+        ).grid(row=0, column=1, sticky="w", **pad)
 
-        ttk.Label(sec3, text="ML confidence:").grid(
-            row=1, column=0, sticky="w", **pad
-        )
+        ttk.Label(sec3, text="ML confidence:").grid(row=1, column=0, sticky="w", **pad)
         self._confidence_var = tk.DoubleVar(value=0.8)
         ttk.Spinbox(
             sec3,
@@ -217,7 +215,9 @@ class NewProjectDialog(tk.Toplevel):
     def _on_create(self) -> None:
         name = self._name_var.get().strip()
         if not name:
-            messagebox.showwarning("Missing Name", "Please enter a project name.", parent=self)
+            messagebox.showwarning(
+                "Missing Name", "Please enter a project name.", parent=self
+            )
             return
 
         # Gather selected labels
@@ -318,8 +318,7 @@ def open_project_dialog(parent: tk.Widget, state: "GuiState") -> Path | None:
     if not project_json.exists():
         messagebox.showerror(
             "Invalid Project",
-            f"Not a valid project folder:\n{project_dir}\n\n"
-            "(No project.json found)",
+            f"Not a valid project folder:\n{project_dir}\n\n" "(No project.json found)",
             parent=parent,
         )
         return None

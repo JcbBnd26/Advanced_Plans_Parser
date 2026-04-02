@@ -86,9 +86,7 @@ def create_project(
     project_json = project_dir / "project.json"
 
     if project_json.exists():
-        raise FileExistsError(
-            f"project.json already exists in {project_dir}"
-        )
+        raise FileExistsError(f"project.json already exists in {project_dir}")
 
     # Create directory structure
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -156,8 +154,7 @@ def load_project(project_dir: Path) -> dict:
 
     if not project_json.exists():
         raise FileNotFoundError(
-            f"Not a valid project folder: {project_dir} "
-            f"(no project.json found)"
+            f"Not a valid project folder: {project_dir} " f"(no project.json found)"
         )
 
     try:
@@ -171,9 +168,7 @@ def load_project(project_dir: Path) -> dict:
     # Validate required fields
     for field in ("version", "name"):
         if field not in data:
-            raise ConfigLoadError(
-                f"project.json missing required field: {field!r}"
-            )
+            raise ConfigLoadError(f"project.json missing required field: {field!r}")
 
     return data
 
@@ -241,9 +236,7 @@ def _apply_overrides(
         if key in valid_fields:
             setattr(cfg, key, value)
         else:
-            log.warning(
-                "Ignoring unknown config override %r from %s", key, source
-            )
+            log.warning("Ignoring unknown config override %r from %s", key, source)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -284,11 +277,14 @@ def add_recent_project(project_dir: Path, name: str) -> None:
     recents = [r for r in recents if Path(r["path"]).resolve() != project_dir]
 
     # Prepend
-    recents.insert(0, {
-        "path": str(project_dir),
-        "name": name,
-        "last_opened": datetime.now(timezone.utc).isoformat(),
-    })
+    recents.insert(
+        0,
+        {
+            "path": str(project_dir),
+            "name": name,
+            "last_opened": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
     # Trim to max
     recents = recents[:_RECENT_PROJECTS_MAX]
@@ -422,17 +418,13 @@ def import_project(zip_path: Path, target_parent_dir: Path) -> Path:
             n for n in names if n == "project.json" or n.endswith("/project.json")
         ]
         if not project_json_candidates:
-            raise ConfigLoadError(
-                f"Archive does not contain project.json: {zip_path}"
-            )
+            raise ConfigLoadError(f"Archive does not contain project.json: {zip_path}")
 
         # Security: check for path traversal
         for name in names:
             resolved = (target_parent_dir / name).resolve()
             if not str(resolved).startswith(str(target_parent_dir.resolve())):
-                raise ConfigLoadError(
-                    f"Archive contains unsafe path: {name}"
-                )
+                raise ConfigLoadError(f"Archive contains unsafe path: {name}")
 
         # Determine project folder name from the archive
         pj = project_json_candidates[0]

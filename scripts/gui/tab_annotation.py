@@ -107,7 +107,9 @@ class AnnotationTab(
         self._word_click_candidate_rid: int | None = None
         self._session_id: str = uuid4().hex[:8]
         self._session_count: int = 0
-        self._db_path: Path | None = gui_state.db_path() if hasattr(gui_state, 'db_path') else None
+        self._db_path: Path | None = (
+            gui_state.db_path() if hasattr(gui_state, "db_path") else None
+        )
         self._store: CorrectionStore | None = None
         self._worker: PipelineWorker | None = None
         self._classifier = ElementClassifier()

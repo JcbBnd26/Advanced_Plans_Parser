@@ -243,9 +243,7 @@ class DbHelpersMixin:
         summary["stage2_jsonl_exists"] = (
             data_dir / "training_data_stage2.jsonl"
         ).exists()
-        summary["subtype_model_exists"] = (
-            data_dir / "subtype_classifier.pkl"
-        ).exists()
+        summary["subtype_model_exists"] = (data_dir / "subtype_classifier.pkl").exists()
 
         return summary
 
@@ -293,9 +291,7 @@ class DbHelpersMixin:
         with self._write_lock():
             for table in delete_order:
                 try:
-                    cur = self._conn.execute(
-                        f"DELETE FROM [{table}]"  # noqa: S608
-                    )
+                    cur = self._conn.execute(f"DELETE FROM [{table}]")  # noqa: S608
                     deleted[table] = cur.rowcount
                 except Exception:  # noqa: BLE001 — table may not exist
                     log.debug("Table %s not found during reset", table)
@@ -303,9 +299,7 @@ class DbHelpersMixin:
 
             # Clear stale session-active flag (preserve other metadata)
             try:
-                self._conn.execute(
-                    "DELETE FROM metadata WHERE key = 'session_active'"
-                )
+                self._conn.execute("DELETE FROM metadata WHERE key = 'session_active'")
             except Exception:  # noqa: BLE001 — metadata table may not exist
                 pass
 

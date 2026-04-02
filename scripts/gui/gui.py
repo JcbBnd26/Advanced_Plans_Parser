@@ -297,10 +297,12 @@ class PlanParserGUI:
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(
-            label="New Project…", command=self._new_project,
+            label="New Project…",
+            command=self._new_project,
         )
         file_menu.add_command(
-            label="Open Project…", command=self._open_project,
+            label="Open Project…",
+            command=self._open_project,
         )
 
         # Recent Projects submenu (populated dynamically)
@@ -309,10 +311,12 @@ class PlanParserGUI:
 
         file_menu.add_separator()
         file_menu.add_command(
-            label="Export Project…", command=self._export_project,
+            label="Export Project…",
+            command=self._export_project,
         )
         file_menu.add_command(
-            label="Import Project…", command=self._import_project,
+            label="Import Project…",
+            command=self._import_project,
         )
 
         # ── Tab container ─────────────────────────────────────────────
@@ -334,12 +338,12 @@ class PlanParserGUI:
         self._lazy_placeholders: dict[int, ttk.Frame] = {}
 
         _lazy_specs: list[tuple[str, str, str]] = [
-            ("Runs & Reports",  "_runs_tab",        "runs"),
-            ("Database",        "_database_tab",    "database"),
-            ("Diagnostics",     "_diagnostics_tab", "diagnostics"),
-            ("Sheet Recreation","_recreation_tab",  "recreation"),
-            ("ML Trainer",      "_annotation_tab",  "annotation"),
-            ("Query",           "_query_tab",       "query"),
+            ("Runs & Reports", "_runs_tab", "runs"),
+            ("Database", "_database_tab", "database"),
+            ("Diagnostics", "_diagnostics_tab", "diagnostics"),
+            ("Sheet Recreation", "_recreation_tab", "recreation"),
+            ("ML Trainer", "_annotation_tab", "annotation"),
+            ("Query", "_query_tab", "query"),
         ]
 
         for tab_text, attr_name, key in _lazy_specs:
@@ -396,21 +400,27 @@ class PlanParserGUI:
         """Import and construct a single lazy tab."""
         if key == "runs":
             from .tab_runs import RunsTab
+
             return RunsTab(self.notebook, self.state)
         if key == "database":
             from .tab_database import DatabaseTab
+
             return DatabaseTab(self.notebook, gui_state=self.state)
         if key == "diagnostics":
             from .tab_diagnostics import DiagnosticsTab
+
             return DiagnosticsTab(self.notebook, self.state)
         if key == "recreation":
             from .tab_recreation import RecreationTab
+
             return RecreationTab(self.notebook, self.state)
         if key == "annotation":
             from .tab_annotation import AnnotationTab
+
             return AnnotationTab(self.notebook, gui_state=self.state)
         if key == "query":
             from .tab_query import QueryTab
+
             return QueryTab(self.notebook, self.state)
         msg = f"Unknown lazy tab key: {key!r}"
         raise ValueError(msg)
@@ -508,6 +518,7 @@ class PlanParserGUI:
         except Exception as exc:  # noqa: BLE001 — surface to user
             logger.error("Failed to open recent project: %s", exc, exc_info=True)
             from tkinter import messagebox
+
             messagebox.showerror(
                 "Error",
                 f"Failed to open project:\n{exc}",
