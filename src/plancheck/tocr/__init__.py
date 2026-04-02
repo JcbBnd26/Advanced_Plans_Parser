@@ -7,10 +7,12 @@ Public API
 - :class:`TocrPageResult` — extraction result container
 - :func:`nms_prune` — non-maximum suppression for overlapping boxes
 - :func:`estimate_skew_degrees` / :func:`rotate_boxes` — deskew helpers
+- :func:`recover_vector_symbols` — inject CAD-vectorised symbols
 """
 
 from .extract import TocrPageResult, extract_tocr_from_page, extract_tocr_page
 from .preprocess import estimate_skew_degrees, nms_prune, rotate_boxes
+from .vector_symbols import recover_vector_symbols
 
 __all__ = [
     "TocrPageResult",
@@ -19,4 +21,5 @@ __all__ = [
     "nms_prune",
     "estimate_skew_degrees",
     "rotate_boxes",
+    "recover_vector_symbols",
 ]

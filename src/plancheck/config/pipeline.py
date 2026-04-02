@@ -93,6 +93,15 @@ class PipelineConfig:
     tocr_use_text_flow: bool = False
     tocr_keep_blank_chars: bool = False
 
+    # ── Vector symbol recovery (post-TOCR) ─────────────────────────────
+    tocr_vector_symbols_enabled: bool = True
+    tocr_vector_symbols_inject: bool = True
+    tocr_vector_symbol_max_size: float = 20.0
+    tocr_vector_symbol_slash_angle_min: float = 40.0
+    tocr_vector_symbol_slash_angle_max: float = 80.0
+    tocr_vector_symbol_proximity: float = 2.0
+    tocr_vector_symbol_circle_max_aspect: float = 1.4
+
     # ── Visual OCR (Surya full-page extraction) ────────────────────────
     enable_vocr: bool = True
     vocr_backend: str = "surya"  # OCR backend: "surya"
@@ -329,6 +338,11 @@ class PipelineConfig:
             "max_row_width_mult",
             "tocr_x_tolerance",
             "tocr_y_tolerance",
+            "tocr_vector_symbol_max_size",
+            "tocr_vector_symbol_slash_angle_min",
+            "tocr_vector_symbol_slash_angle_max",
+            "tocr_vector_symbol_proximity",
+            "tocr_vector_symbol_circle_max_aspect",
             "vocrpp_clahe_clip_limit",
             "font_metrics_inflation_threshold",
         ]

@@ -350,6 +350,7 @@ def _run_early_stages(
         _run_ingest_stage,
         _run_prune_deskew,
         _run_tocr_stage,
+        _run_vector_symbol_recovery,
         _run_vocr_candidates_stage,
     )
 
@@ -363,6 +364,8 @@ def _run_early_stages(
         page_w,
         page_h,
     )
+
+    boxes = _run_vector_symbol_recovery(pr, ctx, cfg, boxes)
 
     boxes, skew = _run_prune_deskew(boxes, cfg, page_w, page_h)
     pr.skew_degrees = skew

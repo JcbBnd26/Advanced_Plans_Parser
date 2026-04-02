@@ -74,6 +74,47 @@ def _run_tocr_stage(
     return b, pw, ph
 
 
+# ── Stage 2.5: Vector symbol recovery (post-TOCR enrichment) ──────────
+
+
+def _run_vector_symbol_recovery(
+    pr: PageResult,
+    ctx: "PageContext",
+    cfg: GroupingConfig,
+    boxes: list,
+) -> list:
+    """Scan vector graphics for symbol-sized shapes and inject matches.
+
+    Runs between TOCR and prune/deskew.  Returns the (possibly enriched)
+    token list.  A no-op when ``cfg.tocr_vector_symbols_enabled`` is False.
+    """
+    if not cfg.tocr_vector_symbols_enabled:
+        return boxes
+
+    from .tocr.vector_symbols import recover_vector_symbols
+
+    boxes, vs_diag = recover_vector_symbols(
+        boxes,
+        ctx.lines,
+        ctx.curves,
+        ctx.page_num,
+        cfg,
+    )
+
+    # Stash diagnostics inside the TOCR stage result (enrichment, not
+    # a separate stage).
+    tocr_sr = pr.stages.get("tocr")
+    if tocr_sr is not None:
+        tocr_sr.counts["vector_symbols"] = vs_diag
+
+    log.info(
+        "_run_vector_symbol_recovery: page %d — injected %d symbols",
+        ctx.page_num,
+        vs_diag.get("vector_symbols_found", 0),
+    )
+    return boxes
+
+
 # ── Stage 3: VOCRPP (visual-OCR preprocessing) ────────────────────────
 
 
