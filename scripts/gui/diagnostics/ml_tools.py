@@ -323,7 +323,7 @@ class MLRuntimeSummarySection(CollapsibleFrame):
     def _refresh_summary(self) -> None:
         pending_corrections = None
         db_present = False
-        db_path = Path("data") / "corrections.db"
+        db_path = self._state.db_path()
         if db_path.exists():
             db_present = True
             try:
@@ -401,7 +401,7 @@ class TrainingProgressSection(CollapsibleFrame):
 
     def _refresh_all(self) -> None:
         """Refresh all training progress charts."""
-        db_path = Path("data") / "corrections.db"
+        db_path = self._state.db_path()
         if not db_path.exists():
             self._log.write("No corrections.db found.", "WARNING")
             return
@@ -682,7 +682,7 @@ class ModelComparisonSection(CollapsibleFrame):
         )
 
     def _refresh_training_runs(self) -> None:
-        db_path = Path("data") / "corrections.db"
+        db_path = self._state.db_path()
         if not db_path.exists():
             messagebox.showwarning("No Database", "corrections.db not found.")
             return
@@ -724,7 +724,7 @@ class ModelComparisonSection(CollapsibleFrame):
             )
             return
 
-        db_path = Path("data") / "corrections.db"
+        db_path = self._state.db_path()
         from plancheck.corrections.experiment_tracker import ExperimentTracker
         from plancheck.corrections.store import CorrectionStore
 

@@ -68,6 +68,7 @@ class DatabaseTab:
         self.state.subscribe("run_completed", self._on_run_completed)
         self.state.subscribe("pdf_changed", self._refresh)
         self.state.subscribe("pipeline_starting", self._close_store)
+        self.state.subscribe("project_changed", self._on_project_changed)
 
     def _close_store(self) -> None:
         """Close the database connection while the pipeline runs."""
@@ -81,11 +82,18 @@ class DatabaseTab:
     def _reopen_store(self) -> None:
         """Reopen the database connection after pipeline finishes."""
         if self._store is None:
-            self._store = CorrectionStore()
+            self._store = CorrectionStore(self.state.db_path())
 
     def _on_run_completed(self) -> None:
         """Reopen store and refresh after pipeline finishes."""
         self._reopen_store()
+        self._refresh()
+
+    def _on_project_changed(self) -> None:
+        """Close and reopen the store at the new project path."""
+        self._close_store()
+        self._reopen_store()
+        self._needs_refresh = True
         self._refresh()
 
     # ------------------------------------------------------------------

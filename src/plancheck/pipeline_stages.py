@@ -395,7 +395,7 @@ def _run_reconcile_stage(
                     try:
                         from .corrections.store import CorrectionStore
 
-                        store = CorrectionStore()
+                        store = CorrectionStore(getattr(cfg, '_project_db_path', None))
                         n_saved = store.save_candidate_outcomes_batch(
                             pr.vocr_candidates,
                             page_width=page_w,

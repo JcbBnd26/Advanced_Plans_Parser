@@ -107,8 +107,11 @@ class LabelRegistryMixin:
     # ── Registry path ────────────────────────────────────────────
 
     def _label_registry_path(self) -> Path:
-        """Path to the shared label_registry.json in the data/ folder."""
-        # scripts/gui/mixins/label_registry.py -> repo root is parent^4
+        """Path to the label_registry.json — project-scoped or global."""
+        project_dir = getattr(self.state, "project_dir", None)
+        if project_dir:
+            return project_dir / "label_registry.json"
+        # Legacy fallback: scripts/gui/mixins/label_registry.py -> repo root is parent^4
         return (
             Path(__file__).resolve().parent.parent.parent.parent
             / "data"

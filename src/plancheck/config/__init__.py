@@ -9,10 +9,21 @@ from .constants import (
     DEFAULT_CORRECTIONS_DB,
     DEFAULT_DRIFT_STATS,
     DEFAULT_GNN_MODEL,
+    DEFAULT_LABEL_REGISTRY,
     DEFAULT_ML_MODEL,
 )
 from .exceptions import ConfigLoadError, ConfigValidationError, OCRBackendTimeoutError
 from .pipeline import PipelineConfig, migrate_config
+from .project import (
+    build_project_config,
+    create_project,
+    export_project,
+    get_master_label_defs,
+    get_recent_projects,
+    import_project,
+    load_project,
+    slugify,
+)
 from .subconfigs import (
     AnalysisConfig,
     ExportConfig,
@@ -51,4 +62,14 @@ __all__ = [
     "DEFAULT_GNN_MODEL",
     "DEFAULT_DRIFT_STATS",
     "DEFAULT_CORRECTIONS_DB",
+    "DEFAULT_LABEL_REGISTRY",
+    # Project management
+    "create_project",
+    "load_project",
+    "build_project_config",
+    "get_master_label_defs",
+    "get_recent_projects",
+    "export_project",
+    "import_project",
+    "slugify",
 ]

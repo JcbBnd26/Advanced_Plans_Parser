@@ -60,6 +60,7 @@ class PipelineTab:
 
         # Subscribe to load_config event (fired by Runs tab)
         self.state.subscribe("load_config", self._on_load_config)
+        self.state.subscribe("project_changed", self._on_project_changed)
 
     # ------------------------------------------------------------------
     # Build UI
@@ -1088,6 +1089,10 @@ class PipelineTab:
         self._notify_loaded_config_validation(cfg, source="Imported config")
         self.state.pending_config = None  # Clear after applying
 
+    def _on_project_changed(self) -> None:
+        """Refresh config display when the active project changes."""
+        self._apply_config(self.state.config)
+
     def _refresh_config_file_label(self) -> None:
         """Show the current config source in the Pipeline tab."""
         path = self.state.config_file_path
@@ -1608,6 +1613,7 @@ class PipelineTab:
                     cfg=cfg,
                     cancel_event=worker.cancel_event if worker else None,
                     stage_callback=worker.post_stage if worker else None,
+                    db_path=self.state.db_path(),
                 )
                 results.append(run_dir)
             cleanup_old_runs(runs_root, keep=50)

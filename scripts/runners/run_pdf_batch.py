@@ -569,6 +569,7 @@ def run_pdf(
     cfg: GroupingConfig | None = None,
     cancel_event: threading.Event | None = None,
     stage_callback: Callable[[str, str], None] | None = None,
+    db_path: Path | None = None,
 ) -> Path:
     """Process pages of a single PDF using batch-by-stage ordering.
 
@@ -593,7 +594,7 @@ def run_pdf(
     # tab can display them immediately after the run completes.
     from plancheck.corrections.store import CorrectionStore
 
-    correction_store = CorrectionStore()
+    correction_store = CorrectionStore(db_path)
     _run_id = run_dir.name
     pdf_stem = pdf.stem.replace(" ", "_")
 

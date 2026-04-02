@@ -29,6 +29,7 @@ from tkinter import filedialog, ttk
 from typing import TYPE_CHECKING, Any
 
 from plancheck.config import GroupingConfig
+from plancheck.config.constants import DEFAULT_CORRECTIONS_DB
 
 if TYPE_CHECKING:
     from plancheck.corrections.experiment_tracker import ExperimentTracker
@@ -101,6 +102,8 @@ class GuiState:
         self._subscribers: dict[str, list] = {}
         self._error_display_cb: Any = None
         self.experiment_tracker: ExperimentTracker | None = None
+        self.project_dir: Path | None = None
+        self.project_meta: dict | None = None
 
     def subscribe(self, event: str, callback) -> None:
         self._subscribers.setdefault(event, []).append(callback)
@@ -158,6 +161,37 @@ class GuiState:
         self.pending_config = dict(config_dict)
         self.config_file_path = config_file_path
         self.notify("load_config")
+
+    def set_project(self, project_dir: Path) -> None:
+        """Activate a project: load metadata, build config, fire event.
+
+        Parameters
+        ----------
+        project_dir
+            Directory containing ``project.json``.
+        """
+        from plancheck.config.project import (
+            add_recent_project,
+            build_project_config,
+            load_project,
+        )
+
+        meta = load_project(project_dir)
+        cfg = build_project_config(project_dir)
+
+        self.project_dir = Path(project_dir)
+        self.project_meta = meta
+        self.config = cfg
+
+        add_recent_project(project_dir, meta["name"])
+        logger.info("Activated project %r at %s", meta["name"], project_dir)
+        self.notify("project_changed")
+
+    def db_path(self) -> Path:
+        """Resolve the corrections database path for the active context."""
+        if self.project_dir:
+            return self.project_dir / "corrections.db"
+        return DEFAULT_CORRECTIONS_DB
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +290,31 @@ class PlanParserGUI:
             logger.debug("Root destroy failed", exc_info=True)
 
     def _build_ui(self) -> None:
+        # ── Menu bar ──────────────────────────────────────────────────
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(
+            label="New Project…", command=self._new_project,
+        )
+        file_menu.add_command(
+            label="Open Project…", command=self._open_project,
+        )
+
+        # Recent Projects submenu (populated dynamically)
+        self._recent_menu = tk.Menu(file_menu, tearoff=0)
+        file_menu.add_cascade(label="Recent Projects", menu=self._recent_menu)
+
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Export Project…", command=self._export_project,
+        )
+        file_menu.add_command(
+            label="Import Project…", command=self._import_project,
+        )
+
         # ── Tab container ─────────────────────────────────────────────
         self.notebook = ttk.Notebook(self.root)
         self.notebook.grid(row=0, column=0, sticky="nsew")
@@ -308,6 +367,7 @@ class PlanParserGUI:
         # Update status when state changes
         self.state.subscribe("pdf_changed", self._update_status)
         self.state.subscribe("run_completed", self._update_status)
+        self.state.subscribe("project_changed", self._on_project_changed)
 
     # ------------------------------------------------------------------
     # Lazy tab materialisation
@@ -377,11 +437,88 @@ class PlanParserGUI:
 
     def _update_status(self) -> None:
         parts = []
+        if self.state.project_meta:
+            parts.append(f"Project: {self.state.project_meta['name']}")
         if self.state.pdf_path:
             parts.append(f"PDF: {self.state.pdf_path.name}")
         if self.state.last_run_dir:
             parts.append(f"Last run: {self.state.last_run_dir.name}")
         self._status_bar.set_status(" | ".join(parts) if parts else "Ready")
+
+    # ------------------------------------------------------------------
+    # Project menu actions
+    # ------------------------------------------------------------------
+
+    def _new_project(self) -> None:
+        from .project_dialog import NewProjectDialog
+
+        dlg = NewProjectDialog(self.root, self.state)
+        self.root.wait_window(dlg)
+
+    def _open_project(self) -> None:
+        from .project_dialog import open_project_dialog
+
+        open_project_dialog(self.root, self.state)
+
+    def _export_project(self) -> None:
+        from .project_dialog import export_project_dialog
+
+        export_project_dialog(self.root, self.state)
+
+    def _import_project(self) -> None:
+        from .project_dialog import import_project_dialog
+
+        import_project_dialog(self.root, self.state)
+
+    def _on_project_changed(self) -> None:
+        """React to a project being activated or switched."""
+        meta = self.state.project_meta
+        if meta:
+            self.root.title(f"Advanced Plans Parser — {meta['name']}")
+            self._status_bar.set_status(f"Project: {meta['name']}")
+        else:
+            self.root.title("Advanced Plans Parser")
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self) -> None:
+        """Rebuild the Recent Projects submenu."""
+        self._recent_menu.delete(0, "end")
+
+        from plancheck.config.project import clear_recent_projects, get_recent_projects
+
+        recents = get_recent_projects()
+        for entry in recents:
+            path = entry["path"]
+            name = entry.get("name", Path(path).name)
+            self._recent_menu.add_command(
+                label=f"{name}  ({path})",
+                command=lambda p=path: self._open_recent(p),
+            )
+
+        if recents:
+            self._recent_menu.add_separator()
+            self._recent_menu.add_command(
+                label="Clear Recent",
+                command=self._clear_recent,
+            )
+
+    def _open_recent(self, project_path: str) -> None:
+        try:
+            self.state.set_project(Path(project_path))
+        except Exception as exc:  # noqa: BLE001 — surface to user
+            logger.error("Failed to open recent project: %s", exc, exc_info=True)
+            from tkinter import messagebox
+            messagebox.showerror(
+                "Error",
+                f"Failed to open project:\n{exc}",
+                parent=self.root,
+            )
+
+    def _clear_recent(self) -> None:
+        from plancheck.config.project import clear_recent_projects
+
+        clear_recent_projects()
+        self._refresh_recent_menu()
 
 
 def main() -> None:

@@ -107,7 +107,7 @@ class AnnotationTab(
         self._word_click_candidate_rid: int | None = None
         self._session_id: str = uuid4().hex[:8]
         self._session_count: int = 0
-        self._db_path: Path | None = None
+        self._db_path: Path | None = gui_state.db_path() if hasattr(gui_state, 'db_path') else None
         self._store: CorrectionStore | None = None
         self._worker: PipelineWorker | None = None
         self._classifier = ElementClassifier()
@@ -199,6 +199,15 @@ class AnnotationTab(
         self.state.subscribe("pdf_changed", self._on_pdf_changed)
         self.state.subscribe("run_completed", self._on_run_completed)
         self.state.subscribe("pipeline_starting", self._close_store)
+        self.state.subscribe("project_changed", self._on_project_changed)
+
+    def _on_project_changed(self) -> None:
+        """Reload when the active project changes."""
+        self._close_store()
+        self._db_path = self.state.db_path()
+        self._reopen_store()
+        self._load_element_types_from_registry()
+        self._needs_project_refresh = True
 
     def _close_store(self) -> None:
         """Close the database connection while the pipeline runs."""
