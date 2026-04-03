@@ -539,6 +539,15 @@ def _classify_minus_lines(
         if left is None:
             continue  # At minimum need a digit on the left.
 
+        # A true minus sits near the vertical midpoint of the adjacent text.
+        # Reject lines at the very top (superscript) or bottom (underline /
+        # tick mark) of the text line — these are drawing geometry.
+        line_cy = (bb[1] + bb[3]) / 2.0
+        digit_cy = (left.y0 + left.y1) / 2.0
+        digit_h = left.height()
+        if digit_h > 0 and abs(line_cy - digit_cy) > digit_h * 0.4:
+            continue
+
         if _token_covers_position(tokens, bb, "-"):
             continue
 
@@ -597,33 +606,44 @@ def recover_vector_symbols(
 
     injected: List[GlyphBox] = []
 
+    # Track consumed graphics by index to prevent cross-classifier
+    # double-matching (e.g. a diagonal line counted as both slash and
+    # percent-diagonal, or a circle counted as both degree and percent).
+    used_line_idx: set[int] = set()
+    used_curve_idx: set[int] = set()
+
     # ── Slash (/) ──────────────────────────────────────────────────
-    for ln in lines:
+    for i, ln in enumerate(lines):
         g = _classify_as_slash(ln, tokens, char_width, page_num, cfg)
         if g is not None:
             injected.append(g)
+            used_line_idx.add(i)
 
     # ── Degree (°) ─────────────────────────────────────────────────
-    for c in curves:
+    for i, c in enumerate(curves):
         g = _classify_as_degree(c, tokens, char_width, font_size, page_num, cfg)
         if g is not None:
             injected.append(g)
+            used_curve_idx.add(i)
 
     # ── Percent (%) ────────────────────────────────────────────────
+    remaining_lines = [ln for i, ln in enumerate(lines) if i not in used_line_idx]
+    remaining_curves = [c for i, c in enumerate(curves) if i not in used_curve_idx]
     pct_results = _classify_as_percent(
-        lines, curves, tokens, char_width, font_size, page_num, cfg,
+        remaining_lines, remaining_curves, tokens, char_width, font_size, page_num, cfg,
     )
     injected.extend(pct_results)
 
     # ── Hash (#) ───────────────────────────────────────────────────
     hash_results = _classify_as_hash(
-        lines, tokens, char_width, font_size, page_num, cfg,
+        remaining_lines, tokens, char_width, font_size, page_num, cfg,
     )
     injected.extend(hash_results)
 
     # ── Minus / en-dash (-) ────────────────────────────────────────
     minus_results = _classify_minus_lines(
-        lines, tokens, char_width, page_num, cfg,
+        [ln for i, ln in enumerate(lines) if i not in used_line_idx],
+        tokens, char_width, page_num, cfg,
     )
     injected.extend(minus_results)
 
