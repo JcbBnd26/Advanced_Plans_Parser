@@ -2,6 +2,10 @@
 
 Backward-compatible public API:
 >>> from plancheck.config import PipelineConfig, ConfigValidationError
+
+Project-management helpers (``create_project``, ``load_project``, etc.)
+are lazy-imported on first access to avoid pulling in ``zipfile``,
+``json``, ``shutil`` and their transitive dependencies at startup.
 """
 
 from .constants import (
@@ -14,16 +18,6 @@ from .constants import (
 )
 from .exceptions import ConfigLoadError, ConfigValidationError, OCRBackendTimeoutError
 from .pipeline import PipelineConfig, migrate_config
-from .project import (
-    build_project_config,
-    create_project,
-    export_project,
-    get_master_label_defs,
-    get_recent_projects,
-    import_project,
-    load_project,
-    slugify,
-)
 from .subconfigs import (
     AnalysisConfig,
     ExportConfig,
@@ -36,6 +30,34 @@ from .subconfigs import (
 
 # Backward-compatibility alias
 GroupingConfig = PipelineConfig
+
+# ── Lazy imports for project management helpers ──────────────────────
+# These pull in zipfile → bz2/lzma/zlib and shutil at import time,
+# adding ~200-300 ms that is unnecessary until the user actually
+# creates, loads, or exports a project.
+_PROJECT_ATTRS: dict[str, str] = {
+    "build_project_config": "project",
+    "create_project": "project",
+    "export_project": "project",
+    "get_master_label_defs": "project",
+    "get_recent_projects": "project",
+    "import_project": "project",
+    "load_project": "project",
+    "slugify": "project",
+}
+
+
+def __getattr__(name: str):
+    if name in _PROJECT_ATTRS:
+        import importlib
+
+        mod = importlib.import_module(f".{_PROJECT_ATTRS[name]}", __package__)
+        value = getattr(mod, name)
+        # Cache in module namespace so __getattr__ is only called once
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Main config class
@@ -63,7 +85,7 @@ __all__ = [
     "DEFAULT_DRIFT_STATS",
     "DEFAULT_CORRECTIONS_DB",
     "DEFAULT_LABEL_REGISTRY",
-    # Project management
+    # Project management (lazy)
     "create_project",
     "load_project",
     "build_project_config",

@@ -15,10 +15,7 @@ eagerly import the whole pipeline stack.
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import Dict, Tuple
-
-_EXPORTS: Dict[str, Tuple[str, str]] = {
+_EXPORTS: dict[str, tuple[str, str]] = {
     "GroupingConfig": ("plancheck.config", "GroupingConfig"),
     "GlyphBox": ("plancheck.models", "GlyphBox"),
     "RowBand": ("plancheck.models", "RowBand"),
@@ -52,7 +49,7 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "zone_summary": ("plancheck.analysis.zoning", "zone_summary"),
 }
 
-_OPTIONAL_EXPORTS: Dict[str, Tuple[str, str]] = {
+_OPTIONAL_EXPORTS: dict[str, tuple[str, str]] = {
     "draw_reconcile_debug": (
         "plancheck.export.reconcile_overlay",
         "draw_reconcile_debug",
@@ -68,6 +65,8 @@ __all__ = list(_EXPORTS) + list(_OPTIONAL_EXPORTS)
 
 def __getattr__(name: str):
     """Resolve public exports lazily on first access."""
+    from importlib import import_module
+
     if name in _EXPORTS:
         module_name, attr_name = _EXPORTS[name]
         value = getattr(import_module(module_name), attr_name)
