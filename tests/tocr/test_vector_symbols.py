@@ -21,12 +21,14 @@ from plancheck.tocr.vector_symbols import (
 )
 from tests.conftest import make_box
 
-
 # ── Helpers ────────────────────────────────────────────────────────────
 
 
 def _make_line(
-    x0: float, top: float, x1: float, bottom: float,
+    x0: float,
+    top: float,
+    x1: float,
+    bottom: float,
 ) -> dict:
     """Build a pdfplumber-style line dict."""
     return {"x0": x0, "top": top, "x1": x1, "bottom": bottom}
@@ -38,13 +40,23 @@ def _make_curve(pts: list[tuple[float, float]]) -> dict:
 
 
 def _make_digit_box(
-    x0: float, y0: float, x1: float, y1: float,
-    text: str = "3", font_size: float = 10.0,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    text: str = "3",
+    font_size: float = 10.0,
 ) -> GlyphBox:
     """Create a GlyphBox containing a digit with font_size set."""
     return GlyphBox(
-        page=0, x0=x0, y0=y0, x1=x1, y1=y1,
-        text=text, origin="text", font_size=font_size,
+        page=0,
+        x0=x0,
+        y0=y0,
+        x1=x1,
+        y1=y1,
+        text=text,
+        origin="text",
+        font_size=font_size,
     )
 
 
@@ -108,6 +120,20 @@ class TestEstimateCharWidth:
 
     def test_empty_returns_default(self) -> None:
         assert _estimate_char_width([]) == 6.0
+
+    def test_prefers_pure_digit_tokens(self) -> None:
+        """Pure-digit tokens should be preferred over mixed tokens."""
+        pure = _make_digit_box(0, 0, 14, 10, "42")    # 14/2 = 7.0
+        mixed = _make_digit_box(20, 0, 60, 10, "ROOM3")  # 40/5 = 8.0
+        result = _estimate_char_width([pure, mixed])
+        # Should pick the pure-digit token width (7.0), not the mixed (8.0).
+        assert result == pytest.approx(7.0)
+
+    def test_falls_back_to_mixed_when_no_pure(self) -> None:
+        """When no pure-digit tokens exist, fall back to mixed tokens."""
+        mixed = _make_digit_box(0, 0, 40, 10, "A3B5")  # 40/4 = 10.0
+        result = _estimate_char_width([mixed])
+        assert result == pytest.approx(10.0)
 
 
 # ── Tests: _is_small_circle ───────────────────────────────────────────
@@ -219,13 +245,23 @@ class TestClassifyAsSlash:
         right = _make_digit_box(20, 50, 30, 60, "34")
         # An existing "/" token covers the same position.
         existing_slash = GlyphBox(
-            page=0, x0=12, y0=50, x1=18, y1=60, text="/", origin="text",
+            page=0,
+            x0=12,
+            y0=50,
+            x1=18,
+            y1=60,
+            text="/",
+            origin="text",
         )
         slash_line = _make_line(12, 60, 18, 50)
         cfg = _default_cfg()
 
         result = _classify_as_slash(
-            slash_line, [left, right, existing_slash], 6.0, 0, cfg,
+            slash_line,
+            [left, right, existing_slash],
+            6.0,
+            0,
+            cfg,
         )
         assert result is None
 
@@ -329,7 +365,11 @@ class TestRecoverVectorSymbols:
         slash_line = _make_line(12, 60, 18, 50)  # ~63°
 
         result, diag = recover_vector_symbols(
-            [left, right], [slash_line], [], 0, cfg,
+            [left, right],
+            [slash_line],
+            [],
+            0,
+            cfg,
         )
         assert diag["vector_symbols_found"] >= 1
         assert diag["by_type"].get("/", 0) >= 1
@@ -344,7 +384,11 @@ class TestRecoverVectorSymbols:
         slash_line = _make_line(12, 60, 18, 50)
 
         result, diag = recover_vector_symbols(
-            [left, right], [slash_line], [], 0, cfg,
+            [left, right],
+            [slash_line],
+            [],
+            0,
+            cfg,
         )
         # Symbols found in diagnostics but NOT injected.
         assert diag["vector_symbols_found"] >= 1
@@ -365,7 +409,11 @@ class TestRecoverVectorSymbols:
         degree_circle = _make_curve([(62, 48), (65, 48), (65, 51), (62, 51)])
 
         result, diag = recover_vector_symbols(
-            [d1, d2, d3], [slash_line], [degree_circle], 0, cfg,
+            [d1, d2, d3],
+            [slash_line],
+            [degree_circle],
+            0,
+            cfg,
         )
         assert diag["vector_symbols_found"] >= 1
         texts = [t.text for t in result]
@@ -378,7 +426,11 @@ class TestRecoverVectorSymbols:
         slash_line = _make_line(12, 60, 18, 50)
 
         result, _ = recover_vector_symbols(
-            [d1, d2], [slash_line], [], 0, cfg,
+            [d1, d2],
+            [slash_line],
+            [],
+            0,
+            cfg,
         )
         # Verify sorted by (y0, x0).
         for i in range(len(result) - 1):
@@ -391,8 +443,34 @@ class TestRecoverVectorSymbols:
         slash_line = _make_line(12, 60, 18, 50)
 
         result, _ = recover_vector_symbols(
-            [left, right], [slash_line], [], 0, cfg,
+            [left, right],
+            [slash_line],
+            [],
+            0,
+            cfg,
         )
         slash_tokens = [t for t in result if t.text == "/"]
         assert len(slash_tokens) >= 1
         assert slash_tokens[0].font_size > 0
+
+    def test_diagnostics_rejection_tracking(self) -> None:
+        """Rejected candidates should populate candidates_rejected and rejection_reasons."""
+        cfg = _default_cfg()
+        # A diagonal line at slash angle but with NO digit neighbours → rejected.
+        orphan_slash = _make_line(100, 60, 106, 50)  # ~63° diagonal, alone
+        # A valid slash with neighbours.
+        left = _make_digit_box(0, 50, 10, 60, "2")
+        right = _make_digit_box(20, 50, 30, 60, "34")
+        valid_slash = _make_line(12, 60, 18, 50)
+
+        _, diag = recover_vector_symbols(
+            [left, right],
+            [orphan_slash, valid_slash],
+            [],
+            0,
+            cfg,
+        )
+        assert diag["vector_symbols_found"] == 1
+        assert diag["candidates_rejected"] >= 1
+        assert "slash" in diag["rejection_reasons"]
+        assert diag["rejection_reasons"]["slash"] >= 1

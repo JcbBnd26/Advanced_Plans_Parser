@@ -105,16 +105,25 @@ def _line_length(d: _LineDct) -> float:
 
 
 def _estimate_char_width(tokens: List[GlyphBox]) -> float:
-    """Estimate a representative character width from digit-bearing tokens.
+    """Estimate a representative character width from digit-only tokens.
 
-    Falls back to 6.0 pts (a reasonable default for 10-12 pt fonts) when
-    no digit tokens are available.
+    Only considers tokens whose text is purely digits so that the
+    per-character width is not skewed by letters or punctuation with
+    different glyph widths.  Falls back to digit-bearing tokens (any
+    mix) and finally to 6.0 pts when nothing useful is available.
     """
-    widths: list[float] = []
+    pure: list[float] = []
+    mixed: list[float] = []
     for t in tokens:
-        if _has_digit(t.text) and len(t.text) > 0 and t.width() > 0:
-            widths.append(t.width() / len(t.text))
-    return median(widths) if widths else 6.0
+        if len(t.text) == 0 or t.width() <= 0:
+            continue
+        if all(c in _DIGIT_CHARS for c in t.text):
+            pure.append(t.width() / len(t.text))
+        elif _has_digit(t.text):
+            mixed.append(t.width() / len(t.text))
+    if pure:
+        return median(pure)
+    return median(mixed) if mixed else 6.0
 
 
 def _estimate_font_size(tokens: List[GlyphBox]) -> float:
@@ -271,9 +280,11 @@ def _classify_as_slash(
         return None
 
     angle = _line_angle_deg(line)
-    if not (cfg.tocr_vector_symbol_slash_angle_min
-            <= angle
-            <= cfg.tocr_vector_symbol_slash_angle_max):
+    if not (
+        cfg.tocr_vector_symbol_slash_angle_min
+        <= angle
+        <= cfg.tocr_vector_symbol_slash_angle_max
+    ):
         return None
 
     max_gap = char_width * cfg.tocr_vector_symbol_proximity
@@ -305,7 +316,9 @@ def _classify_as_degree(
     relative to the preceding digit token.
     """
     circle_max_dim = font_size * 0.55
-    if not _is_small_circle(curve, circle_max_dim, cfg.tocr_vector_symbol_circle_max_aspect):
+    if not _is_small_circle(
+        curve, circle_max_dim, cfg.tocr_vector_symbol_circle_max_aspect
+    ):
         return None
 
     bb = _curve_bbox(curve)
@@ -397,8 +410,12 @@ def _classify_as_percent(
                 # Line must be roughly within the combined circle bbox
                 # (with some tolerance).
                 tol = font_size * 0.3
-                if (lbb[0] >= combo_bb[2] + tol or lbb[2] <= combo_bb[0] - tol
-                        or lbb[1] >= combo_bb[3] + tol or lbb[3] <= combo_bb[1] - tol):
+                if (
+                    lbb[0] >= combo_bb[2] + tol
+                    or lbb[2] <= combo_bb[0] - tol
+                    or lbb[1] >= combo_bb[3] + tol
+                    or lbb[3] <= combo_bb[1] - tol
+                ):
                     continue
                 has_diag = True
                 break
@@ -419,8 +436,13 @@ def _classify_as_percent(
 
             results.append(
                 _make_symbol_glyph(
-                    "%", pct_bb[0], pct_bb[1], pct_bb[2], pct_bb[3],
-                    page, left.font_size,
+                    "%",
+                    pct_bb[0],
+                    pct_bb[1],
+                    pct_bb[2],
+                    pct_bb[3],
+                    page,
+                    left.font_size,
                 )
             )
             used_circles.add(i)
@@ -499,8 +521,13 @@ def _classify_as_hash(
 
         results.append(
             _make_symbol_glyph(
-                "#", combo_bb[0], combo_bb[1], combo_bb[2], combo_bb[3],
-                page, right.font_size,
+                "#",
+                combo_bb[0],
+                combo_bb[1],
+                combo_bb[2],
+                combo_bb[3],
+                page,
+                right.font_size,
             )
         )
         for k in cluster_idx:
@@ -605,6 +632,13 @@ def recover_vector_symbols(
     font_size = _estimate_font_size(tokens)
 
     injected: List[GlyphBox] = []
+    candidates_rejected = 0
+    rejection_reasons: Dict[str, int] = {}
+
+    def _count_rejection(reason: str) -> None:
+        nonlocal candidates_rejected
+        candidates_rejected += 1
+        rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
 
     # Track consumed graphics by index to prevent cross-classifier
     # double-matching (e.g. a diagonal line counted as both slash and
@@ -614,38 +648,87 @@ def recover_vector_symbols(
 
     # ── Slash (/) ──────────────────────────────────────────────────
     for i, ln in enumerate(lines):
+        bb = _line_bbox(ln)
+        if not _is_symbol_sized(bb, cfg.tocr_vector_symbol_max_size):
+            continue  # Not a candidate — skip without counting.
         g = _classify_as_slash(ln, tokens, char_width, page_num, cfg)
         if g is not None:
             injected.append(g)
             used_line_idx.add(i)
+        else:
+            _count_rejection("slash")
 
     # ── Degree (°) ─────────────────────────────────────────────────
     for i, c in enumerate(curves):
+        bb = _curve_bbox(c)
+        w, h = _bbox_dims(bb)
+        if w <= 0 or h <= 0 or w > font_size or h > font_size:
+            continue  # Not a candidate — skip without counting.
         g = _classify_as_degree(c, tokens, char_width, font_size, page_num, cfg)
         if g is not None:
             injected.append(g)
             used_curve_idx.add(i)
+        else:
+            _count_rejection("degree")
 
     # ── Percent (%) ────────────────────────────────────────────────
     remaining_lines = [ln for i, ln in enumerate(lines) if i not in used_line_idx]
     remaining_curves = [c for i, c in enumerate(curves) if i not in used_curve_idx]
+    n_before = len(injected)
     pct_results = _classify_as_percent(
-        remaining_lines, remaining_curves, tokens, char_width, font_size, page_num, cfg,
+        remaining_lines,
+        remaining_curves,
+        tokens,
+        char_width,
+        font_size,
+        page_num,
+        cfg,
     )
     injected.extend(pct_results)
+    # Each pair of small circles that didn't become a % is a rejection.
+    n_small_circles = sum(
+        1
+        for c in remaining_curves
+        if _is_small_circle(c, font_size * 0.55, cfg.tocr_vector_symbol_circle_max_aspect)
+    )
+    pct_accepted = len(pct_results)
+    pct_circle_pairs = n_small_circles // 2
+    if pct_circle_pairs > pct_accepted:
+        for _ in range(pct_circle_pairs - pct_accepted):
+            _count_rejection("percent")
 
     # ── Hash (#) ───────────────────────────────────────────────────
     hash_results = _classify_as_hash(
-        remaining_lines, tokens, char_width, font_size, page_num, cfg,
+        remaining_lines,
+        tokens,
+        char_width,
+        font_size,
+        page_num,
+        cfg,
     )
     injected.extend(hash_results)
 
     # ── Minus / en-dash (-) ────────────────────────────────────────
+    unused_lines = [ln for i, ln in enumerate(lines) if i not in used_line_idx]
+    n_horiz_candidates = sum(
+        1
+        for ln in unused_lines
+        if _is_symbol_sized(_line_bbox(ln), cfg.tocr_vector_symbol_max_size)
+        and _line_angle_deg(ln) <= 10.0
+        and _line_length(ln) >= 2.5
+    )
     minus_results = _classify_minus_lines(
-        [ln for i, ln in enumerate(lines) if i not in used_line_idx],
-        tokens, char_width, page_num, cfg,
+        unused_lines,
+        tokens,
+        char_width,
+        page_num,
+        cfg,
     )
     injected.extend(minus_results)
+    minus_rejected = n_horiz_candidates - len(minus_results)
+    if minus_rejected > 0:
+        for _ in range(minus_rejected):
+            _count_rejection("minus")
 
     # ── Build diagnostics ──────────────────────────────────────────
     by_type: Dict[str, int] = {}
@@ -654,6 +737,8 @@ def recover_vector_symbols(
 
     diag["vector_symbols_found"] = len(injected)
     diag["by_type"] = by_type
+    diag["candidates_rejected"] = candidates_rejected
+    diag["rejection_reasons"] = rejection_reasons
 
     log.info(
         "Vector symbol recovery: page %d — found %d symbols %s",

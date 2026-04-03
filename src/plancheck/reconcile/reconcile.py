@@ -147,7 +147,9 @@ def reconcile_ocr(
         return result
 
     # Stage 2 — spatial alignment
-    pdf_tokens = [t for t in tokens if t.origin == "text"]
+    # Include vector_symbol tokens so VOCR doesn't re-inject symbols
+    # that were already recovered from vector graphics.
+    pdf_tokens = [t for t in tokens if t.origin in ("text", "vector_symbol")]
     matches = _build_match_index(ocr_tokens, ocr_confs, pdf_tokens, cfg)
     result.matches = matches
 

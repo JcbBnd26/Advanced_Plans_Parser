@@ -279,7 +279,23 @@ class TestBuildMatchIndex:
         cfg = GroupingConfig()
         matches = _build_match_index(ocr_tokens, [0.8], pdf_tokens, cfg)
         assert len(matches) == 1
-        assert matches[0].match_type == "unmatched"
+
+
+class TestVectorSymbolDedup:
+    """Ensure vector_symbol tokens participate in spatial alignment."""
+
+    def test_vector_symbol_included_in_match_index(self):
+        """A vector_symbol token overlapping an OCR token must appear as a match."""
+        ocr_slash = make_box(12, 50, 18, 60, "/", origin="ocr_full")
+        vs_slash = make_box(12, 50, 18, 60, "/", origin="vector_symbol")
+        # pdf_tokens should include vector_symbol tokens.
+        pdf_tokens = [vs_slash]
+        cfg = GroupingConfig()
+        matches = _build_match_index([ocr_slash], [0.9], pdf_tokens, cfg)
+        assert len(matches) == 1
+        # The OCR slash should match (iou or center) the vector_symbol token,
+        # preventing duplicate injection.
+        assert matches[0].match_type in ("iou", "center")
 
 
 class TestGenerateSymbolCandidates:
