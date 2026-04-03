@@ -19,13 +19,8 @@ def _make_tab(interp: tk.Tcl) -> PipelineTab:
     tab = PipelineTab.__new__(PipelineTab)
     tab.state = GuiState()
     tab.tocr_var = tk.BooleanVar(master=interp, value=True)
-    tab.vocr_var = tk.BooleanVar(master=interp, value=True)
-    tab.enable_vocr_candidates_var = tk.BooleanVar(master=interp, value=True)
-    tab.ocr_reconcile_var = tk.BooleanVar(master=interp, value=True)
-    tab.ocr_preprocess_var = tk.BooleanVar(master=interp, value=True)
     tab.skew_var = tk.BooleanVar(master=interp, value=False)
     tab.llm_checks_var = tk.BooleanVar(master=interp, value=False)
-    tab.ocr_dpi_var = tk.StringVar(master=interp, value="300")
     tab.ml_enabled_var = tk.BooleanVar(master=interp, value=True)
     tab.ml_hierarchical_var = tk.BooleanVar(master=interp, value=False)
     tab.ml_model_path_var = tk.StringVar(
@@ -66,18 +61,6 @@ def _make_tab(interp: tk.Tcl) -> PipelineTab:
     tab.ml_gnn_hidden_dim_var = tk.StringVar(master=interp, value="64")
     tab.ml_gnn_patience_var = tk.StringVar(master=interp, value="20")
     tab.ml_comparison_threshold_var = tk.StringVar(master=interp, value="0.005")
-    tab.vocr_cand_ml_enabled_var = tk.BooleanVar(master=interp, value=False)
-    tab.vocr_cand_classifier_path_var = tk.StringVar(
-        master=interp,
-        value="data/candidate_classifier.pkl",
-    )
-    tab.vocr_cand_ml_threshold_var = tk.StringVar(master=interp, value="0.3")
-    tab.vocr_cand_gnn_prior_enabled_var = tk.BooleanVar(master=interp, value=False)
-    tab.vocr_cand_gnn_prior_path_var = tk.StringVar(
-        master=interp,
-        value="data/gnn_candidate_prior.pt",
-    )
-    tab.vocr_cand_gnn_prior_blend_var = tk.StringVar(master=interp, value="0.25")
     tab.llm_provider_var = tk.StringVar(master=interp, value="ollama")
     tab.llm_model_var = tk.StringVar(master=interp, value="llama3.1:8b")
     tab.llm_api_base_var = tk.StringVar(
@@ -103,7 +86,6 @@ def test_collect_config_preserves_existing_ml_fields() -> None:
             ml_hierarchical_enabled=True,
             ml_stage2_model_path="data/custom_stage2.pkl",
             ml_layout_enabled=True,
-            vocr_cand_ml_enabled=True,
         )
     )
 
@@ -113,8 +95,6 @@ def test_collect_config_preserves_existing_ml_fields() -> None:
     tab.ml_layout_enabled_var.set(True)
     tab.ml_drift_enabled_var.set(True)
     tab.ml_drift_threshold_var.set("0.45")
-    tab.vocr_cand_ml_enabled_var.set(True)
-    tab.vocr_cand_ml_threshold_var.set("0.42")
     tab.llm_provider_var.set("openai")
 
     cfg = tab._collect_config()
@@ -125,8 +105,6 @@ def test_collect_config_preserves_existing_ml_fields() -> None:
     assert cfg.ml_layout_enabled is True
     assert cfg.ml_drift_enabled is True
     assert cfg.ml_drift_threshold == 0.45
-    assert cfg.vocr_cand_ml_enabled is True
-    assert cfg.vocr_cand_ml_threshold == 0.42
     assert cfg.llm_provider == "openai"
     assert tab.state.config.ml_stage2_model_path == "data/gui_stage2.pkl"
 
@@ -137,7 +115,6 @@ def test_apply_config_updates_ml_controls() -> None:
 
     cfg = GroupingConfig(
         enable_tocr=False,
-        enable_vocr_candidates=False,
         ml_enabled=False,
         ml_hierarchical_enabled=True,
         ml_model_path="data/stage1.pkl",
@@ -147,15 +124,12 @@ def test_apply_config_updates_ml_controls() -> None:
         ml_drift_threshold=0.4,
         ml_layout_enabled=True,
         ml_layout_model_path="data/layout-model",
-        vocr_cand_ml_enabled=True,
-        vocr_cand_ml_threshold=0.55,
         llm_provider="openai",
     )
 
     tab._apply_config(cfg)
 
     assert tab.tocr_var.get() is False
-    assert tab.enable_vocr_candidates_var.get() is False
     assert tab.ml_enabled_var.get() is False
     assert tab.ml_hierarchical_var.get() is True
     assert tab.ml_model_path_var.get() == "data/stage1.pkl"
@@ -165,8 +139,6 @@ def test_apply_config_updates_ml_controls() -> None:
     assert tab.ml_drift_threshold_var.get() == "0.4"
     assert tab.ml_layout_enabled_var.get() is True
     assert tab.ml_layout_model_path_var.get() == "data/layout-model"
-    assert tab.vocr_cand_ml_enabled_var.get() is True
-    assert tab.vocr_cand_ml_threshold_var.get() == "0.55"
     assert tab.llm_provider_var.get() == "openai"
 
 

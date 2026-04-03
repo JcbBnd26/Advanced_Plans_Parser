@@ -136,37 +136,15 @@ class BenchmarkSection(CollapsibleFrame):
         )
 
         self._bench_a = tk.BooleanVar(value=True)
-        self._bench_b = tk.BooleanVar(value=True)
-        self._bench_c = tk.BooleanVar(value=True)
-        self._bench_d = tk.BooleanVar(value=False)
 
         conds_frame = ttk.Frame(bc)
         conds_frame.grid(row=1, column=0, columnspan=3, sticky="w", pady=2)
         ttk.Checkbutton(conds_frame, text="A: TOCR only", variable=self._bench_a).pack(
             side="left", padx=(0, 8)
         )
-        ttk.Checkbutton(conds_frame, text="B: +VOCR", variable=self._bench_b).pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Checkbutton(conds_frame, text="C: +Reconcile", variable=self._bench_c).pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Checkbutton(conds_frame, text="D: +VOCRPP", variable=self._bench_d).pack(
-            side="left"
-        )
-
-        ttk.Label(bc, text="OCR DPI:").grid(row=2, column=0, sticky="w", pady=2)
-        self._bench_ocr_dpi = tk.StringVar(value="180")
-        ttk.Spinbox(
-            bc,
-            textvariable=self._bench_ocr_dpi,
-            values=(120, 150, 180, 200, 300),
-            width=8,
-            state="readonly",
-        ).grid(row=2, column=1, sticky="w", padx=(8, 0))
 
         ttk.Button(bc, text="Run Benchmark", command=self._run_benchmark).grid(
-            row=3, column=0, sticky="w", pady=(4, 2)
+            row=2, column=0, sticky="w", pady=(4, 2)
         )
 
         ttk.Label(
@@ -184,12 +162,6 @@ class BenchmarkSection(CollapsibleFrame):
         conditions = []
         if self._bench_a.get():
             conditions.append("A")
-        if self._bench_b.get():
-            conditions.append("B")
-        if self._bench_c.get():
-            conditions.append("C")
-        if self._bench_d.get():
-            conditions.append("D")
 
         if not conditions:
             messagebox.showinfo(
@@ -198,7 +170,6 @@ class BenchmarkSection(CollapsibleFrame):
             return
 
         runs_root = Path("runs")
-        ocr_dpi = int(self._bench_ocr_dpi.get())
         self._log.clear()
         self._worker = PipelineWorker(self._root, self._log)
 
@@ -219,7 +190,6 @@ class BenchmarkSection(CollapsibleFrame):
                     continue
                 cond_def = _CONDITIONS[cond]
                 cfg = GroupingConfig(**vars(cond_def["cfg"]))
-                cfg.ocr_reconcile_resolution = ocr_dpi
                 prefix = f"{pdf.stem[:15]}_bench{cond}".replace(" ", "_")
                 print(f"\n--- Condition {cond}: {cond_def['label']} ---")
                 rd = run_pdf(

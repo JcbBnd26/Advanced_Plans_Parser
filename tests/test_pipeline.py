@@ -368,6 +368,8 @@ class TestVocrCandidatesSkipped:
     stage is disabled by config (vocr_candidates gate returns False)."""
 
     def test_skipped_does_not_raise(self):
+        """With VOCR quarantined (enable_vocr=False by default), the function
+        returns an empty list immediately without recording a stage result."""
         from plancheck.ingest.ingest import PageContext
         from plancheck.pipeline_stages import _run_vocr_candidates_stage
 
@@ -381,5 +383,3 @@ class TestVocrCandidatesSkipped:
 
         assert result == []
         assert pr.vocr_candidates == []
-        assert pr.stages["vocr_candidates"].ran is False
-        assert pr.stages["vocr_candidates"].status == "skipped"

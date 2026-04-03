@@ -394,32 +394,6 @@ class DatabaseTab:
                         row=ri, column=ci, sticky="w", padx=4, pady=1
                     )
 
-        # ── Candidate Outcomes ───────────────────────────────────────
-        outcomes = self._store.count_candidate_outcomes()
-        if outcomes.get("total", 0) > 0:
-            co_sec = CollapsibleFrame(self._detail_inner, "VOCR Candidate Outcomes")
-            co_sec.grid(row=row, column=0, sticky="ew", pady=2, padx=4)
-            row += 1
-            total = outcomes["total"]
-            hits = outcomes["hits"]
-            rate = hits / total * 100 if total else 0
-            for i, (label, val) in enumerate(
-                [
-                    ("Total", str(total)),
-                    ("Hits", str(hits)),
-                    ("Misses", str(outcomes["misses"])),
-                    ("Hit Rate", f"{rate:.1f}%"),
-                ]
-            ):
-                ttk.Label(
-                    co_sec.content,
-                    text=f"{label}:",
-                    font=("TkDefaultFont", 9, "bold"),
-                ).grid(row=i, column=0, sticky="w", padx=(4, 8), pady=1)
-                ttk.Label(co_sec.content, text=val).grid(
-                    row=i, column=1, sticky="w", pady=1
-                )
-
         # ── Snapshots ────────────────────────────────────────────────
         snaps = self._store.list_snapshots()
         snap_sec = CollapsibleFrame(

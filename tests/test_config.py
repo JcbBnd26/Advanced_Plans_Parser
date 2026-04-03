@@ -11,9 +11,9 @@ class TestGroupingConfig:
         assert cfg.iou_prune == 0.5
         assert cfg.enable_skew is False
         assert cfg.enable_tocr is True
-        assert cfg.enable_vocr is True
-        assert cfg.enable_ocr_reconcile is True
-        assert cfg.enable_ocr_preprocess is True
+        assert cfg.enable_vocr is False  # QUARANTINED
+        assert cfg.enable_ocr_reconcile is False  # QUARANTINED
+        assert cfg.enable_ocr_preprocess is False  # QUARANTINED
         assert cfg.ml_enabled is True
         assert cfg.ml_hierarchical_enabled is False
 

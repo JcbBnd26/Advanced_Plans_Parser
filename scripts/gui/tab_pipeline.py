@@ -220,74 +220,11 @@ class PipelineTab:
             foreground="gray",
         ).grid(row=0, column=1, sticky="w", padx=(10, 0))
 
-        # VOCRPP
-        self.ocr_preprocess_var = tk.BooleanVar(value=_defaults.enable_ocr_preprocess)
-        ttk.Checkbutton(
-            stages_frame,
-            text="VOCRPP (Image Preprocessing)",
-            variable=self.ocr_preprocess_var,
-        ).grid(row=1, column=0, sticky="w", pady=2)
-        ttk.Label(
-            stages_frame,
-            text="Grayscale, contrast, denoising for better OCR",
-            foreground="gray",
-        ).grid(row=1, column=1, sticky="w", padx=(10, 0))
-
-        # VOCR
-        self.vocr_var = tk.BooleanVar(value=_defaults.enable_vocr)
-        ttk.Checkbutton(
-            stages_frame,
-            text="VOCR (Surya OCR extraction)",
-            variable=self.vocr_var,
-        ).grid(row=2, column=0, sticky="w", pady=2)
-        ttk.Label(
-            stages_frame,
-            text="Full-page Surya visual token extraction",
-            foreground="gray",
-        ).grid(row=2, column=1, sticky="w", padx=(10, 0))
-
-        # VOCR candidates
-        self.enable_vocr_candidates_var = tk.BooleanVar(
-            value=_defaults.enable_vocr_candidates
-        )
-        ttk.Checkbutton(
-            stages_frame,
-            text="VOCR Candidates (patch proposal stage)",
-            variable=self.enable_vocr_candidates_var,
-        ).grid(row=3, column=0, sticky="w", pady=2)
-        ttk.Label(
-            stages_frame,
-            text="Detect likely symbol patches before full-page OCR refinement.",
-            foreground="gray",
-        ).grid(row=3, column=1, sticky="w", padx=(10, 0))
-
-        # Reconcile
-        self.ocr_reconcile_var = tk.BooleanVar(value=_defaults.enable_ocr_reconcile)
-        ttk.Checkbutton(
-            stages_frame,
-            text="Reconcile (Symbol injection)",
-            variable=self.ocr_reconcile_var,
-        ).grid(row=4, column=0, sticky="w", pady=2)
-        ttk.Label(
-            stages_frame,
-            text="Inject missing %, /, °, ± from VOCR into text layer",
-            foreground="gray",
-        ).grid(row=4, column=1, sticky="w", padx=(10, 0))
-
-        # OCR DPI
+        # Render DPI
         dpi_row = ttk.Frame(stages_frame)
-        dpi_row.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 2))
-        ttk.Label(dpi_row, text="OCR/Preprocess DPI:").pack(side="left")
-        self.ocr_dpi_var = tk.StringVar(value=str(_defaults.ocr_reconcile_resolution))
-        ttk.Spinbox(
-            dpi_row,
-            textvariable=self.ocr_dpi_var,
-            values=(120, 150, 180, 200, 220, 300, 400),
-            width=8,
-            state="readonly",
-        ).pack(side="left", padx=(8, 0))
+        dpi_row.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 2))
         ttk.Label(dpi_row, text="Render DPI:", foreground="gray").pack(
-            side="left", padx=(20, 0)
+            side="left",
         )
         self.resolution_var = tk.StringVar(value="200")
         ttk.Spinbox(
@@ -648,101 +585,12 @@ class PipelineTab:
             help_text="Stop GNN training after N epochs without val improvement (0 = disabled).",
         )
 
-        candidate_ml = CollapsibleFrame(
-            ml_frame,
-            title="VOCR Candidate ML",
-            initially_open=False,
-        )
-        candidate_ml.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        candidate_ml.content.columnconfigure(1, weight=1)
-
-        self.vocr_cand_ml_enabled_var = tk.BooleanVar(
-            value=_defaults.vocr_cand_ml_enabled
-        )
-        ttk.Checkbutton(
-            candidate_ml.content,
-            text="Enable candidate classifier",
-            variable=self.vocr_cand_ml_enabled_var,
-            command=self._update_ml_control_state,
-        ).grid(row=0, column=0, sticky="w", pady=2)
-        ttk.Label(
-            candidate_ml.content,
-            text="Filter proposed OCR patches using the candidate hit/miss model.",
-            foreground="gray",
-        ).grid(row=0, column=1, sticky="w", padx=(10, 0))
-
-        self.vocr_cand_classifier_path_var = tk.StringVar(
-            value=_defaults.vocr_cand_classifier_path
-        )
-        self._cand_classifier_path_entry = self._add_labeled_entry(
-            candidate_ml.content,
-            row=1,
-            label="Candidate model path",
-            variable=self.vocr_cand_classifier_path_var,
-            help_text="Pickle or joblib artifact for the candidate classifier.",
-            browse_command=lambda: self._browse_model_path(
-                self.vocr_cand_classifier_path_var
-            ),
-        )
-
-        self.vocr_cand_ml_threshold_var = tk.StringVar(
-            value=str(_defaults.vocr_cand_ml_threshold)
-        )
-        self._cand_threshold_entry = self._add_labeled_entry(
-            candidate_ml.content,
-            row=2,
-            label="Candidate threshold",
-            variable=self.vocr_cand_ml_threshold_var,
-            help_text="Minimum hit probability to keep a candidate patch.",
-        )
-
-        self.vocr_cand_gnn_prior_enabled_var = tk.BooleanVar(
-            value=_defaults.vocr_cand_gnn_prior_enabled
-        )
-        ttk.Checkbutton(
-            candidate_ml.content,
-            text="Blend GNN candidate prior",
-            variable=self.vocr_cand_gnn_prior_enabled_var,
-            command=self._update_ml_control_state,
-        ).grid(row=3, column=0, sticky="w", pady=2)
-        ttk.Label(
-            candidate_ml.content,
-            text="Blend graph-based prior scores into candidate ranking.",
-            foreground="gray",
-        ).grid(row=3, column=1, sticky="w", padx=(10, 0))
-
-        self.vocr_cand_gnn_prior_path_var = tk.StringVar(
-            value=_defaults.vocr_cand_gnn_prior_path
-        )
-        self._cand_gnn_prior_path_entry = self._add_labeled_entry(
-            candidate_ml.content,
-            row=4,
-            label="Candidate GNN prior path",
-            variable=self.vocr_cand_gnn_prior_path_var,
-            help_text="Checkpoint used to produce candidate prior scores.",
-            browse_command=lambda: self._browse_any_path(
-                self.vocr_cand_gnn_prior_path_var,
-                title="Select Candidate GNN Prior",
-            ),
-        )
-
-        self.vocr_cand_gnn_prior_blend_var = tk.StringVar(
-            value=str(_defaults.vocr_cand_gnn_prior_blend)
-        )
-        self._cand_gnn_blend_entry = self._add_labeled_entry(
-            candidate_ml.content,
-            row=5,
-            label="Candidate GNN blend",
-            variable=self.vocr_cand_gnn_prior_blend_var,
-            help_text="Blend ratio between classifier and GNN prior scores.",
-        )
-
         llm_runtime = CollapsibleFrame(
             ml_frame,
             title="LLM Runtime",
             initially_open=False,
         )
-        llm_runtime.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        llm_runtime.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         llm_runtime.content.columnconfigure(1, weight=1)
 
         self.llm_provider_var = tk.StringVar(value=_defaults.llm_provider)
@@ -915,10 +763,6 @@ class PipelineTab:
         cfg = GroupingConfig.from_dict(self.state.config.to_dict())
         # Master toggles
         cfg.enable_tocr = self.tocr_var.get()
-        cfg.enable_vocr = self.vocr_var.get()
-        cfg.enable_vocr_candidates = self.enable_vocr_candidates_var.get()
-        cfg.enable_ocr_reconcile = self.ocr_reconcile_var.get()
-        cfg.enable_ocr_preprocess = self.ocr_preprocess_var.get()
         cfg.enable_skew = self.skew_var.get()
         cfg.enable_llm_checks = self.llm_checks_var.get()
         cfg.ml_enabled = self.ml_enabled_var.get()
@@ -934,8 +778,6 @@ class PipelineTab:
         cfg.ml_embeddings_enabled = self.ml_embeddings_enabled_var.get()
         cfg.ml_layout_enabled = self.ml_layout_enabled_var.get()
         cfg.ml_gnn_enabled = self.ml_gnn_enabled_var.get()
-        cfg.vocr_cand_ml_enabled = self.vocr_cand_ml_enabled_var.get()
-        cfg.vocr_cand_gnn_prior_enabled = self.vocr_cand_gnn_prior_enabled_var.get()
 
         cfg.ml_drift_stats_path = (
             self.ml_drift_stats_path_var.get().strip() or cfg.ml_drift_stats_path
@@ -952,26 +794,12 @@ class PipelineTab:
         cfg.ml_gnn_model_path = (
             self.ml_gnn_model_path_var.get().strip() or cfg.ml_gnn_model_path
         )
-        cfg.vocr_cand_classifier_path = (
-            self.vocr_cand_classifier_path_var.get().strip()
-            or cfg.vocr_cand_classifier_path
-        )
-        cfg.vocr_cand_gnn_prior_path = (
-            self.vocr_cand_gnn_prior_path_var.get().strip()
-            or cfg.vocr_cand_gnn_prior_path
-        )
         cfg.llm_provider = self.llm_provider_var.get().strip() or cfg.llm_provider
         cfg.llm_model = self.llm_model_var.get().strip() or cfg.llm_model
         cfg.llm_api_base = self.llm_api_base_var.get().strip() or cfg.llm_api_base
         cfg.llm_policy = self.llm_policy_var.get().strip() or cfg.llm_policy
         cfg.llm_api_key = self.llm_api_key_var.get().strip()
 
-        self._set_config_scalar(
-            cfg,
-            "ocr_reconcile_resolution",
-            self.ocr_dpi_var,
-            int,
-        )
         self._set_config_scalar(
             cfg,
             "ml_relabel_confidence",
@@ -1010,18 +838,6 @@ class PipelineTab:
         )
         self._set_config_scalar(
             cfg,
-            "vocr_cand_ml_threshold",
-            self.vocr_cand_ml_threshold_var,
-            float,
-        )
-        self._set_config_scalar(
-            cfg,
-            "vocr_cand_gnn_prior_blend",
-            self.vocr_cand_gnn_prior_blend_var,
-            float,
-        )
-        self._set_config_scalar(
-            cfg,
             "llm_temperature",
             self.llm_temperature_var,
             float,
@@ -1034,13 +850,8 @@ class PipelineTab:
         """Push a GroupingConfig into all UI controls."""
         self.state.set_config(cfg, config_file_path=self.state.config_file_path)
         self.tocr_var.set(cfg.enable_tocr)
-        self.vocr_var.set(cfg.enable_vocr)
-        self.enable_vocr_candidates_var.set(cfg.enable_vocr_candidates)
-        self.ocr_reconcile_var.set(cfg.enable_ocr_reconcile)
-        self.ocr_preprocess_var.set(cfg.enable_ocr_preprocess)
         self.skew_var.set(cfg.enable_skew)
         self.llm_checks_var.set(cfg.enable_llm_checks)
-        self.ocr_dpi_var.set(str(cfg.ocr_reconcile_resolution))
         self.ml_enabled_var.set(cfg.ml_enabled)
         self.ml_hierarchical_var.set(cfg.ml_hierarchical_enabled)
         self.ml_model_path_var.set(cfg.ml_model_path)
@@ -1063,12 +874,6 @@ class PipelineTab:
         self.ml_gnn_model_path_var.set(cfg.ml_gnn_model_path)
         self.ml_gnn_hidden_dim_var.set(str(cfg.ml_gnn_hidden_dim))
         self.ml_gnn_patience_var.set(str(cfg.ml_gnn_patience))
-        self.vocr_cand_ml_enabled_var.set(cfg.vocr_cand_ml_enabled)
-        self.vocr_cand_classifier_path_var.set(cfg.vocr_cand_classifier_path)
-        self.vocr_cand_ml_threshold_var.set(str(cfg.vocr_cand_ml_threshold))
-        self.vocr_cand_gnn_prior_enabled_var.set(cfg.vocr_cand_gnn_prior_enabled)
-        self.vocr_cand_gnn_prior_path_var.set(cfg.vocr_cand_gnn_prior_path)
-        self.vocr_cand_gnn_prior_blend_var.set(str(cfg.vocr_cand_gnn_prior_blend))
         self.llm_provider_var.set(cfg.llm_provider)
         self.llm_model_var.set(cfg.llm_model)
         self.llm_api_base_var.set(cfg.llm_api_base)
@@ -1367,22 +1172,6 @@ class PipelineTab:
             _w = getattr(self, _attr, None)
             if _w:
                 _w.configure(state=gnn_state)
-
-        # Candidate path / threshold depend on candidate classifier enabled
-        cand_state = "normal" if self.vocr_cand_ml_enabled_var.get() else "disabled"
-        for _attr in ("_cand_classifier_path_entry", "_cand_threshold_entry"):
-            _w = getattr(self, _attr, None)
-            if _w:
-                _w.configure(state=cand_state)
-
-        # GNN prior path / blend depend on GNN prior enabled
-        prior_state = (
-            "normal" if self.vocr_cand_gnn_prior_enabled_var.get() else "disabled"
-        )
-        for _attr in ("_cand_gnn_prior_path_entry", "_cand_gnn_blend_entry"):
-            _w = getattr(self, _attr, None)
-            if _w:
-                _w.configure(state=prior_state)
 
         self._refresh_ml_status()
 

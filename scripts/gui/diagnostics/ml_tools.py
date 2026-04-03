@@ -36,9 +36,6 @@ def _build_ml_runtime_summary(
     stage1_path = _resolve_runtime_path(getattr(cfg, "ml_model_path", ""))
     stage2_path = _resolve_runtime_path(getattr(cfg, "ml_stage2_model_path", ""))
     drift_path = _resolve_runtime_path(getattr(cfg, "ml_drift_stats_path", ""))
-    candidate_path = _resolve_runtime_path(
-        getattr(cfg, "vocr_cand_classifier_path", "")
-    )
 
     threshold = getattr(cfg, "ml_retrain_threshold", 50)
     if db_present and pending_corrections is not None:
@@ -77,15 +74,6 @@ def _build_ml_runtime_summary(
             )
         ),
         "Retrain readiness": retrain_summary,
-        "Candidate ML": (
-            "Disabled"
-            if not getattr(cfg, "vocr_cand_ml_enabled", False)
-            else (
-                f"Enabled ({candidate_path.name})"
-                if candidate_path and candidate_path.exists()
-                else "Enabled, model missing"
-            )
-        ),
         "Layout runtime": (
             "Disabled"
             if not getattr(cfg, "ml_layout_enabled", False)

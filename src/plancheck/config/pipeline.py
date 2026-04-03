@@ -103,7 +103,9 @@ class PipelineConfig:
     tocr_vector_symbol_circle_max_aspect: float = 1.4
 
     # ── Visual OCR (Surya full-page extraction) ────────────────────────
-    enable_vocr: bool = True
+    # QUARANTINED: VOCR pipeline disabled — vector_symbol_recovery replaces
+    # Surya-based symbol detection.  Set to True to re-enable.
+    enable_vocr: bool = False
     vocr_backend: str = "surya"  # OCR backend: "surya"
     vocr_device: str = "cpu"  # "gpu" or "cpu"
     surya_init_timeout_sec: int = 45
@@ -117,7 +119,7 @@ class PipelineConfig:
     vocr_strip_whitespace: bool = True
 
     # ── VOCR candidate detection (targeted patch selection) ────────────
-    enable_vocr_candidates: bool = True
+    enable_vocr_candidates: bool = False  # quarantined
     vocr_cand_gap_multiplier: float = 2.0
     vocr_cand_patch_margin: float = 4.0
     vocr_cand_min_confidence: float = 0.3
@@ -136,7 +138,7 @@ class PipelineConfig:
     vocr_cand_gnn_prior_blend: float = 0.25
 
     # ── OCR image preprocessing ────────────────────────────────────────
-    enable_ocr_preprocess: bool = True
+    enable_ocr_preprocess: bool = False  # quarantined (VOCR dependency)
     vocrpp_grayscale: bool = True
     vocrpp_autocontrast: bool = False
     vocrpp_clahe: bool = True
@@ -152,7 +154,7 @@ class PipelineConfig:
     vocrpp_sharpen_percent: int = 140
 
     # ── OCR reconciliation (merge VOCR tokens into TOCR) ───────────────
-    enable_ocr_reconcile: bool = True
+    enable_ocr_reconcile: bool = False  # quarantined (VOCR dependency)
     ocr_reconcile_allowed_symbols: str = "%/°±Ø×'\"#@"
     ocr_reconcile_resolution: int = 300
     ocr_reconcile_confidence: float = 0.6

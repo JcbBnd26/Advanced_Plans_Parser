@@ -383,55 +383,10 @@ class ReportViewerWidget:
                     prow += 1
 
             counts = page_data.get("counts", {})
-            rec_total = counts.get("ocr_reconcile_total", 0)
-            rec_cand = counts.get("ocr_reconcile_candidates", 0)
-            if rec_total or rec_cand:
-                ttk.Separator(page_frame.content, orient="horizontal").grid(
-                    row=prow, column=0, columnspan=2, sticky="ew", pady=4
-                )
-                prow += 1
-                prow = self._add_section_heading(
-                    page_frame.content, prow, "OCR Reconcile"
-                )
-                rec_accepted = counts.get("ocr_reconcile_accepted", 0)
-                cand_accepted = counts.get("ocr_reconcile_candidates_accepted", 0)
-                cand_rejected = counts.get("ocr_reconcile_candidates_rejected", 0)
-                cand_filtered = counts.get("ocr_reconcile_filtered_non_numeric", 0)
-
-                rec_lines = []
-                if rec_total:
-                    rec_lines.append(f"Direct matches: {rec_accepted}/{rec_total}")
-                if rec_cand:
-                    rate = (
-                        f"{cand_accepted / rec_cand * 100:.0f}%" if rec_cand else "N/A"
-                    )
-                    rec_lines.append(
-                        f"Candidates: {rec_cand} (accepted {cand_accepted}, "
-                        f"rejected {cand_rejected}, filtered {cand_filtered})"
-                        f" — {rate} accept rate"
-                    )
-
-                for line in rec_lines:
-                    ttk.Label(
-                        page_frame.content,
-                        text=f"  {line}",
-                        foreground="#abb2bf",
-                        wraplength=420,
-                    ).grid(row=prow, column=0, columnspan=2, sticky="w", padx=4, pady=1)
-                    prow += 1
-
-            ocr_keys = {
-                "ocr_reconcile_total",
-                "ocr_reconcile_accepted",
-                "ocr_reconcile_candidates",
-                "ocr_reconcile_candidates_accepted",
-                "ocr_reconcile_candidates_rejected",
-                "ocr_reconcile_filtered_non_numeric",
-            }
             other_counts = {
                 k: v
                 for k, v in counts.items()
-                if k not in ocr_keys and isinstance(v, (int, float))
+                if isinstance(v, (int, float))
             }
             if other_counts:
                 ttk.Separator(page_frame.content, orient="horizontal").grid(

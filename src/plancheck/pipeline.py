@@ -370,12 +370,15 @@ def _run_early_stages(
     boxes, skew = _run_prune_deskew(boxes, cfg, page_w, page_h)
     pr.skew_degrees = skew
 
-    _run_vocr_candidates_stage(pr, ctx, cfg, boxes, page_w, page_h)
-    log.info(
-        "_run_early_stages: page %d — %d vocr candidates detected",
-        ctx.page_num,
-        len(getattr(pr, "vocr_candidates", []) or []),
-    )
+    if cfg.enable_vocr:
+        _run_vocr_candidates_stage(pr, ctx, cfg, boxes, page_w, page_h)
+        log.info(
+            "_run_early_stages: page %d — %d vocr candidates detected",
+            ctx.page_num,
+            len(getattr(pr, "vocr_candidates", []) or []),
+        )
+    else:
+        pr.vocr_candidates = []
 
     return boxes, page_w, page_h
 
@@ -389,6 +392,9 @@ def _run_vocr_phases(
     page_h: float,
 ) -> list:
     """Phase 2: vocrpp → vocr → reconcile.  Returns updated boxes list."""
+    if not cfg.enable_vocr:
+        log.info("_run_vocr_phases: skipped (VOCR quarantined)")
+        return boxes
     log.info("_run_vocr_phases: entering with %d boxes", len(boxes))
     from .pipeline_stages import (
         _run_reconcile_stage,
@@ -769,77 +775,90 @@ def run_document(
     )
 
     # ── Phase 2: VOCR stages (flagged pages only) ────────────────
-    # A page is "flagged" when it has vocr_candidates OR when
-    # candidate detection is disabled but VOCR itself is enabled
-    # (full-page fallback mode).
-    candidates_disabled = not cfg.enable_vocr_candidates
+    # QUARANTINED: VOCR is disabled — skip entire Phase 2 when not enabled.
     vocr_enabled = cfg.enable_vocr
+    if not vocr_enabled:
+        log.info("run_document Phase 2: skipped (VOCR quarantined)")
+        # Still free chars/words since Phase 1 is done with them
+        for state in page_states.values():
+            ctx = state["ctx"]
+            ctx.chars = []
+            ctx.words = []
+            ctx.ocr_image = None
+        # Record skipped VOCR stages so downstream knows
+        for state in page_states.values():
+            _skip_vocr_phases(state["pr"], cfg)
+    else:
+        # A page is "flagged" when it has vocr_candidates OR when
+        # candidate detection is disabled but VOCR itself is enabled
+        # (full-page fallback mode).
+        candidates_disabled = not cfg.enable_vocr_candidates
 
-    # Free heavy data no longer needed after Phase 1 to make room
-    # for the VOCR model (~1–1.5 GB for Surya transformers).  The
-    # chars list is only used during TOCR extraction; lines/rects/
-    # curves are still needed in Phase 3 analysis so we keep them.
-    for state in page_states.values():
-        ctx = state["ctx"]
-        ctx.chars = []
-        ctx.words = []
+        # Free heavy data no longer needed after Phase 1 to make room
+        # for the VOCR model (~1–1.5 GB for Surya transformers).  The
+        # chars list is only used during TOCR extraction; lines/rects/
+        # curves are still needed in Phase 3 analysis so we keep them.
+        for state in page_states.values():
+            ctx = state["ctx"]
+            ctx.chars = []
+            ctx.words = []
 
-    # Pre-release OCR images for pages that won't run VOCR.
-    for idx, state in page_states.items():
-        pr = state["pr"]
-        has_candidates = bool(getattr(pr, "vocr_candidates", None))
-        needs_vocr = vocr_enabled and (has_candidates or candidates_disabled)
-        if not needs_vocr:
-            state["ctx"].ocr_image = None
-
-    import gc
-
-    # Force garbage collection between Phase 1 (TOCR) and Phase 2 (VOCR)
-    # to reclaim ~300-500 MB of char/word data freed above.  Without
-    # this, Python's generational GC may defer collection until after
-    # Surya's 1-1.5 GB model loads, causing peak memory to exceed
-    # available RAM on 8 GB machines.
-    gc.collect()
-
-    for idx, state in page_states.items():
-        pr = state["pr"]
-        has_candidates = bool(getattr(pr, "vocr_candidates", None))
-        needs_vocr = vocr_enabled and (has_candidates or candidates_disabled)
-
-        if needs_vocr:
-            try:
-                state["boxes"] = _run_vocr_phases(
-                    pr,
-                    state["ctx"],
-                    cfg,
-                    state["boxes"],
-                    state["page_w"],
-                    state["page_h"],
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.error(
-                    "run_document page %d Phase 2 failed: %s",
-                    pages[idx],
-                    exc,
-                )
-            finally:
-                # Release OCR image after VOCR is done with this page
+        # Pre-release OCR images for pages that won't run VOCR.
+        for idx, state in page_states.items():
+            pr = state["pr"]
+            has_candidates = bool(getattr(pr, "vocr_candidates", None))
+            needs_vocr = vocr_enabled and (has_candidates or candidates_disabled)
+            if not needs_vocr:
                 state["ctx"].ocr_image = None
-        else:
-            # Record skipped VOCR stages so downstream knows
-            _skip_vocr_phases(pr, cfg)
 
-    flagged_count = sum(
-        1
-        for idx in page_states
-        if bool(getattr(page_states[idx]["pr"], "vocr_candidates", None))
-        or candidates_disabled
-    )
-    log.info(
-        "run_document Phase 2 complete: %d/%d pages ran VOCR",
-        flagged_count,
-        len(page_states),
-    )
+        import gc
+
+        # Force garbage collection between Phase 1 (TOCR) and Phase 2 (VOCR)
+        # to reclaim ~300-500 MB of char/word data freed above.  Without
+        # this, Python's generational GC may defer collection until after
+        # Surya's 1-1.5 GB model loads, causing peak memory to exceed
+        # available RAM on 8 GB machines.
+        gc.collect()
+
+        for idx, state in page_states.items():
+            pr = state["pr"]
+            has_candidates = bool(getattr(pr, "vocr_candidates", None))
+            needs_vocr = vocr_enabled and (has_candidates or candidates_disabled)
+
+            if needs_vocr:
+                try:
+                    state["boxes"] = _run_vocr_phases(
+                        pr,
+                        state["ctx"],
+                        cfg,
+                        state["boxes"],
+                        state["page_w"],
+                        state["page_h"],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.error(
+                        "run_document page %d Phase 2 failed: %s",
+                        pages[idx],
+                        exc,
+                    )
+                finally:
+                    # Release OCR image after VOCR is done with this page
+                    state["ctx"].ocr_image = None
+            else:
+                # Record skipped VOCR stages so downstream knows
+                _skip_vocr_phases(pr, cfg)
+
+        flagged_count = sum(
+            1
+            for idx in page_states
+            if bool(getattr(page_states[idx]["pr"], "vocr_candidates", None))
+            or candidates_disabled
+        )
+        log.info(
+            "run_document Phase 2 complete: %d/%d pages ran VOCR",
+            flagged_count,
+            len(page_states),
+        )
 
     # ── Phase 3: late stages (all pages) ─────────────────────────
     for idx, state in page_states.items():
@@ -926,7 +945,8 @@ def run_document(
             log.warning("GNN refinement failed: %s", exc)
 
     # ── Level 4: GNN candidate prior confidence adjustment ───────
-    if cfg.vocr_cand_gnn_prior_enabled and graph is not None:
+    # QUARANTINED: guard on enable_vocr prevents vocr imports
+    if cfg.enable_vocr and cfg.vocr_cand_gnn_prior_enabled and graph is not None:
         try:
             from .analysis.gnn.model import is_gnn_available, load_gnn
             from .vocr.gnn_candidate_prior import (

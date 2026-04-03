@@ -124,6 +124,9 @@ def _run_vocrpp_stage(
     cfg: GroupingConfig,
 ) -> "Image.Image | None":
     """Stage 3: VOCRPP only.  Returns preprocessed image or None."""
+    if not cfg.enable_vocr:
+        log.info("_run_vocrpp_stage: skipped (VOCR quarantined)")
+        return None
     log.info("_run_vocrpp_stage: entering")
     raw_img = ctx.ocr_image if ctx.ocr_image is not None else ctx.background_image
 
@@ -214,6 +217,10 @@ def _run_vocr_candidates_stage(
     page_h: float,
 ) -> list:
     """Stage 3.5: VOCR candidate detection.  Returns candidate list."""
+    if not cfg.enable_vocr:
+        log.info("_run_vocr_candidates_stage: skipped (VOCR quarantined)")
+        pr.vocr_candidates = []
+        return []
     log.info("_run_vocr_candidates_stage: entering with %d boxes", len(boxes))
     from .vocr.candidates import detect_vocr_candidates
     from .vocr.method_stats import load_method_stats
@@ -297,6 +304,11 @@ def _run_vocr_stage(
     When VOCR candidates are available, runs **targeted** VOCR on those
     patches only.  Otherwise falls back to full-page OCR.
     """
+    if not cfg.enable_vocr:
+        log.info("_run_vocr_stage: skipped (VOCR quarantined)")
+        pr.ocr_tokens = []
+        pr.ocr_confs = []
+        return [], []
     ocr_tokens: list = []
     ocr_confs: list = []
     try:
@@ -373,6 +385,9 @@ def _run_reconcile_stage(
     sr_vocr: StageResult,
 ) -> list:
     """Stage 5: OCR reconciliation.  Returns updated boxes list."""
+    if not cfg.enable_vocr:
+        log.info("_run_reconcile_stage: skipped (VOCR quarantined)")
+        return boxes
     from .tocr.preprocess import nms_prune
 
     reconcile_result = None
