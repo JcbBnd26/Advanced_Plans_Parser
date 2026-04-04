@@ -96,6 +96,10 @@ class ContextMenuMixin:
                     label="Create Group (Set as Parent)",
                     command=lambda: self._create_group(clicked),
                 )
+                menu.add_command(
+                    label="Create Group & Link Children\u2026",
+                    command=lambda: self._create_group_and_link(clicked),
+                )
                 has_group_items = True
                 if (
                     self._selected_box
@@ -121,6 +125,21 @@ class ContextMenuMixin:
             menu.tk_popup(event.x_root, event.y_root)
         else:
             menu.destroy()
+
+    def _create_group_and_link(self, cbox: CanvasBox) -> None:
+        """Create a group from *cbox* and enter LinkTool for child wiring."""
+        from .actions.group_actions import create_group
+
+        create_group(self, cbox)
+        # create_group sets cbox.group_id on success
+        if cbox.group_id and hasattr(self, "_tool_manager"):
+            grp = self._groups.get(cbox.group_id, {})
+            self._tool_manager.switch_to(
+                "link",
+                parent=cbox,
+                group_id=cbox.group_id,
+                group_label=grp.get("label", cbox.element_type),
+            )
 
     def _show_word_context_menu(
         self, event: tk.Event, pdf_x: float, pdf_y: float

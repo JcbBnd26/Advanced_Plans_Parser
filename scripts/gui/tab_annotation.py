@@ -38,6 +38,8 @@ from .annotation_store import AnnotationStoreMixin
 from .canvas_renderer import CanvasRendererMixin
 from .context_menu import ContextMenuMixin
 from .event_handler import EventHandlerMixin
+from .hover_tooltip import HoverTooltipMixin
+from .navigation import NavigationMixin
 from .pdf_loader import PdfLoaderMixin
 from .widgets import LogPanel, StatusBar
 from .worker import PipelineWorker
@@ -45,6 +47,8 @@ from .worker import PipelineWorker
 
 class AnnotationTab(
     CanvasRendererMixin,
+    HoverTooltipMixin,
+    NavigationMixin,
     EventHandlerMixin,
     PdfLoaderMixin,
     AnnotationStoreMixin,
@@ -132,6 +136,22 @@ class AnnotationTab(
         # Undo / redo stacks
         self._undo_stack: list[dict] = []
         self._redo_stack: list[dict] = []
+
+        # UndoManager service
+        from .services.undo_manager import UndoManager
+        self._undo_mgr = UndoManager(self)
+
+        # Clipboard service
+        from .services.clipboard import Clipboard
+        self._clipboard = Clipboard(self)
+
+        # BoxOperations service
+        from .services.box_operations import BoxOperations
+        self._box_ops = BoxOperations(self)
+
+        # MLPredictor service
+        from .services.ml_predictor import MLPredictor
+        self._ml_predictor = MLPredictor(self)
 
         # Drag-handle state
         self._drag_handle: str | None = None
@@ -601,11 +621,34 @@ class AnnotationTab(
         v_scroll.grid(row=0, column=1, sticky="ns")
         self._canvas.configure(xscrollcommand=h_scroll.set, yscrollcommand=v_scroll.set)
 
-        # Canvas bindings
-        self._canvas.bind("<Control-Button-1>", self._on_word_click)
-        self._canvas.bind("<Button-1>", self._on_canvas_click)
-        self._canvas.bind("<B1-Motion>", self._on_canvas_drag)
-        self._canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+        # ── Tool Manager ──────────────────────────────────────────
+        from .tools import (
+            DrawTool,
+            LassoTool,
+            LinkTool,
+            MoveTool,
+            ResizeTool,
+            SelectTool,
+            ToolContext,
+            ToolManager,
+        )
+
+        tool_ctx = ToolContext(tab=self)
+        self._tool_manager = ToolManager(tool_ctx)
+        self._tool_manager.register(SelectTool(tool_ctx))
+        self._tool_manager.register(MoveTool(tool_ctx))
+        self._tool_manager.register(ResizeTool(tool_ctx))
+        self._tool_manager.register(LassoTool(tool_ctx))
+        self._tool_manager.register(DrawTool(tool_ctx))
+        self._tool_manager.register(LinkTool(tool_ctx))
+        self._tool_manager.set_default("select")
+        self._tool_manager.switch_to("select")
+
+        # Canvas bindings — routed through ToolManager
+        self._canvas.bind("<Control-Button-1>", self._tool_manager.on_ctrl_click)
+        self._canvas.bind("<Button-1>", self._tool_manager.on_click)
+        self._canvas.bind("<B1-Motion>", self._tool_manager.on_drag)
+        self._canvas.bind("<ButtonRelease-1>", self._tool_manager.on_release)
         self._canvas.bind("<MouseWheel>", self._on_mousewheel)
         self._canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
         # Right-click context menu
@@ -614,8 +657,8 @@ class AnnotationTab(
         self._canvas.bind("<Button-2>", self._on_pan_start)
         self._canvas.bind("<B2-Motion>", self._on_pan_motion)
         self._canvas.bind("<ButtonRelease-2>", self._on_pan_end)
-        # Hover tooltip
-        self._canvas.bind("<Motion>", self._on_canvas_motion)
+        # Hover tooltip + tool motion (rubber band etc.)
+        self._canvas.bind("<Motion>", self._on_canvas_motion_dispatch)
         self._canvas.bind("<Leave>", lambda e: self._hide_hover_tooltip())
 
         # Mode banner: an overlay label placed at the top of the canvas in Add mode
@@ -1315,7 +1358,7 @@ class AnnotationTab(
         self.root.bind("<Key-a>", self._key_accept)
         self.root.bind("<Key-d>", self._key_delete)
         self.root.bind("<Key-r>", self._key_relabel)
-        self.root.bind("<Escape>", self._key_deselect)
+        self.root.bind("<Escape>", self._tool_manager.handle_escape)
         self.root.bind("<Left>", self._key_prev_box)
         self.root.bind("<Right>", self._key_next_box)
         self.root.bind("<plus>", self._key_zoom_in)
@@ -1343,6 +1386,16 @@ class AnnotationTab(
 
         # Initialize model status
         self._update_model_status()
+
+    # ── Motion dispatch ────────────────────────────────────────────
+
+    def _on_canvas_motion_dispatch(self, event: tk.Event) -> None:
+        """Forward motion to both the tool manager and hover tooltip."""
+        # Let the active tool handle motion (rubber band lines, etc.)
+        if hasattr(self, "_tool_manager"):
+            self._tool_manager.on_motion(event)
+        # Tooltip / cursor logic from HoverTooltipMixin
+        self._on_canvas_motion(event)
 
     # ── PDF selection ──────────────────────────────────────────────
 
