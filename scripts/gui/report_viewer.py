@@ -384,9 +384,7 @@ class ReportViewerWidget:
 
             counts = page_data.get("counts", {})
             other_counts = {
-                k: v
-                for k, v in counts.items()
-                if isinstance(v, (int, float))
+                k: v for k, v in counts.items() if isinstance(v, (int, float))
             }
             if other_counts:
                 ttk.Separator(page_frame.content, orient="horizontal").grid(

@@ -123,7 +123,7 @@ class TestEstimateCharWidth:
 
     def test_prefers_pure_digit_tokens(self) -> None:
         """Pure-digit tokens should be preferred over mixed tokens."""
-        pure = _make_digit_box(0, 0, 14, 10, "42")    # 14/2 = 7.0
+        pure = _make_digit_box(0, 0, 14, 10, "42")  # 14/2 = 7.0
         mixed = _make_digit_box(20, 0, 60, 10, "ROOM3")  # 40/5 = 8.0
         result = _estimate_char_width([pure, mixed])
         # Should pick the pure-digit token width (7.0), not the mixed (8.0).

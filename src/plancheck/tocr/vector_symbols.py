@@ -23,6 +23,7 @@ Public API
 
 from __future__ import annotations
 
+import bisect
 import logging
 import math
 from statistics import median
@@ -45,7 +46,9 @@ _DIGIT_CHARS = frozenset("0123456789")
 
 def _has_digit(text: str) -> bool:
     """Return True if *text* contains at least one ASCII digit."""
-    return any(c in _DIGIT_CHARS for c in text)
+    # Use set intersection — much faster than any() over a generator
+    # when called millions of times.
+    return not _DIGIT_CHARS.isdisjoint(text)
 
 
 # ── Coordinate helpers for pdfplumber dicts ────────────────────────────
@@ -132,17 +135,87 @@ def _estimate_font_size(tokens: List[GlyphBox]) -> float:
     return median(sizes) if sizes else 10.0
 
 
+class _DigitTokenIndex:
+    """Spatial index for fast nearest-digit-neighbour queries.
+
+    Pre-filters to digit-bearing tokens and sorts by x-midpoint
+    so that queries can binary-search to a narrow x-window instead
+    of scanning every token on the page.
+    """
+
+    __slots__ = ("_tokens", "_x_mids", "_bboxes")
+
+    def __init__(self, tokens: List[GlyphBox]) -> None:
+        digit_tokens = [t for t in tokens if not _DIGIT_CHARS.isdisjoint(t.text)]
+        # Sort by x-midpoint for binary search.
+        digit_tokens.sort(key=lambda t: (t.x0 + t.x1) * 0.5)
+        self._tokens = digit_tokens
+        self._x_mids = [(t.x0 + t.x1) * 0.5 for t in digit_tokens]
+        self._bboxes = [(t.x0, t.y0, t.x1, t.y1) for t in digit_tokens]
+
+    def find_neighbours(
+        self,
+        bbox: _Bbox,
+        max_gap: float,
+    ) -> Tuple[Optional[GlyphBox], Optional[GlyphBox]]:
+        """Find the nearest digit token to the left and right of *bbox*.
+
+        Only considers tokens whose vertical span overlaps *bbox*.
+        Uses the pre-sorted x-midpoint array to limit the search window.
+        """
+        import bisect
+
+        bx0, by0, bx1, by1 = bbox
+
+        # Search window: tokens whose x-midpoint is within
+        # [bx0 - max_gap - slack, bx1 + max_gap + slack].
+        # The slack (100) accounts for wide tokens whose midpoint
+        # is far from their edge.
+        lo = bisect.bisect_left(self._x_mids, bx0 - max_gap - 100)
+        hi = bisect.bisect_right(self._x_mids, bx1 + max_gap + 100)
+
+        left: Optional[GlyphBox] = None
+        right: Optional[GlyphBox] = None
+        left_dist = float("inf")
+        right_dist = float("inf")
+
+        for k in range(lo, hi):
+            tb = self._bboxes[k]
+            # Vertical overlap check (inlined).
+            if by0 >= tb[3] or tb[1] >= by1:
+                continue
+            # Left neighbour: token's right edge is left of bbox's left.
+            gap_l = bx0 - tb[2]
+            if 0 <= gap_l <= max_gap and gap_l < left_dist:
+                left_dist = gap_l
+                left = self._tokens[k]
+            # Right neighbour: token's left edge is right of bbox's right.
+            gap_r = tb[0] - bx1
+            if 0 <= gap_r <= max_gap and gap_r < right_dist:
+                right_dist = gap_r
+                right = self._tokens[k]
+
+        return left, right
+
+
 def _find_digit_neighbours(
     bbox: _Bbox,
     tokens: List[GlyphBox],
     max_gap: float,
+    _digit_index: Optional["_DigitTokenIndex"] = None,
 ) -> Tuple[Optional[GlyphBox], Optional[GlyphBox]]:
     """Find the nearest digit-bearing token to the left and right.
 
     Only tokens whose vertical span overlaps *bbox* are considered.
 
+    When *_digit_index* is provided, uses the spatial index for
+    fast lookup instead of scanning every token.
+
     Returns ``(left_neighbour, right_neighbour)`` — either may be None.
     """
+    if _digit_index is not None:
+        return _digit_index.find_neighbours(bbox, max_gap)
+
     left: Optional[GlyphBox] = None
     right: Optional[GlyphBox] = None
     left_dist = float("inf")
@@ -265,6 +338,7 @@ def _classify_as_slash(
     char_width: float,
     page: int,
     cfg: GroupingConfig,
+    _digit_index: Optional[_DigitTokenIndex] = None,
 ) -> Optional[GlyphBox]:
     """Classify a pdfplumber line as a fraction slash ``/``.
 
@@ -288,7 +362,7 @@ def _classify_as_slash(
         return None
 
     max_gap = char_width * cfg.tocr_vector_symbol_proximity
-    left, right = _find_digit_neighbours(bb, tokens, max_gap)
+    left, right = _find_digit_neighbours(bb, tokens, max_gap, _digit_index)
     if left is None or right is None:
         return None
 
@@ -309,6 +383,7 @@ def _classify_as_degree(
     font_size: float,
     page: int,
     cfg: GroupingConfig,
+    _digit_index: Optional[_DigitTokenIndex] = None,
 ) -> Optional[GlyphBox]:
     """Classify a small circle-like curve as a degree symbol ``°``.
 
@@ -329,7 +404,7 @@ def _classify_as_degree(
         return None
 
     max_gap = char_width * cfg.tocr_vector_symbol_proximity
-    left, _ = _find_digit_neighbours(bb, tokens, max_gap)
+    left, _ = _find_digit_neighbours(bb, tokens, max_gap, _digit_index)
     if left is None:
         return None
 
@@ -354,6 +429,7 @@ def _classify_as_percent(
     font_size: float,
     page: int,
     cfg: GroupingConfig,
+    _digit_index: Optional[_DigitTokenIndex] = None,
 ) -> List[GlyphBox]:
     """Find percent signs built from two circles + a diagonal line.
 
@@ -373,21 +449,43 @@ def _classify_as_percent(
     if len(circles) < 2:
         return results
 
+    # Pre-filter diagonal lines that could serve as the slash in a %.
+    diag_lines: list[tuple[_Bbox, _LineDct]] = []
+    for ln in lines:
+        lbb = _line_bbox(ln)
+        if not _is_symbol_sized(lbb, cfg.tocr_vector_symbol_max_size):
+            continue
+        angle = _line_angle_deg(ln)
+        if 30.0 <= angle <= 85.0:
+            diag_lines.append((lbb, ln))
+
+    # Sort circles by x-centre for binary-search pairing.
+    circles.sort(key=lambda t: (t[1][0] + t[1][2]) * 0.5)
+    cxs = [(bb[0] + bb[2]) * 0.5 for _, bb in circles]
+    pair_radius = font_size * 1.8
+
     # Track used circles to avoid double-matching.
     used_circles: set[int] = set()
 
     for i, (c1, bb1) in enumerate(circles):
         if i in used_circles:
             continue
-        for j, (c2, bb2) in enumerate(circles):
+        cx1 = cxs[i]
+        cy1 = (bb1[1] + bb1[3]) * 0.5
+
+        lo = bisect.bisect_left(cxs, cx1 - pair_radius)
+        hi = bisect.bisect_right(cxs, cx1 + pair_radius)
+
+        for j in range(lo, hi):
             if j <= i or j in used_circles:
                 continue
-            # Two circles must be within 1.5 * font_size of each other.
-            dist = math.hypot(
-                (bb1[0] + bb1[2]) / 2 - (bb2[0] + bb2[2]) / 2,
-                (bb1[1] + bb1[3]) / 2 - (bb2[1] + bb2[3]) / 2,
-            )
-            if dist > font_size * 1.8:
+            _, bb2 = circles[j]
+            cy2 = (bb2[1] + bb2[3]) * 0.5
+            dy = cy1 - cy2
+            if dy > pair_radius or dy < -pair_radius:
+                continue
+            dx = cx1 - cxs[j]
+            if math.hypot(dx, dy) > pair_radius:
                 continue
 
             # Combined bbox of the two circles.
@@ -400,13 +498,7 @@ def _classify_as_percent(
 
             # Look for a diagonal line between/overlapping the two circles.
             has_diag = False
-            for ln in lines:
-                lbb = _line_bbox(ln)
-                if not _is_symbol_sized(lbb, cfg.tocr_vector_symbol_max_size):
-                    continue
-                angle = _line_angle_deg(ln)
-                if not (30.0 <= angle <= 85.0):
-                    continue
+            for lbb, _ln in diag_lines:
                 # Line must be roughly within the combined circle bbox
                 # (with some tolerance).
                 tol = font_size * 0.3
@@ -427,7 +519,7 @@ def _classify_as_percent(
             pct_bb = combo_bb
 
             # Must have a digit token to the left.
-            left, _ = _find_digit_neighbours(pct_bb, tokens, max_gap)
+            left, _ = _find_digit_neighbours(pct_bb, tokens, max_gap, _digit_index)
             if left is None:
                 continue
 
@@ -459,6 +551,7 @@ def _classify_as_hash(
     font_size: float,
     page: int,
     cfg: GroupingConfig,
+    _digit_index: Optional[_DigitTokenIndex] = None,
 ) -> List[GlyphBox]:
     """Find hash ``#`` signs built from ~4 intersecting line segments.
 
@@ -467,53 +560,79 @@ def _classify_as_hash(
     results: List[GlyphBox] = []
     max_size = cfg.tocr_vector_symbol_max_size
     max_gap = char_width * cfg.tocr_vector_symbol_proximity
+    radius = font_size * 1.2
+    radius_sq = radius * radius
 
-    # Collect symbol-sized lines.
-    small_lines: list[tuple[_LineDct, _Bbox, float]] = []
+    # Collect symbol-sized lines with pre-computed centres.
+    small_lines: list[tuple[_LineDct, _Bbox, float, float, float]] = []
     for ln in lines:
         bb = _line_bbox(ln)
         if _is_symbol_sized(bb, max_size):
-            small_lines.append((ln, bb, _line_angle_deg(ln)))
+            cx = (bb[0] + bb[2]) * 0.5
+            cy = (bb[1] + bb[3]) * 0.5
+            small_lines.append((ln, bb, _line_angle_deg(ln), cx, cy))
 
     if len(small_lines) < 4:
         return results
 
+    # Sort by x-centre for binary-search proximity queries.
+    small_lines.sort(key=lambda t: t[3])
+    xs = [t[3] for t in small_lines]
+
     # Cluster nearby lines based on bbox centre proximity.
     used: set[int] = set()
-    for i, (ln_i, bb_i, ang_i) in enumerate(small_lines):
+    for i, (ln_i, bb_i, ang_i, cx_i, cy_i) in enumerate(small_lines):
         if i in used:
             continue
+
+        # Binary-search for lines within *radius* in x.
+        lo = bisect.bisect_left(xs, cx_i - radius)
+        hi = bisect.bisect_right(xs, cx_i + radius)
+
         cluster_idx = [i]
-        cx_i = (bb_i[0] + bb_i[2]) / 2
-        cy_i = (bb_i[1] + bb_i[3]) / 2
-        for j, (ln_j, bb_j, ang_j) in enumerate(small_lines):
+        # Track angles and bbox incrementally to avoid generator passes.
+        n_horiz = 1 if ang_i <= 25 else 0
+        n_vert = 1 if ang_i >= 55 else 0
+        min_x0 = bb_i[0]
+        min_y0 = bb_i[1]
+        max_x1 = bb_i[2]
+        max_y1 = bb_i[3]
+
+        for j in range(lo, hi):
             if j <= i or j in used:
                 continue
-            cx_j = (bb_j[0] + bb_j[2]) / 2
-            cy_j = (bb_j[1] + bb_j[3]) / 2
-            if math.hypot(cx_i - cx_j, cy_i - cy_j) <= font_size * 1.2:
+            _, bb_j, ang_j, cx_j, cy_j = small_lines[j]
+            dy = cy_i - cy_j
+            if dy > radius or dy < -radius:
+                continue
+            dx = cx_i - cx_j
+            if dx * dx + dy * dy <= radius_sq:
                 cluster_idx.append(j)
+                if ang_j <= 25:
+                    n_horiz += 1
+                if ang_j >= 55:
+                    n_vert += 1
+                if bb_j[0] < min_x0:
+                    min_x0 = bb_j[0]
+                if bb_j[1] < min_y0:
+                    min_y0 = bb_j[1]
+                if bb_j[2] > max_x1:
+                    max_x1 = bb_j[2]
+                if bb_j[3] > max_y1:
+                    max_y1 = bb_j[3]
+
         if len(cluster_idx) < 4:
             continue
 
-        # Need a mix: at least 2 roughly horizontal (0-25°) and 2 roughly
-        # vertical or diagonal (55-90°).
-        angles = [small_lines[k][2] for k in cluster_idx]
-        n_horiz = sum(1 for a in angles if a <= 25)
-        n_vert = sum(1 for a in angles if a >= 55)
+        # Need a mix: at least 2 roughly horizontal (0-25 deg) and 2 roughly
+        # vertical or diagonal (55-90 deg).
         if n_horiz < 2 or n_vert < 2:
             continue
 
-        # Combined bbox.
-        combo_bb = (
-            min(small_lines[k][1][0] for k in cluster_idx),
-            min(small_lines[k][1][1] for k in cluster_idx),
-            max(small_lines[k][1][2] for k in cluster_idx),
-            max(small_lines[k][1][3] for k in cluster_idx),
-        )
+        combo_bb = (min_x0, min_y0, max_x1, max_y1)
 
         # Hash typically precedes a digit (rebar: #4, #5).
-        _, right = _find_digit_neighbours(combo_bb, tokens, max_gap)
+        _, right = _find_digit_neighbours(combo_bb, tokens, max_gap, _digit_index)
         if right is None:
             continue
         if _token_covers_position(tokens, combo_bb, "#"):
@@ -542,6 +661,7 @@ def _classify_minus_lines(
     char_width: float,
     page: int,
     cfg: GroupingConfig,
+    _digit_index: Optional[_DigitTokenIndex] = None,
 ) -> List[GlyphBox]:
     """Detect short horizontal lines that may be minus / en-dash signs.
 
@@ -562,7 +682,7 @@ def _classify_minus_lines(
         if angle > 10.0:
             continue  # Must be (near-)horizontal.
 
-        left, right = _find_digit_neighbours(bb, tokens, max_gap)
+        left, right = _find_digit_neighbours(bb, tokens, max_gap, _digit_index)
         if left is None:
             continue  # At minimum need a digit on the left.
 
@@ -631,6 +751,9 @@ def recover_vector_symbols(
     char_width = _estimate_char_width(tokens)
     font_size = _estimate_font_size(tokens)
 
+    # Build spatial index once — avoids O(n) scans in every classifier.
+    digit_index = _DigitTokenIndex(tokens)
+
     injected: List[GlyphBox] = []
     candidates_rejected = 0
     rejection_reasons: Dict[str, int] = {}
@@ -651,7 +774,7 @@ def recover_vector_symbols(
         bb = _line_bbox(ln)
         if not _is_symbol_sized(bb, cfg.tocr_vector_symbol_max_size):
             continue  # Not a candidate — skip without counting.
-        g = _classify_as_slash(ln, tokens, char_width, page_num, cfg)
+        g = _classify_as_slash(ln, tokens, char_width, page_num, cfg, _digit_index=digit_index)
         if g is not None:
             injected.append(g)
             used_line_idx.add(i)
@@ -664,7 +787,7 @@ def recover_vector_symbols(
         w, h = _bbox_dims(bb)
         if w <= 0 or h <= 0 or w > font_size or h > font_size:
             continue  # Not a candidate — skip without counting.
-        g = _classify_as_degree(c, tokens, char_width, font_size, page_num, cfg)
+        g = _classify_as_degree(c, tokens, char_width, font_size, page_num, cfg, _digit_index=digit_index)
         if g is not None:
             injected.append(g)
             used_curve_idx.add(i)
@@ -683,13 +806,16 @@ def recover_vector_symbols(
         font_size,
         page_num,
         cfg,
+        _digit_index=digit_index,
     )
     injected.extend(pct_results)
     # Each pair of small circles that didn't become a % is a rejection.
     n_small_circles = sum(
         1
         for c in remaining_curves
-        if _is_small_circle(c, font_size * 0.55, cfg.tocr_vector_symbol_circle_max_aspect)
+        if _is_small_circle(
+            c, font_size * 0.55, cfg.tocr_vector_symbol_circle_max_aspect
+        )
     )
     pct_accepted = len(pct_results)
     pct_circle_pairs = n_small_circles // 2
@@ -705,6 +831,7 @@ def recover_vector_symbols(
         font_size,
         page_num,
         cfg,
+        _digit_index=digit_index,
     )
     injected.extend(hash_results)
 
@@ -723,6 +850,7 @@ def recover_vector_symbols(
         char_width,
         page_num,
         cfg,
+        _digit_index=digit_index,
     )
     injected.extend(minus_results)
     minus_rejected = n_horiz_candidates - len(minus_results)

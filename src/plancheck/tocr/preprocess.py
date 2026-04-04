@@ -25,22 +25,93 @@ def intersection_over_union(a: GlyphBox, b: GlyphBox) -> float:
 
 
 def nms_prune(boxes: Iterable[GlyphBox], iou_threshold: float) -> List[GlyphBox]:
-    """Non-maximum suppression: remove overlapping boxes above *iou_threshold*."""
-    sorted_boxes = sorted(boxes, key=lambda b: b.area(), reverse=True)
-    n = len(sorted_boxes)
+    """Non-maximum suppression: remove overlapping boxes above *iou_threshold*.
+
+    Uses a spatial grid to find overlap candidates, reducing the comparison
+    count from O(n²) to O(n × k) where k is the average cell occupancy.
+    For typical engineering plans where boxes rarely overlap, this is
+    near-linear.
+    """
+    from collections import defaultdict
+
+    box_list = list(boxes)
+    n = len(box_list)
+    if n == 0:
+        return []
+
+    # Pre-compute bbox tuples and areas to avoid repeated method calls.
+    bbs = [(b.x0, b.y0, b.x1, b.y1) for b in box_list]
+    areas = [max(0.0, b.x1 - b.x0) * max(0.0, b.y1 - b.y0) for b in box_list]
+
+    # Sort indices by area descending (largest first — standard NMS order).
+    order = sorted(range(n), key=lambda i: areas[i], reverse=True)
+
+    # ── Spatial grid ──────────────────────────────────────────────
+    # Cell size = max box dimension so each box spans at most 2×2 cells.
+    max_dim = 0.0
+    for x0, y0, x1, y1 in bbs:
+        w = x1 - x0
+        h = y1 - y0
+        if w > max_dim:
+            max_dim = w
+        if h > max_dim:
+            max_dim = h
+    cell = max_dim if max_dim > 0 else 1.0
+
+    # Assign each box to its grid cells.
+    grid: dict[tuple[int, int], list[int]] = defaultdict(list)
+    box_cells: list[list[tuple[int, int]]] = [[] for _ in range(n)]
+    for i in range(n):
+        x0, y0, x1, y1 = bbs[i]
+        gx0 = int(x0 // cell)
+        gy0 = int(y0 // cell)
+        gx1 = int(x1 // cell)
+        gy1 = int(y1 // cell)
+        for gx in range(gx0, gx1 + 1):
+            for gy in range(gy0, gy1 + 1):
+                key = (gx, gy)
+                grid[key].append(i)
+                box_cells[i].append(key)
+
     suppressed = [False] * n
     kept: List[GlyphBox] = []
-    for i in range(n):
+
+    for pos_i in range(n):
+        i = order[pos_i]
         if suppressed[i]:
             continue
-        kept.append(sorted_boxes[i])
-        for j in range(i + 1, n):
-            if (
-                not suppressed[j]
-                and intersection_over_union(sorted_boxes[i], sorted_boxes[j])
-                >= iou_threshold
-            ):
-                suppressed[j] = True
+        kept.append(box_list[i])
+        ax0, ay0, ax1, ay1 = bbs[i]
+        a_area = areas[i]
+
+        # Collect unique candidate indices from the same grid cells.
+        seen: set[int] = set()
+        for key in box_cells[i]:
+            for j in grid[key]:
+                if j == i or suppressed[j] or j in seen:
+                    continue
+                seen.add(j)
+
+                bx0, by0, bx1, by1 = bbs[j]
+
+                # Fast bbox overlap check.
+                if bx0 >= ax1 or bx1 <= ax0 or by0 >= ay1 or by1 <= ay0:
+                    continue
+
+                # Inline IoU computation.
+                ix0 = ax0 if ax0 > bx0 else bx0
+                iy0 = ay0 if ay0 > by0 else by0
+                ix1 = ax1 if ax1 < bx1 else bx1
+                iy1 = ay1 if ay1 < by1 else by1
+                iw = ix1 - ix0
+                ih = iy1 - iy0
+                if iw <= 0 or ih <= 0:
+                    continue
+                inter = iw * ih
+                union = a_area + areas[j] - inter
+                if union > 0 and inter / union >= iou_threshold:
+                    suppressed[j] = True
+
     return kept
 
 

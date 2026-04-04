@@ -339,26 +339,39 @@ def _dedup_identical_text_iou(
     """Remove duplicate boxes with identical text and IoU >= *threshold*."""
     if threshold <= 0 or len(boxes) < 2:
         return boxes
+
+    # Group indices by text — only same-text boxes can be duplicates.
+    from collections import defaultdict
+
+    text_groups: dict[str, list[int]] = defaultdict(list)
+    for idx, b in enumerate(boxes):
+        text_groups[b.text].append(idx)
+
     keep = [True] * len(boxes)
-    for i in range(len(boxes)):
-        if not keep[i]:
+    for indices in text_groups.values():
+        if len(indices) < 2:
             continue
-        for j in range(i + 1, len(boxes)):
-            if not keep[j]:
+        for a in range(len(indices)):
+            i = indices[a]
+            if not keep[i]:
                 continue
-            if boxes[i].text != boxes[j].text:
-                continue
-            ix0 = max(boxes[i].x0, boxes[j].x0)
-            iy0 = max(boxes[i].y0, boxes[j].y0)
-            ix1 = min(boxes[i].x1, boxes[j].x1)
-            iy1 = min(boxes[i].y1, boxes[j].y1)
-            inter = max(0, ix1 - ix0) * max(0, iy1 - iy0)
-            a1 = boxes[i].area()
-            a2 = boxes[j].area()
-            union = a1 + a2 - inter
-            if union > 0 and inter / union >= threshold:
-                keep[j] = False
-                diag["tokens_duplicate_removed"] += 1
+            bi = boxes[i]
+            for b_idx in range(a + 1, len(indices)):
+                j = indices[b_idx]
+                if not keep[j]:
+                    continue
+                bj = boxes[j]
+                ix0 = max(bi.x0, bj.x0)
+                iy0 = max(bi.y0, bj.y0)
+                ix1 = min(bi.x1, bj.x1)
+                iy1 = min(bi.y1, bj.y1)
+                inter = max(0, ix1 - ix0) * max(0, iy1 - iy0)
+                a1 = bi.area()
+                a2 = bj.area()
+                union = a1 + a2 - inter
+                if union > 0 and inter / union >= threshold:
+                    keep[j] = False
+                    diag["tokens_duplicate_removed"] += 1
     return [b for b, k in zip(boxes, keep) if k]
 
 
