@@ -2,6 +2,7 @@
 
 Measures call counts and per-function time in the hot paths.
 """
+
 from __future__ import annotations
 
 import cProfile
@@ -23,8 +24,12 @@ PAGE = 2  # worst page from initial profiling
 def get_test_data():
     """Extract words, lines, curves from the PDF page."""
     import pdfplumber
+
     from plancheck.config import GroupingConfig
-    from plancheck.tocr.extract import build_extract_words_kwargs, extract_tocr_from_words
+    from plancheck.tocr.extract import (
+        build_extract_words_kwargs,
+        extract_tocr_from_words,
+    )
 
     cfg = GroupingConfig()
     kwargs = build_extract_words_kwargs(cfg, mode="full")
@@ -77,7 +82,9 @@ def profile_nms():
 def profile_vector_symbols():
     """Profile vector symbol recovery with cProfile."""
     tokens, lines, curves, pw, ph, cfg = get_test_data()
-    print(f"=== Vector Symbol Profile (tokens={len(tokens)}, lines={len(lines)}, curves={len(curves)}) ===")
+    print(
+        f"=== Vector Symbol Profile (tokens={len(tokens)}, lines={len(lines)}, curves={len(curves)}) ==="
+    )
 
     from plancheck.tocr.vector_symbols import recover_vector_symbols
 
@@ -104,6 +111,7 @@ def profile_vector_symbols():
 def profile_extract_words():
     """Profile pdfplumber extract_words."""
     import pdfplumber
+
     from plancheck.config import GroupingConfig
     from plancheck.tocr.extract import build_extract_words_kwargs
 
@@ -141,7 +149,9 @@ def profile_extract_words():
             y_tolerance=kwargs.get("y_tolerance", 3),
         )
         t5 = time.perf_counter()
-        print(f"extract_words (no extra_attrs): {(t5-t4)*1000:.0f}ms ({len(words_no_extra)} words)")
+        print(
+            f"extract_words (no extra_attrs): {(t5-t4)*1000:.0f}ms ({len(words_no_extra)} words)"
+        )
 
         # Check if extra_attrs is the culprit
         t6 = time.perf_counter()
@@ -152,7 +162,9 @@ def profile_extract_words():
             extra_attrs=["fontname", "size", "upright"],
         )
         t7 = time.perf_counter()
-        print(f"extract_words (with extra_attrs): {(t7-t6)*1000:.0f}ms ({len(words_extra)} words)")
+        print(
+            f"extract_words (with extra_attrs): {(t7-t6)*1000:.0f}ms ({len(words_extra)} words)"
+        )
         print()
 
 

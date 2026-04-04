@@ -161,6 +161,28 @@ def main():
     print(f"  Average per page: {avg_total:.0f}ms")
     print(f"  Estimated total:  {avg_total * total_pages / 1000:.1f}s")
 
+    # ── Single-open comparison ───────────────────────────────────
+    print()
+    print("=" * 70)
+    print("Single-open comparison (pages processed from one pdfplumber handle):")
+    with pdfplumber.open(PDF_PATH) as pdf:
+        from plancheck.config import GroupingConfig as GC
+        from plancheck.ingest import build_page_context
+        from plancheck.tocr.extract import build_extract_words_kwargs as bew
+
+        cfg2 = GC()
+        kw = bew(cfg2, mode="full")
+        for pg in PAGES_TO_PROFILE:
+            t0 = time.perf_counter()
+            _ctx = build_page_context(
+                PDF_PATH, pg,
+                overlay_resolution=RESOLUTION,
+                extract_words_kwargs=kw,
+                _pdf=pdf,
+            )
+            t1 = time.perf_counter()
+            print(f"  Page {pg}: {(t1 - t0) * 1000:.0f}ms (single-open ingest)")
+
 
 if __name__ == "__main__":
     main()

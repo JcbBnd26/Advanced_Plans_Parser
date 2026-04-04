@@ -313,8 +313,14 @@ def _build_page_context(
     page_num: int,
     cfg: GroupingConfig,
     resolution: int,
+    _pdf: object = None,
 ) -> "PageContext":
-    """Open the PDF once and build a PageContext for one page."""
+    """Open the PDF once and build a PageContext for one page.
+
+    When *_pdf* is provided (a pre-opened pdfplumber handle) the PDF
+    is not re-opened, avoiding the overhead of parsing the full file
+    structure for every page.
+    """
     log.debug("_build_page_context: page %d", page_num)
     from .ingest import build_page_context
     from .tocr.extract import build_extract_words_kwargs
@@ -333,6 +339,7 @@ def _build_page_context(
         overlay_resolution=resolution,
         ocr_resolution=ocr_res,
         extract_words_kwargs=build_extract_words_kwargs(cfg, mode="full"),
+        _pdf=_pdf,
     )
 
 
@@ -745,28 +752,33 @@ def run_document(
     page_states: dict[int, dict] = {}
 
     # ── Phase 1: early stages (all pages) ────────────────────────
-    for idx, pg in enumerate(pages):
-        try:
-            ctx = _build_page_context(pdf_path, pg, cfg, resolution)
-            pr = PageResult(page=pg)
-            boxes, page_w, page_h = _run_early_stages(pr, ctx, cfg, resolution)
-            page_states[idx] = {
-                "pr": pr,
-                "ctx": ctx,
-                "boxes": boxes,
-                "page_w": page_w,
-                "page_h": page_h,
-            }
-            dr.pages.append(pr)
-        except Exception as exc:  # noqa: BLE001 — page failure must not abort doc
-            log.error("run_document page %d Phase 1 failed: %s", pg, exc)
-            failed = PageResult(page=pg)
-            failed.stages["error"] = StageResult(
-                stage="pipeline",
-                status="failed",
-                error={"type": type(exc).__name__, "message": str(exc)},
-            )
-            dr.pages.append(failed)
+    # Open the PDF once for all pages to avoid re-parsing the file
+    # structure on every iteration (significant for large PDFs).
+    import pdfplumber as _pdfplumber
+
+    with _pdfplumber.open(pdf_path) as _pdf_handle:
+        for idx, pg in enumerate(pages):
+            try:
+                ctx = _build_page_context(pdf_path, pg, cfg, resolution, _pdf=_pdf_handle)
+                pr = PageResult(page=pg)
+                boxes, page_w, page_h = _run_early_stages(pr, ctx, cfg, resolution)
+                page_states[idx] = {
+                    "pr": pr,
+                    "ctx": ctx,
+                    "boxes": boxes,
+                    "page_w": page_w,
+                    "page_h": page_h,
+                }
+                dr.pages.append(pr)
+            except Exception as exc:  # noqa: BLE001 — page failure must not abort doc
+                log.error("run_document page %d Phase 1 failed: %s", pg, exc)
+                failed = PageResult(page=pg)
+                failed.stages["error"] = StageResult(
+                    stage="pipeline",
+                    status="failed",
+                    error={"type": type(exc).__name__, "message": str(exc)},
+                )
+                dr.pages.append(failed)
 
     log.info(
         "run_document Phase 1 complete: %d/%d pages succeeded",

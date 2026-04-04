@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import Any, TYPE_CHECKING, List, Optional, Tuple
 
 if TYPE_CHECKING:
     import pdfplumber
@@ -298,6 +298,7 @@ def build_page_context(
     overlay_resolution: int = 200,
     ocr_resolution: int = 0,
     extract_words_kwargs: dict | None = None,
+    _pdf: Any = None,
 ) -> PageContext:
     """Open the PDF **once** and extract everything needed for one page.
 
@@ -319,52 +320,79 @@ def build_page_context(
     extract_words_kwargs : dict, optional
         Keyword arguments forwarded to ``page.extract_words()``.
         Defaults to ``{"keep_blank_chars": False}``.
+    _pdf : pdfplumber.PDF, optional
+        Pre-opened pdfplumber handle.  When provided the PDF is *not*
+        re-opened, avoiding the per-page overhead of parsing the full
+        file structure.  The caller is responsible for keeping it open.
 
     Returns
     -------
     PageContext
     """
-    import pdfplumber
-
     if extract_words_kwargs is None:
         extract_words_kwargs = {"keep_blank_chars": False}
 
+    if _pdf is not None:
+        return _build_page_context_from_pdf(
+            _pdf, pdf_path, page_num,
+            overlay_resolution, ocr_resolution,
+            extract_words_kwargs,
+        )
+
+    import pdfplumber
+
     with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[page_num]
+        return _build_page_context_from_pdf(
+            pdf, pdf_path, page_num,
+            overlay_resolution, ocr_resolution,
+            extract_words_kwargs,
+        )
 
-        page_w = float(page.width)
-        page_h = float(page.height)
 
-        # PDF producer metadata (for Level 3 per-producer adaptation)
-        producer_id = ""
-        try:
-            info = pdf.metadata or {}
-            producer_id = str(info.get("Producer", "") or "")
-        except Exception:  # noqa: BLE001 — metadata extraction is optional
-            log.warning("PDF metadata extraction failed", exc_info=True)
+def _build_page_context_from_pdf(
+    pdf: Any,
+    pdf_path: Path | str,
+    page_num: int,
+    overlay_resolution: int,
+    ocr_resolution: int,
+    extract_words_kwargs: dict,
+) -> PageContext:
+    """Extract a :class:`PageContext` from an already-open pdfplumber handle."""
+    page = pdf.pages[page_num]
 
-        # Text tokens
-        words = page.extract_words(**extract_words_kwargs)
+    page_w = float(page.width)
+    page_h = float(page.height)
 
-        # Character-level records (for vocr candidate detection —
-        # chars with empty/unmapped unicode still have valid bboxes).
-        chars = list(page.chars)
+    # PDF producer metadata (for Level 3 per-producer adaptation)
+    producer_id = ""
+    try:
+        info = pdf.metadata or {}
+        producer_id = str(info.get("Producer", "") or "")
+    except Exception:  # noqa: BLE001 — metadata extraction is optional
+        log.warning("PDF metadata extraction failed", exc_info=True)
 
-        # Graphical elements (plain dicts — survive handle close)
-        lines = list(page.lines)
-        rects = list(page.rects)
-        curves = list(page.curves)
+    # Text tokens
+    words = page.extract_words(**extract_words_kwargs)
 
-        # Background image for overlays
-        bg_img = _render_page_rgb(page, overlay_resolution)
+    # Character-level records (for vocr candidate detection —
+    # chars with empty/unmapped unicode still have valid bboxes).
+    chars = list(page.chars)
 
-        # OCR image (higher DPI) — only when requested
-        ocr_img: Image.Image | None = None
-        if ocr_resolution > 0 and ocr_resolution != overlay_resolution:
-            ocr_img = _render_page_rgb(page, ocr_resolution)
-        elif ocr_resolution > 0:
-            # Same DPI — reuse the background render
-            ocr_img = bg_img.copy()
+    # Graphical elements (plain dicts — survive handle close)
+    lines = list(page.lines)
+    rects = list(page.rects)
+    curves = list(page.curves)
+
+    # Background image for overlays
+    bg_img = _render_page_rgb(page, overlay_resolution)
+
+    # OCR image (higher DPI) — only when requested
+    ocr_img: Image.Image | None = None
+    if ocr_resolution > 0 and ocr_resolution != overlay_resolution:
+        ocr_img = _render_page_rgb(page, ocr_resolution)
+    elif ocr_resolution > 0:
+        # Same DPI — reuse the background render
+        ocr_img = bg_img.copy()
 
     log.info(
         "PageContext built for page %d: %d words, %d lines, %d rects, %d curves",

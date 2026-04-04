@@ -774,7 +774,9 @@ def recover_vector_symbols(
         bb = _line_bbox(ln)
         if not _is_symbol_sized(bb, cfg.tocr_vector_symbol_max_size):
             continue  # Not a candidate — skip without counting.
-        g = _classify_as_slash(ln, tokens, char_width, page_num, cfg, _digit_index=digit_index)
+        g = _classify_as_slash(
+            ln, tokens, char_width, page_num, cfg, _digit_index=digit_index
+        )
         if g is not None:
             injected.append(g)
             used_line_idx.add(i)
@@ -787,7 +789,9 @@ def recover_vector_symbols(
         w, h = _bbox_dims(bb)
         if w <= 0 or h <= 0 or w > font_size or h > font_size:
             continue  # Not a candidate — skip without counting.
-        g = _classify_as_degree(c, tokens, char_width, font_size, page_num, cfg, _digit_index=digit_index)
+        g = _classify_as_degree(
+            c, tokens, char_width, font_size, page_num, cfg, _digit_index=digit_index
+        )
         if g is not None:
             injected.append(g)
             used_curve_idx.add(i)

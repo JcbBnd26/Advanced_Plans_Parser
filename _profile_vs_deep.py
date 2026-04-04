@@ -1,4 +1,5 @@
 """Deep-profile vector_symbols stage to find remaining hotspots."""
+
 from __future__ import annotations
 
 import cProfile
@@ -18,8 +19,12 @@ PAGE = 2  # heaviest page
 def get_page_data():
     """Extract tokens, lines, curves from page."""
     import pdfplumber
+
     from plancheck.config import GroupingConfig
-    from plancheck.tocr.extract import build_extract_words_kwargs, extract_tocr_from_words
+    from plancheck.tocr.extract import (
+        build_extract_words_kwargs,
+        extract_tocr_from_words,
+    )
 
     cfg = GroupingConfig()
     extract_kwargs = build_extract_words_kwargs(cfg, mode="full")
@@ -38,7 +43,9 @@ def get_page_data():
 
 def main():
     tokens, lines, curves, cfg = get_page_data()
-    print(f"Page {PAGE}: {len(tokens)} tokens, {len(lines)} lines, {len(curves)} curves")
+    print(
+        f"Page {PAGE}: {len(tokens)} tokens, {len(lines)} lines, {len(curves)} curves"
+    )
 
     from plancheck.tocr.vector_symbols import recover_vector_symbols
 
