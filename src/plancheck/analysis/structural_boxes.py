@@ -419,7 +419,10 @@ def _detect_boxes_from_lines(
                 vl = v_lines[k]
                 vl_ymin = min(vl.y0, vl.y1)
                 vl_ymax = max(vl.y0, vl.y1)
-                if vl_ymin <= ht_y + snap_tolerance and vl_ymax >= hb_y - snap_tolerance:
+                if (
+                    vl_ymin <= ht_y + snap_tolerance
+                    and vl_ymax >= hb_y - snap_tolerance
+                ):
                     left_verts.append(vl)
 
             if not left_verts:
@@ -432,7 +435,10 @@ def _detect_boxes_from_lines(
                 vr = v_lines[k]
                 vr_ymin = min(vr.y0, vr.y1)
                 vr_ymax = max(vr.y0, vr.y1)
-                if vr_ymin <= ht_y + snap_tolerance and vr_ymax >= hb_y - snap_tolerance:
+                if (
+                    vr_ymin <= ht_y + snap_tolerance
+                    and vr_ymax >= hb_y - snap_tolerance
+                ):
                     # Found a rectangle!
                     boxes.append(
                         StructuralBox(

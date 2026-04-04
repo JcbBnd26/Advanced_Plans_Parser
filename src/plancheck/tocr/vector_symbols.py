@@ -865,8 +865,7 @@ def recover_vector_symbols(
     n_horiz_candidates = sum(
         1
         for ln in unused_lines
-        if _line_angle_deg(ln) <= 10.0
-        and _line_length(ln) >= 2.5
+        if _line_angle_deg(ln) <= 10.0 and _line_length(ln) >= 2.5
     )
     minus_results = _classify_minus_lines(
         unused_lines,

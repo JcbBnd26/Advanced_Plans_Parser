@@ -610,8 +610,7 @@ class CorrectionStore(
                     to_delete,
                 )
                 self._conn.execute(
-                    f"DELETE FROM training_examples "
-                    f"WHERE detection_id IN ({ph})",
+                    f"DELETE FROM training_examples " f"WHERE detection_id IN ({ph})",
                     to_delete,
                 )
                 self._conn.execute(
@@ -620,18 +619,15 @@ class CorrectionStore(
                     to_delete,
                 )
                 self._conn.execute(
-                    f"DELETE FROM box_group_members "
-                    f"WHERE detection_id IN ({ph})",
+                    f"DELETE FROM box_group_members " f"WHERE detection_id IN ({ph})",
                     to_delete,
                 )
                 self._conn.execute(
-                    f"DELETE FROM box_groups "
-                    f"WHERE root_detection_id IN ({ph})",
+                    f"DELETE FROM box_groups " f"WHERE root_detection_id IN ({ph})",
                     to_delete,
                 )
                 cur = self._conn.execute(
-                    f"DELETE FROM detections "
-                    f"WHERE detection_id IN ({ph})",
+                    f"DELETE FROM detections " f"WHERE detection_id IN ({ph})",
                     to_delete,
                 )
                 total += cur.rowcount
