@@ -161,7 +161,11 @@ class LinkTool(BaseTool):
             self._update_rubber_band(cx, cy)
             # Highlight valid target under cursor
             hit = self._hit_test(pdf_x, pdf_y)
-            if hit is not None and hit is not self._parent and self._is_valid_child(hit):
+            if (
+                hit is not None
+                and hit is not self._parent
+                and self._is_valid_child(hit)
+            ):
                 self._highlight_hover(hit)
             else:
                 self._unhighlight_hover()
@@ -178,10 +182,7 @@ class LinkTool(BaseTool):
         """Find the topmost visible box under *(pdf_x, pdf_y)*."""
         canvas = self.ctx.canvas
         for cbox in reversed(self.ctx.canvas_boxes):
-            if (
-                cbox.rect_id
-                and canvas.itemcget(cbox.rect_id, "state") == "hidden"
-            ):
+            if cbox.rect_id and canvas.itemcget(cbox.rect_id, "state") == "hidden":
                 continue
             if cbox.polygon:
                 if point_in_polygon(pdf_x, pdf_y, cbox.polygon):
@@ -264,9 +265,7 @@ class LinkTool(BaseTool):
                 tags=("link_rubber",),
             )
         else:
-            canvas.coords(
-                self._rubber_band_id, parent_cx, parent_cy, cx, cy
-            )
+            canvas.coords(self._rubber_band_id, parent_cx, parent_cy, cx, cy)
 
     def _remove_rubber_band(self) -> None:
         if self._rubber_band_id is not None:

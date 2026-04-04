@@ -139,18 +139,22 @@ class AnnotationTab(
 
         # UndoManager service
         from .services.undo_manager import UndoManager
+
         self._undo_mgr = UndoManager(self)
 
         # Clipboard service
         from .services.clipboard import Clipboard
+
         self._clipboard = Clipboard(self)
 
         # BoxOperations service
         from .services.box_operations import BoxOperations
+
         self._box_ops = BoxOperations(self)
 
         # MLPredictor service
         from .services.ml_predictor import MLPredictor
+
         self._ml_predictor = MLPredictor(self)
 
         # Drag-handle state

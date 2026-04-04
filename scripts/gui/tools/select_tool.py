@@ -62,9 +62,7 @@ class SelectTool(BaseTool):
                             cbox=sel,
                             handle=HANDLE_POSITIONS[i],
                             orig_bbox=sel.pdf_bbox,
-                            orig_polygon=(
-                                list(sel.polygon) if sel.polygon else None
-                            ),
+                            orig_polygon=(list(sel.polygon) if sel.polygon else None),
                         )
                         return
 
@@ -84,9 +82,7 @@ class SelectTool(BaseTool):
                     cbox=clicked,
                     start_pdf=(pdf_x, pdf_y),
                     orig_bbox=clicked.pdf_bbox,
-                    orig_polygon=(
-                        list(clicked.polygon) if clicked.polygon else None
-                    ),
+                    orig_polygon=(list(clicked.polygon) if clicked.polygon else None),
                 )
         else:
             if not shift_held:
@@ -140,10 +136,7 @@ class SelectTool(BaseTool):
         """Find the topmost visible box under *(pdf_x, pdf_y)*."""
         canvas = self.ctx.canvas
         for cbox in reversed(self.ctx.canvas_boxes):
-            if (
-                cbox.rect_id
-                and canvas.itemcget(cbox.rect_id, "state") == "hidden"
-            ):
+            if cbox.rect_id and canvas.itemcget(cbox.rect_id, "state") == "hidden":
                 continue
             if cbox.polygon:
                 if point_in_polygon(pdf_x, pdf_y, cbox.polygon):

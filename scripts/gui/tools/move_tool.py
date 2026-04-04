@@ -59,9 +59,7 @@ class MoveTool(BaseTool):
         self._pending = (cx, cy)
         if self._after_id is not None:
             return
-        self._after_id = self.ctx.canvas.after(
-            self._THROTTLE_MS, self._flush
-        )
+        self._after_id = self.ctx.canvas.after(self._THROTTLE_MS, self._flush)
 
     def _flush(self) -> None:
         self._after_id = None
@@ -99,9 +97,7 @@ class MoveTool(BaseTool):
         cbox.pdf_bbox = (nx0, ny0, nx1, ny1)
 
         if self._orig_polygon:
-            cbox.polygon = [
-                (px + dx, py + dy) for px, py in self._orig_polygon
-            ]
+            cbox.polygon = [(px + dx, py + dy) for px, py in self._orig_polygon]
 
         self._actually_moved = True
         self.ctx.draw_box(cbox)

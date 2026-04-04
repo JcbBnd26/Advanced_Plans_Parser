@@ -57,9 +57,7 @@ class ResizeTool(BaseTool):
         self._pending = (cx, cy)
         if self._after_id is not None:
             return
-        self._after_id = self.ctx.canvas.after(
-            self._THROTTLE_MS, self._flush
-        )
+        self._after_id = self.ctx.canvas.after(self._THROTTLE_MS, self._flush)
 
     def _flush(self) -> None:
         self._after_id = None

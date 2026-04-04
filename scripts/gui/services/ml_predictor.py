@@ -34,12 +34,8 @@ class MLPredictor:
 
         tab = self._tab
         cfg = getattr(getattr(tab, "state", None), "config", None)
-        model_path = Path(
-            getattr(cfg, "ml_model_path", tab._classifier.model_path)
-        )
-        current_model_path = Path(
-            getattr(tab._classifier, "model_path", model_path)
-        )
+        model_path = Path(getattr(cfg, "ml_model_path", tab._classifier.model_path))
+        current_model_path = Path(getattr(tab._classifier, "model_path", model_path))
         if current_model_path == model_path:
             return tab._classifier
         return ElementClassifier(model_path=model_path)

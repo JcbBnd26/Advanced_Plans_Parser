@@ -70,9 +70,7 @@ class BoxOperations:
         for cbox in targets:
             if new_label == cbox.element_type:
                 tab._push_undo("accept", cbox)
-                tab._store.accept_detection(
-                    cbox.detection_id, tab._doc_id, tab._page
-                )
+                tab._store.accept_detection(cbox.detection_id, tab._doc_id, tab._page)
                 cbox.corrected = True
                 tab._session_count += 1
                 tab._draw_box(cbox)

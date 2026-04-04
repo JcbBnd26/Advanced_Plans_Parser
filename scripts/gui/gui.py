@@ -105,6 +105,12 @@ class GuiState:
         self.project_dir: Path | None = None
         self.project_meta: dict | None = None
 
+        # Tab visibility state (persisted to app config)
+        self.tab_visibility: dict[str, bool] = {
+            "database": True,
+            "diagnostics": True,
+        }
+
     def subscribe(self, event: str, callback) -> None:
         self._subscribers.setdefault(event, []).append(callback)
 
@@ -289,20 +295,69 @@ class PlanParserGUI:
         except Exception:  # noqa: BLE001
             logger.debug("Root destroy failed", exc_info=True)
 
+    def _setup_theme(self) -> None:
+        """Apply consistent ttk styling across the application."""
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass  # fall back to default if clam unavailable
+
+        # -- Colours ------------------------------------------------
+        bg = "#1e1e1e"
+        surface = "#252526"
+        surface_alt = "#2d2d30"
+        border = "#3c3c3c"
+        fg = "#d4d4d4"
+        fg_dim = "#808080"
+        accent = "#0078d4"
+
+        self.root.configure(bg=bg)
+
+        style.configure(".", background=surface, foreground=fg, bordercolor=border,
+                         focuscolor=accent, font=("TkDefaultFont", 9))
+        style.configure("TFrame", background=surface)
+        style.configure("TLabel", background=surface, foreground=fg)
+        style.configure("TLabelframe", background=surface, foreground=fg)
+        style.configure("TLabelframe.Label", background=surface, foreground=fg)
+        style.configure("TButton", padding=(8, 4))
+        style.configure("TNotebook", background=bg, borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(10, 4), font=("Segoe UI", 10))
+        style.map("TNotebook.Tab",
+                  background=[("selected", surface), ("!selected", surface_alt)],
+                  foreground=[("selected", fg), ("!selected", fg_dim)])
+        style.configure("TEntry", fieldbackground=surface_alt, foreground=fg)
+        style.configure("TCombobox", fieldbackground=surface_alt, foreground=fg)
+        style.configure("TCheckbutton", background=surface, foreground=fg)
+        style.configure("Treeview", background=surface_alt, foreground=fg,
+                         fieldbackground=surface_alt)
+        style.configure("Treeview.Heading", background=surface, foreground=fg)
+        style.map("Treeview",
+                  background=[("selected", accent)],
+                  foreground=[("selected", "#ffffff")])
+        # Run button (already referenced in tab_pipeline.py)
+        style.configure("Run.TButton", font=("TkDefaultFont", 12, "bold"),
+                         padding=(20, 10))
+
     def _build_ui(self) -> None:
+        self._setup_theme()
+
         # ── Menu bar ──────────────────────────────────────────────────
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
 
+        # ── File menu (preserved from project system work) ────────────
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(
             label="New Project…",
             command=self._new_project,
+            accelerator="Ctrl+N",
         )
         file_menu.add_command(
             label="Open Project…",
             command=self._open_project,
+            accelerator="Ctrl+O",
         )
 
         # Recent Projects submenu (populated dynamically)
@@ -318,6 +373,101 @@ class PlanParserGUI:
             label="Import Project…",
             command=self._import_project,
         )
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Exit",
+            command=self._on_close,
+            accelerator="Alt+F4",
+        )
+
+        # ── Edit menu ────────────────────────────────────────────────
+        self._edit_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Edit", menu=self._edit_menu)
+        self._edit_menu.add_command(
+            label="Undo",
+            command=self._edit_undo,
+            accelerator="Ctrl+Z",
+            state="disabled",
+        )
+        self._edit_menu.add_command(
+            label="Redo",
+            command=self._edit_redo,
+            accelerator="Ctrl+Y",
+            state="disabled",
+        )
+
+        # ── View menu ───────────────────────────────────────────────
+        self._view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="View", menu=self._view_menu)
+
+        self._view_menu.add_command(
+            label="Pipeline",
+            command=lambda: self._focus_tab(0),
+        )
+        self._view_menu.add_command(
+            label="ML Trainer",
+            command=lambda: self._focus_tab_by_key("annotation"),
+        )
+        self._view_menu.add_separator()
+
+        self._db_visible_var = tk.BooleanVar(
+            value=self.state.tab_visibility.get("database", True)
+        )
+        self._view_menu.add_checkbutton(
+            label="Database Inspector",
+            variable=self._db_visible_var,
+            command=lambda: self._toggle_tab_visibility("database", self._db_visible_var),
+        )
+        self._diag_visible_var = tk.BooleanVar(
+            value=self.state.tab_visibility.get("diagnostics", True)
+        )
+        self._view_menu.add_checkbutton(
+            label="Diagnostics Panel",
+            variable=self._diag_visible_var,
+            command=lambda: self._toggle_tab_visibility(
+                "diagnostics", self._diag_visible_var
+            ),
+        )
+
+        # ── Settings menu ───────────────────────────────────────────
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+        settings_menu.add_command(
+            label="General…",
+            command=self._open_general_settings,
+        )
+        settings_menu.add_separator()
+        settings_menu.add_command(
+            label="ML Runtime…",
+            command=self._open_ml_runtime_settings,
+        )
+        settings_menu.add_command(
+            label="ML Features…",
+            command=self._open_ml_features_settings,
+        )
+        settings_menu.add_command(
+            label="LLM Configuration…",
+            command=self._open_llm_config_settings,
+        )
+        settings_menu.add_separator()
+        settings_menu.add_command(
+            label="Pipeline Defaults…",
+            command=self._open_pipeline_defaults,
+        )
+
+        # ── Help menu ───────────────────────────────────────────────
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(
+            label="About PlanCheck",
+            command=self._show_about,
+        )
+        help_menu.add_command(
+            label="Documentation",
+            command=lambda: self._status_bar.set_status(
+                "Documentation — not yet available"
+            ),
+        )
 
         # ── Tab container ─────────────────────────────────────────────
         self.notebook = ttk.Notebook(self.root)
@@ -329,6 +479,11 @@ class PlanParserGUI:
         # Build PipelineTab eagerly — it is the first visible tab and
         # its construction time is covered by the splash screen.
         self._pipeline_tab = PipelineTab(self.notebook, self.state)
+
+        # Track original tab positions and widgets for hide/show
+        # Maps key → (original_index, tab_widget_or_placeholder, tab_text)
+        self._tab_registry: dict[str, dict] = {}
+        self._tab_key_by_index: dict[int, str] = {}
 
         # All other tabs are lazy: add lightweight placeholders now and
         # import + build the real tab on first selection.  This avoids
@@ -358,8 +513,15 @@ class PlanParserGUI:
             idx = self.notebook.index("end") - 1
             self._lazy_tab_defs[idx] = (attr_name, key)
             self._lazy_placeholders[idx] = placeholder
+            self._tab_registry[key] = {
+                "original_index": idx,
+                "widget": placeholder,
+                "text": tab_text,
+                "visible": True,
+            }
+            self._tab_key_by_index[idx] = key
 
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_lazy_tab, add="+")
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed, add="+")
 
         # ── Status bar ────────────────────────────────────────────────
         self._status_bar = StatusBar(self.root)
@@ -374,8 +536,13 @@ class PlanParserGUI:
         self.state.subscribe("project_changed", self._on_project_changed)
 
     # ------------------------------------------------------------------
-    # Lazy tab materialisation
+    # Tab changed handler (lazy loading + Edit menu state)
     # ------------------------------------------------------------------
+
+    def _on_tab_changed(self, event: Any) -> None:
+        """Build lazy tabs and update Edit menu state on tab switch."""
+        self._on_lazy_tab(event)
+        self._update_edit_menu_state()
 
     def _on_lazy_tab(self, _event: Any) -> None:
         """Build a tab on first selection, replacing its placeholder."""
@@ -395,6 +562,10 @@ class PlanParserGUI:
         placeholder.destroy()
         self.notebook.insert(idx, tab.frame)
         self.notebook.select(idx)
+
+        # Update tab registry after materialisation
+        if key in self._tab_registry:
+            self._tab_registry[key]["widget"] = tab.frame
 
     def _materialise_tab(self, key: str) -> Any:
         """Import and construct a single lazy tab."""
@@ -428,6 +599,12 @@ class PlanParserGUI:
     def _bind_shortcuts(self) -> None:
         """Global keyboard shortcuts."""
         self.root.bind("<Control-o>", lambda e: self._quick_open_pdf())
+        self.root.bind("<Control-n>", lambda e: self._new_project())
+        self.root.bind("<Control-z>", lambda e: self._edit_undo())
+        self.root.bind("<Control-y>", lambda e: self._edit_redo())
+        self.root.bind("<Control-s>", lambda e: self._context_save())
+        self.root.bind("<F5>", lambda e: self._run_pipeline_shortcut())
+        self.root.bind("<Control-comma>", lambda e: self._open_general_settings())
         self.root.bind("<Control-Key-1>", lambda e: self.notebook.select(0))
         self.root.bind("<Control-Key-2>", lambda e: self.notebook.select(1))
         self.root.bind("<Control-Key-3>", lambda e: self.notebook.select(2))
@@ -445,15 +622,198 @@ class PlanParserGUI:
         if f:
             self.state.set_pdf(Path(f))
 
+    def _context_save(self) -> None:
+        """Ctrl+S: save context-dependently based on active tab."""
+        # If we have a config file path, save config
+        if self.state.config_file_path and self.state.config:
+            try:
+                self.state.config.save(self.state.config_file_path)
+                self._status_bar.set_center("Config saved")
+            except Exception:  # noqa: BLE001 — save is best-effort
+                self._status_bar.set_center("Save failed")
+            return
+        self._status_bar.set_center("Nothing to save")
+
     def _update_status(self) -> None:
-        parts = []
+        left_parts = []
         if self.state.project_meta:
-            parts.append(f"Project: {self.state.project_meta['name']}")
+            left_parts.append(f"Project: {self.state.project_meta['name']}")
         if self.state.pdf_path:
-            parts.append(f"PDF: {self.state.pdf_path.name}")
+            left_parts.append(f"PDF: {self.state.pdf_path.name}")
+        self._status_bar.set_status(" | ".join(left_parts) if left_parts else "Ready")
         if self.state.last_run_dir:
-            parts.append(f"Last run: {self.state.last_run_dir.name}")
-        self._status_bar.set_status(" | ".join(parts) if parts else "Ready")
+            self._status_bar.set_center(f"Last run: {self.state.last_run_dir.name}")
+
+    # ------------------------------------------------------------------
+    # Edit menu actions
+    # ------------------------------------------------------------------
+
+    def _update_edit_menu_state(self) -> None:
+        """Enable Undo/Redo only when the ML Trainer tab is active."""
+        annotation = getattr(self, "_annotation_tab", None)
+        is_annotation_active = False
+        if annotation is not None:
+            try:
+                current = self.notebook.select()
+                if current and str(annotation.frame) == str(current):
+                    is_annotation_active = True
+            except Exception:  # noqa: BLE001
+                pass
+
+        state = "normal" if is_annotation_active else "disabled"
+        try:
+            self._edit_menu.entryconfig("Undo", state=state)
+            self._edit_menu.entryconfig("Redo", state=state)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _edit_undo(self) -> None:
+        """Invoke undo on the annotation tab if active."""
+        annotation = getattr(self, "_annotation_tab", None)
+        if annotation is None:
+            return
+        undo_mgr = getattr(annotation, "_undo_manager", None)
+        if undo_mgr and hasattr(undo_mgr, "undo"):
+            undo_mgr.undo()
+
+    def _edit_redo(self) -> None:
+        """Invoke redo on the annotation tab if active."""
+        annotation = getattr(self, "_annotation_tab", None)
+        if annotation is None:
+            return
+        undo_mgr = getattr(annotation, "_undo_manager", None)
+        if undo_mgr and hasattr(undo_mgr, "redo"):
+            undo_mgr.redo()
+
+    # ------------------------------------------------------------------
+    # View menu actions — tab visibility
+    # ------------------------------------------------------------------
+
+    def _focus_tab(self, index: int) -> None:
+        """Select a tab by index."""
+        try:
+            self.notebook.select(index)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _focus_tab_by_key(self, key: str) -> None:
+        """Select a tab by its registry key, showing it first if hidden."""
+        info = self._tab_registry.get(key)
+        if info is None:
+            return
+        if not info["visible"]:
+            # Re-show the tab first
+            if key == "database":
+                self._db_visible_var.set(True)
+            elif key == "diagnostics":
+                self._diag_visible_var.set(True)
+            self._toggle_tab_visibility(key, tk.BooleanVar(value=True))
+
+        widget = info["widget"]
+        try:
+            self.notebook.select(widget)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _toggle_tab_visibility(self, key: str, var: tk.BooleanVar) -> None:
+        """Show or hide a tab based on the View menu checkbutton."""
+        info = self._tab_registry.get(key)
+        if info is None:
+            return
+
+        widget = info["widget"]
+        should_show = var.get()
+
+        if should_show and not info["visible"]:
+            # Re-insert at the correct position
+            target_idx = info["original_index"]
+            # Count how many tabs before this one are currently visible
+            actual_idx = 0
+            for other_key, other_info in sorted(
+                self._tab_registry.items(),
+                key=lambda x: x[1]["original_index"],
+            ):
+                if other_info["original_index"] < target_idx and other_info["visible"]:
+                    actual_idx += 1
+            # +1 for the Pipeline tab which is always at index 0
+            actual_idx += 1
+            try:
+                self.notebook.insert(actual_idx, widget, text=info["text"])
+            except Exception:  # noqa: BLE001
+                self.notebook.add(widget, text=info["text"])
+            info["visible"] = True
+        elif not should_show and info["visible"]:
+            try:
+                self.notebook.forget(widget)
+            except Exception:  # noqa: BLE001
+                pass
+            info["visible"] = False
+
+        self.state.tab_visibility[key] = should_show
+
+    # ------------------------------------------------------------------
+    # Settings menu actions
+    # ------------------------------------------------------------------
+
+    def _open_general_settings(self) -> None:
+        from .settings_dialogs import GeneralSettingsDialog
+
+        GeneralSettingsDialog(self.root, self.state)
+
+    def _open_ml_runtime_settings(self) -> None:
+        from .settings_dialogs import MLRuntimeDialog
+
+        dlg = MLRuntimeDialog(self.root, self.state)
+        self.root.wait_window(dlg)
+        if dlg.applied:
+            self.state.notify("ml_config_changed")
+
+    def _open_ml_features_settings(self) -> None:
+        from .settings_dialogs import MLFeaturesDialog
+
+        dlg = MLFeaturesDialog(self.root, self.state)
+        self.root.wait_window(dlg)
+        if dlg.applied:
+            self.state.notify("ml_features_changed")
+
+    def _open_llm_config_settings(self) -> None:
+        from .settings_dialogs import LLMConfigDialog
+
+        dlg = LLMConfigDialog(self.root, self.state)
+        self.root.wait_window(dlg)
+        if dlg.applied:
+            self.state.notify("llm_config_changed")
+
+    def _open_pipeline_defaults(self) -> None:
+        self._status_bar.set_status(
+            "Pipeline Defaults — configure via Load/Save Config in the Pipeline tab"
+        )
+
+    # ------------------------------------------------------------------
+    # Help menu actions
+    # ------------------------------------------------------------------
+
+    def _show_about(self) -> None:
+        from tkinter import messagebox
+
+        messagebox.showinfo(
+            "About PlanCheck",
+            "PlanCheck — Architectural/Engineering Plan Parser\n\n"
+            "ML-powered construction drawing analysis\n"
+            "with OCR reconciliation and LLM integration.\n\n"
+            "Python 3.10+",
+            parent=self.root,
+        )
+
+    # ------------------------------------------------------------------
+    # Pipeline shortcut
+    # ------------------------------------------------------------------
+
+    def _run_pipeline_shortcut(self) -> None:
+        """F5 shortcut: trigger pipeline run via the Pipeline tab."""
+        tab = getattr(self, "_pipeline_tab", None)
+        if tab and hasattr(tab, "_run_processing"):
+            tab._run_processing()
 
     # ------------------------------------------------------------------
     # Project menu actions

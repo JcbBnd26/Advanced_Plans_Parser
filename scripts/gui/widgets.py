@@ -447,13 +447,19 @@ class StageProgressBar(ttk.Frame):
 
 
 class StatusBar(ttk.Frame):
-    """Persistent status bar for the bottom of the main window."""
+    """Persistent three-zone status bar for the bottom of the main window.
+
+    Layout:  [left: project / doc]  [center: last action]  [right: ML status]
+    """
 
     def __init__(self, parent: tk.Widget, **kwargs: Any) -> None:
         super().__init__(parent, **kwargs)
         self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=1)
+        self.columnconfigure(2, weight=0)
 
         self._left_var = tk.StringVar(value="Ready")
+        self._center_var = tk.StringVar(value="")
         self._right_var = tk.StringVar(value="")
 
         ttk.Label(
@@ -466,15 +472,26 @@ class StatusBar(ttk.Frame):
 
         ttk.Label(
             self,
+            textvariable=self._center_var,
+            relief="sunken",
+            anchor="center",
+            padding=(6, 2),
+        ).grid(row=0, column=1, sticky="ew")
+
+        ttk.Label(
+            self,
             textvariable=self._right_var,
             relief="sunken",
             anchor="e",
             padding=(6, 2),
             width=30,
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=0, column=2, sticky="e")
 
     def set_status(self, text: str) -> None:
         self._left_var.set(text)
+
+    def set_center(self, text: str) -> None:
+        self._center_var.set(text)
 
     def set_right(self, text: str) -> None:
         self._right_var.set(text)
@@ -684,3 +701,198 @@ class ErrorPanel(ttk.Frame):
     def error_count(self) -> int:
         """Return the number of errors."""
         return len(self._errors)
+
+
+# ---------------------------------------------------------------------------
+# TOCRProgressBar  –  per-page visual progress indicator
+# ---------------------------------------------------------------------------
+
+
+class TOCRProgressBar(ttk.Frame):
+    """Canvas-based per-page progress display for TOCR processing.
+
+    Shows one small coloured box per page. Boxes fill with colour as TOCR
+    completes: gray (pending) → green (success) → yellow (warning) → red (error).
+    Clicking a box fires an optional callback with the page number.
+    """
+
+    # Minimum and default box sizes
+    _MIN_BOX = 6
+    _DEFAULT_BOX = 16
+    _BOX_PAD = 2
+
+    # Status → colour mapping
+    _STATUS_COLORS = {
+        "pending": "#3c3c3c",
+        "running": "#264f78",
+        "success": "#2d5a2d",
+        "warning": "#8b7300",
+        "error": "#5a2d2d",
+    }
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        on_page_click: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent, **kwargs)
+        self._on_page_click = on_page_click
+        self._page_count = 0
+        self._page_statuses: list[str] = []
+        self._page_info: list[dict] = []
+        self._rects: list[int] = []
+        self._box_size = self._DEFAULT_BOX
+
+        self._canvas = tk.Canvas(
+            self,
+            height=self._DEFAULT_BOX + 8,
+            bg="#1e1e1e",
+            highlightthickness=0,
+        )
+        self._canvas.pack(fill="x", expand=True)
+        self._canvas.bind("<Configure>", self._redraw)
+        self._canvas.bind("<Button-1>", self._on_click)
+        self._canvas.bind("<Motion>", self._on_motion)
+
+        # Tooltip
+        self._tooltip: tk.Toplevel | None = None
+
+    def set_page_count(self, count: int) -> None:
+        """Initialize the progress bar for *count* pages."""
+        self._page_count = count
+        self._page_statuses = ["pending"] * count
+        self._page_info = [{}] * count
+        self._rects.clear()
+        self._redraw()
+
+    def set_page_status(
+        self,
+        page: int,
+        status: str,
+        *,
+        info: dict | None = None,
+    ) -> None:
+        """Update the status of a single page (0-indexed)."""
+        if 0 <= page < self._page_count:
+            self._page_statuses[page] = status
+            if info:
+                self._page_info[page] = info
+            self._update_rect(page)
+
+    def reset(self) -> None:
+        """Clear all pages."""
+        self._page_count = 0
+        self._page_statuses.clear()
+        self._page_info.clear()
+        self._rects.clear()
+        self._canvas.delete("all")
+
+    def _redraw(self, _event: tk.Event | None = None) -> None:
+        """Recalculate layout and redraw all boxes."""
+        self._canvas.delete("all")
+        self._rects.clear()
+        if self._page_count == 0:
+            return
+
+        canvas_w = self._canvas.winfo_width()
+        if canvas_w < 10:
+            canvas_w = 400
+
+        # Calculate box size to fit in available width
+        total_pad = self._BOX_PAD * (self._page_count + 1)
+        available = canvas_w - total_pad
+        box = max(self._MIN_BOX, min(self._DEFAULT_BOX, available // self._page_count))
+        self._box_size = box
+
+        # Calculate rows needed
+        boxes_per_row = max(
+            1, (canvas_w - self._BOX_PAD) // (box + self._BOX_PAD)
+        )
+        rows = (self._page_count + boxes_per_row - 1) // boxes_per_row
+        canvas_h = rows * (box + self._BOX_PAD) + self._BOX_PAD
+        self._canvas.configure(height=max(canvas_h, box + 8))
+
+        for i in range(self._page_count):
+            row_idx = i // boxes_per_row
+            col_idx = i % boxes_per_row
+            x = self._BOX_PAD + col_idx * (box + self._BOX_PAD)
+            y = self._BOX_PAD + row_idx * (box + self._BOX_PAD)
+            color = self._STATUS_COLORS.get(
+                self._page_statuses[i], self._STATUS_COLORS["pending"]
+            )
+            rect = self._canvas.create_rectangle(
+                x, y, x + box, y + box, fill=color, outline="#555555", width=1
+            )
+            self._rects.append(rect)
+
+    def _update_rect(self, page: int) -> None:
+        """Update a single rectangle's colour without full redraw."""
+        if page < len(self._rects):
+            color = self._STATUS_COLORS.get(
+                self._page_statuses[page], self._STATUS_COLORS["pending"]
+            )
+            self._canvas.itemconfigure(self._rects[page], fill=color)
+
+    def _page_at(self, x: int, y: int) -> int | None:
+        """Return the page index at canvas coordinates, or None."""
+        if self._page_count == 0:
+            return None
+        canvas_w = self._canvas.winfo_width()
+        box = self._box_size
+        boxes_per_row = max(
+            1, (canvas_w - self._BOX_PAD) // (box + self._BOX_PAD)
+        )
+        col = (x - self._BOX_PAD) // (box + self._BOX_PAD)
+        row = (y - self._BOX_PAD) // (box + self._BOX_PAD)
+        if col < 0 or row < 0 or col >= boxes_per_row:
+            return None
+        idx = row * boxes_per_row + col
+        if 0 <= idx < self._page_count:
+            return idx
+        return None
+
+    def _on_click(self, event: tk.Event) -> None:
+        page = self._page_at(event.x, event.y)
+        if page is not None and self._on_page_click:
+            self._on_page_click(page)
+
+    def _on_motion(self, event: tk.Event) -> None:
+        page = self._page_at(event.x, event.y)
+        if page is None:
+            self._hide_tooltip()
+            return
+        info = self._page_info[page] if page < len(self._page_info) else {}
+        status = self._page_statuses[page] if page < len(self._page_statuses) else "?"
+        tip_lines = [f"Page {page + 1} — {status}"]
+        if info.get("duration"):
+            tip_lines.append(f"Duration: {info['duration']:.1f}s")
+        if info.get("word_count"):
+            tip_lines.append(f"Words: {info['word_count']}")
+        self._show_tooltip(event, "\n".join(tip_lines))
+
+    def _show_tooltip(self, event: tk.Event, text: str) -> None:
+        self._hide_tooltip()
+        self._tooltip = tw = tk.Toplevel(self)
+        tw.wm_overrideredirect(True)
+        tw.attributes("-topmost", True)
+        x = event.x_root + 12
+        y = event.y_root + 8
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            tw,
+            text=text,
+            background="#333333",
+            foreground="#d4d4d4",
+            font=("Consolas", 8),
+            relief="solid",
+            borderwidth=1,
+            padx=4,
+            pady=2,
+        )
+        label.pack()
+
+    def _hide_tooltip(self) -> None:
+        if self._tooltip:
+            self._tooltip.destroy()
+            self._tooltip = None

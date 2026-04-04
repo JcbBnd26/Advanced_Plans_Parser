@@ -114,11 +114,14 @@ class PipelineWorker:
         log_panel: Any | None = None,
         stage_bar: Any | None = None,
         error_panel: Any | None = None,
+        *,
+        tocr_bar: Any | None = None,
     ) -> None:
         self.root = root
         self.log_panel = log_panel
         self.stage_bar = stage_bar
         self.error_panel = error_panel
+        self.tocr_bar = tocr_bar
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
         self._cancel_event = threading.Event()
@@ -260,6 +263,15 @@ class PipelineWorker:
                     self.log_panel.write(f"▸ {stage_name}...", "STAGE")
                 except Exception:  # noqa: BLE001 — GUI callback is best-effort
                     pass
+        elif kind == "tocr_page":
+            _, page, status, info, total = msg
+            if self.tocr_bar:
+                try:
+                    if self.tocr_bar._page_count != total:
+                        self.tocr_bar.set_page_count(total)
+                    self.tocr_bar.set_page_status(page, status, info=info)
+                except Exception:  # noqa: BLE001 — GUI callback is best-effort
+                    pass
         elif kind == "done":
             _, result, error, elapsed = msg
             if self.log_panel:
@@ -289,3 +301,14 @@ class PipelineWorker:
     def post_log(self, text: str, level: str = "INFO") -> None:
         """Post a log message (call from within the worker target)."""
         self._queue.put(("log", text, level))
+
+    def post_page(
+        self,
+        page: int,
+        status: str,
+        total: int,
+        *,
+        info: dict | None = None,
+    ) -> None:
+        """Post a per-page progress update (call from within the worker target)."""
+        self._queue.put(("tocr_page", page, status, info or {}, total))

@@ -167,9 +167,7 @@ class DrawTool(BaseTool):
         btn_f.pack(pady=10)
         ok_btn = ttk.Button(btn_f, text="OK", command=on_ok)
         ok_btn.pack(side="left", padx=4)
-        ttk.Button(btn_f, text="Cancel", command=on_cancel).pack(
-            side="left", padx=4
-        )
+        ttk.Button(btn_f, text="Cancel", command=on_cancel).pack(side="left", padx=4)
 
         type_win.bind("<Return>", lambda e: on_ok())
         type_win.bind("<Escape>", lambda e: on_cancel())
@@ -189,9 +187,7 @@ class DrawTool(BaseTool):
                 self.ctx.pdf_path, self.ctx.page, pdf_bbox
             )
 
-        features = featurize_region(
-            chosen_type, pdf_bbox, None, 2448.0, 1584.0
-        )
+        features = featurize_region(chosen_type, pdf_bbox, None, 2448.0, 1584.0)
         det_id = self.ctx.store.save_detection(
             doc_id=self.ctx.doc_id,
             page=self.ctx.page,

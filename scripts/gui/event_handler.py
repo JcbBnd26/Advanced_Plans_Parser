@@ -23,6 +23,7 @@ class EventHandlerMixin:
     def _format_stage2_candidates(candidates: list[tuple[str, float]]) -> str:
         """Format Stage-2 alternatives — forwards to MLPredictor."""
         from .services.ml_predictor import MLPredictor
+
         return MLPredictor.format_stage2_candidates(candidates)
 
     def _get_configured_classifier(self):
@@ -112,6 +113,7 @@ class EventHandlerMixin:
 
     def _create_group(self, cbox: CanvasBox) -> None:
         from .actions.group_actions import create_group
+
         create_group(self, cbox)
 
     def _on_create_group(self) -> None:
@@ -136,6 +138,7 @@ class EventHandlerMixin:
 
     def _add_children_to_group(self, targets: list["CanvasBox"]) -> None:
         from .actions.group_actions import add_children_to_group
+
         add_children_to_group(self, targets)
 
     def _on_remove_from_group(self) -> None:
@@ -144,10 +147,12 @@ class EventHandlerMixin:
 
     def _remove_from_group(self, cbox: CanvasBox) -> None:
         from .actions.group_actions import remove_from_group
+
         remove_from_group(self, cbox)
 
     def _update_group_inspector(self, cbox: CanvasBox | None) -> None:
         from .actions.group_actions import update_group_inspector
+
         update_group_inspector(self, cbox)
 
     def _select_box(self, cbox: CanvasBox) -> None:
@@ -496,6 +501,7 @@ class EventHandlerMixin:
     def _on_merge(self) -> None:
         """Merge multi-selected boxes or reshape to word selection — forwards to merge_actions."""
         from .actions.merge_actions import merge_boxes_action
+
         merge_boxes_action(self)
 
     def _merge_words_into_detection(
@@ -503,7 +509,10 @@ class EventHandlerMixin:
     ) -> None:
         """Reshape/create detection from word selection — forwards to merge_actions."""
         from .actions.merge_actions import merge_words_into_detection
-        merge_words_into_detection(self, forced_type=forced_type, force_create=force_create)
+
+        merge_words_into_detection(
+            self, forced_type=forced_type, force_create=force_create
+        )
 
     def _key_merge(self, event: tk.Event) -> None:
         """Keyboard shortcut M for merge."""
@@ -543,6 +552,7 @@ class EventHandlerMixin:
     def _on_link_column(self) -> None:
         """Create a notes_column from selected boxes — forwards to merge_actions."""
         from .actions.merge_actions import link_column_action
+
         link_column_action(self)
 
     def _key_toggle_words(self, event: tk.Event) -> None:

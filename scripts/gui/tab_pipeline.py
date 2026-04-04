@@ -22,7 +22,7 @@ from typing import Any
 
 from plancheck.config import GroupingConfig
 
-from .widgets import CollapsibleFrame, ErrorPanel, LogPanel, StageProgressBar
+from .widgets import ErrorPanel, LogPanel, StageProgressBar, TOCRProgressBar
 from .worker import PipelineWorker
 
 # ---------------------------------------------------------------------------
@@ -42,9 +42,9 @@ class PipelineTab:
 
         self.frame = ttk.Frame(notebook)
         self.frame.columnconfigure(0, weight=1)
-        self.frame.rowconfigure(0, weight=3)  # top scrollable area
-        self.frame.rowconfigure(1, weight=0)  # stage bar
-        self.frame.rowconfigure(2, weight=1)  # log panel
+        self.frame.rowconfigure(0, weight=3)  # top scrollable area (config)
+        self.frame.rowconfigure(1, weight=0)  # stage bar + TOCR progress
+        self.frame.rowconfigure(2, weight=1)  # log panel (activity log)
         notebook.add(self.frame, text="Pipeline")
 
         # PDF state
@@ -355,298 +355,15 @@ class PipelineTab:
             pady=(10, 6),
         )
 
-        advanced_ml = CollapsibleFrame(
+        # Advanced ML Runtime, Optional ML Features, and LLM Runtime
+        # settings have moved to Settings menu dialogs.
+        settings_hint = ttk.Label(
             ml_frame,
-            title="Advanced ML Runtime",
-            initially_open=False,
-        )
-        advanced_ml.grid(row=5, column=0, columnspan=2, sticky="ew")
-        advanced_ml.content.columnconfigure(1, weight=1)
-
-        self.ml_relabel_confidence_var = tk.StringVar(
-            value=str(_defaults.ml_relabel_confidence)
-        )
-        self._add_labeled_entry(
-            advanced_ml.content,
-            row=0,
-            label="Relabel confidence threshold",
-            variable=self.ml_relabel_confidence_var,
-            help_text="Minimum confidence before ML rewrites a detected label.",
-        )
-
-        self.ml_retrain_on_startup_var = tk.BooleanVar(
-            value=_defaults.ml_retrain_on_startup
-        )
-        ttk.Checkbutton(
-            advanced_ml.content,
-            text="Auto-retrain on startup",
-            variable=self.ml_retrain_on_startup_var,
-        ).grid(row=1, column=0, sticky="w", pady=2)
-        ttk.Label(
-            advanced_ml.content,
-            text="Run the retrain threshold check when the GUI launches.",
+            text="Advanced ML, feature, and LLM settings are in the Settings menu.",
             foreground="gray",
-        ).grid(row=1, column=1, sticky="w", padx=(10, 0))
-
-        self.ml_retrain_threshold_var = tk.StringVar(
-            value=str(_defaults.ml_retrain_threshold)
+            font=("TkDefaultFont", 8),
         )
-        self._add_labeled_entry(
-            advanced_ml.content,
-            row=2,
-            label="Retrain threshold",
-            variable=self.ml_retrain_threshold_var,
-            help_text="Corrections required before auto retrain becomes eligible.",
-        )
-
-        self.ml_feature_cache_enabled_var = tk.BooleanVar(
-            value=_defaults.ml_feature_cache_enabled
-        )
-        ttk.Checkbutton(
-            advanced_ml.content,
-            text="Enable feature cache",
-            variable=self.ml_feature_cache_enabled_var,
-        ).grid(row=3, column=0, sticky="w", pady=2)
-        ttk.Label(
-            advanced_ml.content,
-            text="Reuse encoded features across feedback passes when possible.",
-            foreground="gray",
-        ).grid(row=3, column=1, sticky="w", padx=(10, 0))
-
-        self.ml_drift_enabled_var = tk.BooleanVar(value=_defaults.ml_drift_enabled)
-        ttk.Checkbutton(
-            advanced_ml.content,
-            text="Enable drift detection",
-            variable=self.ml_drift_enabled_var,
-            command=self._update_ml_control_state,
-        ).grid(row=4, column=0, sticky="w", pady=2)
-        ttk.Label(
-            advanced_ml.content,
-            text="Compare current features to stored training drift statistics.",
-            foreground="gray",
-        ).grid(row=4, column=1, sticky="w", padx=(10, 0))
-
-        self.ml_drift_threshold_var = tk.StringVar(
-            value=str(_defaults.ml_drift_threshold)
-        )
-        self._drift_threshold_entry = self._add_labeled_entry(
-            advanced_ml.content,
-            row=5,
-            label="Drift threshold",
-            variable=self.ml_drift_threshold_var,
-            help_text="Higher values require a larger feature shift before flagging.",
-        )
-
-        self.ml_drift_stats_path_var = tk.StringVar(value=_defaults.ml_drift_stats_path)
-        self._drift_stats_entry = self._add_labeled_entry(
-            advanced_ml.content,
-            row=6,
-            label="Drift stats path",
-            variable=self.ml_drift_stats_path_var,
-            help_text="Saved drift-detector statistics file.",
-            browse_command=lambda: self._browse_any_path(
-                self.ml_drift_stats_path_var,
-                title="Select Drift Stats File",
-            ),
-        )
-
-        self.ml_comparison_threshold_var = tk.StringVar(
-            value=str(_defaults.ml_comparison_threshold)
-        )
-        self._add_labeled_entry(
-            advanced_ml.content,
-            row=7,
-            label="Comparison F1 threshold",
-            variable=self.ml_comparison_threshold_var,
-            help_text="Min absolute per-class F1 delta to count as improved / regressed.",
-        )
-
-        optional_ml = CollapsibleFrame(
-            ml_frame,
-            title="Optional ML Features",
-            initially_open=False,
-        )
-        optional_ml.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        optional_ml.content.columnconfigure(1, weight=1)
-
-        self.ml_vision_enabled_var = tk.BooleanVar(value=_defaults.ml_vision_enabled)
-        ttk.Checkbutton(
-            optional_ml.content,
-            text="Enable vision features",
-            variable=self.ml_vision_enabled_var,
-            command=self._update_ml_control_state,
-        ).grid(row=0, column=0, sticky="w", pady=2)
-        ttk.Label(
-            optional_ml.content,
-            text="Extract image features from page crops during ML feedback.",
-            foreground="gray",
-        ).grid(row=0, column=1, sticky="w", padx=(10, 0))
-
-        self.ml_vision_backbone_var = tk.StringVar(value=_defaults.ml_vision_backbone)
-        self._vision_backbone_entry = self._add_labeled_entry(
-            optional_ml.content,
-            row=1,
-            label="Vision backbone",
-            variable=self.ml_vision_backbone_var,
-            help_text="Torchvision backbone name for image features.",
-        )
-
-        self.ml_embeddings_enabled_var = tk.BooleanVar(
-            value=_defaults.ml_embeddings_enabled
-        )
-        ttk.Checkbutton(
-            optional_ml.content,
-            text="Enable text embeddings",
-            variable=self.ml_embeddings_enabled_var,
-            command=self._update_ml_control_state,
-        ).grid(row=2, column=0, sticky="w", pady=2)
-        ttk.Label(
-            optional_ml.content,
-            text="Append sentence embeddings to the structured feature vector.",
-            foreground="gray",
-        ).grid(row=2, column=1, sticky="w", padx=(10, 0))
-
-        self.ml_embeddings_model_var = tk.StringVar(value=_defaults.ml_embeddings_model)
-        self._embeddings_model_entry = self._add_labeled_entry(
-            optional_ml.content,
-            row=3,
-            label="Embeddings model",
-            variable=self.ml_embeddings_model_var,
-            help_text="Sentence-transformer model name or local path.",
-        )
-
-        self.ml_layout_enabled_var = tk.BooleanVar(value=_defaults.ml_layout_enabled)
-        ttk.Checkbutton(
-            optional_ml.content,
-            text="Enable layout model in pipeline",
-            variable=self.ml_layout_enabled_var,
-            command=self._update_ml_control_state,
-        ).grid(row=4, column=0, sticky="w", pady=2)
-        ttk.Label(
-            optional_ml.content,
-            text="Run LayoutLMv3 layout prediction during analysis when configured.",
-            foreground="gray",
-        ).grid(row=4, column=1, sticky="w", padx=(10, 0))
-
-        self.ml_layout_model_path_var = tk.StringVar(
-            value=_defaults.ml_layout_model_path
-        )
-        self._layout_model_entry = self._add_labeled_entry(
-            optional_ml.content,
-            row=5,
-            label="Layout model",
-            variable=self.ml_layout_model_path_var,
-            help_text="Fine-tuned LayoutLMv3 checkpoint path or model name.",
-        )
-
-        self.ml_gnn_enabled_var = tk.BooleanVar(value=_defaults.ml_gnn_enabled)
-        ttk.Checkbutton(
-            optional_ml.content,
-            text="Enable GNN post-processing",
-            variable=self.ml_gnn_enabled_var,
-            command=self._update_ml_control_state,
-        ).grid(row=6, column=0, sticky="w", pady=2)
-        ttk.Label(
-            optional_ml.content,
-            text="Use the GNN model for downstream relational classification.",
-            foreground="gray",
-        ).grid(row=6, column=1, sticky="w", padx=(10, 0))
-
-        self.ml_gnn_model_path_var = tk.StringVar(value=_defaults.ml_gnn_model_path)
-        self._gnn_model_path_entry = self._add_labeled_entry(
-            optional_ml.content,
-            row=7,
-            label="GNN model path",
-            variable=self.ml_gnn_model_path_var,
-            help_text="Path to the trained GNN checkpoint.",
-            browse_command=lambda: self._browse_any_path(
-                self.ml_gnn_model_path_var,
-                title="Select GNN Model",
-            ),
-        )
-
-        self.ml_gnn_hidden_dim_var = tk.StringVar(
-            value=str(_defaults.ml_gnn_hidden_dim)
-        )
-        self._gnn_hidden_dim_entry = self._add_labeled_entry(
-            optional_ml.content,
-            row=8,
-            label="GNN hidden dim",
-            variable=self.ml_gnn_hidden_dim_var,
-            help_text="Hidden feature width expected by the GNN checkpoint.",
-        )
-
-        self.ml_gnn_patience_var = tk.StringVar(value=str(_defaults.ml_gnn_patience))
-        self._gnn_patience_entry = self._add_labeled_entry(
-            optional_ml.content,
-            row=9,
-            label="GNN early-stop patience",
-            variable=self.ml_gnn_patience_var,
-            help_text="Stop GNN training after N epochs without val improvement (0 = disabled).",
-        )
-
-        llm_runtime = CollapsibleFrame(
-            ml_frame,
-            title="LLM Runtime",
-            initially_open=False,
-        )
-        llm_runtime.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        llm_runtime.content.columnconfigure(1, weight=1)
-
-        self.llm_provider_var = tk.StringVar(value=_defaults.llm_provider)
-        self._add_labeled_entry(
-            llm_runtime.content,
-            row=0,
-            label="LLM provider",
-            variable=self.llm_provider_var,
-            help_text="Provider key used by the shared LLM client.",
-        )
-
-        self.llm_model_var = tk.StringVar(value=_defaults.llm_model)
-        self._add_labeled_entry(
-            llm_runtime.content,
-            row=1,
-            label="LLM model",
-            variable=self.llm_model_var,
-            help_text="Model name sent to the configured provider.",
-        )
-
-        self.llm_api_base_var = tk.StringVar(value=_defaults.llm_api_base)
-        self._add_labeled_entry(
-            llm_runtime.content,
-            row=2,
-            label="LLM API base",
-            variable=self.llm_api_base_var,
-            help_text="Base URL for the provider endpoint.",
-        )
-
-        self.llm_policy_var = tk.StringVar(value=_defaults.llm_policy)
-        self._add_labeled_entry(
-            llm_runtime.content,
-            row=3,
-            label="LLM policy",
-            variable=self.llm_policy_var,
-            help_text="Runtime policy enforced by the LLM client.",
-        )
-
-        self.llm_temperature_var = tk.StringVar(value=str(_defaults.llm_temperature))
-        self._add_labeled_entry(
-            llm_runtime.content,
-            row=4,
-            label="LLM temperature",
-            variable=self.llm_temperature_var,
-            help_text="Sampling temperature for LLM-backed decisions.",
-        )
-
-        self.llm_api_key_var = tk.StringVar(value=_defaults.llm_api_key)
-        self._add_labeled_entry(
-            llm_runtime.content,
-            row=5,
-            label="LLM API key",
-            variable=self.llm_api_key_var,
-            help_text="Optional API key for non-local providers.",
-            show="*",
-        )
+        settings_hint.grid(row=5, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         row += 1
 
@@ -702,6 +419,10 @@ class PipelineTab:
         )
         copy_btn.grid(row=0, column=1, padx=(6, 0), sticky="ns")
 
+        # ── Per-page TOCR progress ──────────────────────────────────
+        self.tocr_bar = TOCRProgressBar(stage_frame)
+        self.tocr_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+
         # ── Embedded Log Console ─────────────────────────────────────
         self.log_panel = LogPanel(self.frame, height=10)
         self.log_panel.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 6))
@@ -742,26 +463,14 @@ class PipelineTab:
             )
         return entry
 
-    def _set_config_scalar(
-        self,
-        cfg: GroupingConfig,
-        attr: str,
-        variable: tk.StringVar,
-        caster,
-    ) -> None:
-        """Apply a typed scalar value from a Tk variable when valid."""
-        raw = variable.get().strip()
-        if not raw:
-            return
-        try:
-            setattr(cfg, attr, caster(raw))
-        except ValueError:
-            return
-
     def _collect_config(self) -> GroupingConfig:
-        """Build a GroupingConfig from all current UI knobs + toggles."""
+        """Build a GroupingConfig from all current UI knobs + toggles.
+
+        Settings that were moved to Settings dialogs are read directly
+        from state.config (already updated by the dialogs).
+        """
         cfg = GroupingConfig.from_dict(self.state.config.to_dict())
-        # Master toggles
+        # Master toggles (still in Pipeline tab)
         cfg.enable_tocr = self.tocr_var.get()
         cfg.enable_skew = self.skew_var.get()
         cfg.enable_llm_checks = self.llm_checks_var.get()
@@ -771,83 +480,19 @@ class PipelineTab:
         cfg.ml_stage2_model_path = (
             self.ml_stage2_model_path_var.get().strip() or cfg.ml_stage2_model_path
         )
-        cfg.ml_retrain_on_startup = self.ml_retrain_on_startup_var.get()
-        cfg.ml_feature_cache_enabled = self.ml_feature_cache_enabled_var.get()
-        cfg.ml_drift_enabled = self.ml_drift_enabled_var.get()
-        cfg.ml_vision_enabled = self.ml_vision_enabled_var.get()
-        cfg.ml_embeddings_enabled = self.ml_embeddings_enabled_var.get()
-        cfg.ml_layout_enabled = self.ml_layout_enabled_var.get()
-        cfg.ml_gnn_enabled = self.ml_gnn_enabled_var.get()
 
-        cfg.ml_drift_stats_path = (
-            self.ml_drift_stats_path_var.get().strip() or cfg.ml_drift_stats_path
-        )
-        cfg.ml_vision_backbone = (
-            self.ml_vision_backbone_var.get().strip() or cfg.ml_vision_backbone
-        )
-        cfg.ml_embeddings_model = (
-            self.ml_embeddings_model_var.get().strip() or cfg.ml_embeddings_model
-        )
-        cfg.ml_layout_model_path = (
-            self.ml_layout_model_path_var.get().strip() or cfg.ml_layout_model_path
-        )
-        cfg.ml_gnn_model_path = (
-            self.ml_gnn_model_path_var.get().strip() or cfg.ml_gnn_model_path
-        )
-        cfg.llm_provider = self.llm_provider_var.get().strip() or cfg.llm_provider
-        cfg.llm_model = self.llm_model_var.get().strip() or cfg.llm_model
-        cfg.llm_api_base = self.llm_api_base_var.get().strip() or cfg.llm_api_base
-        cfg.llm_policy = self.llm_policy_var.get().strip() or cfg.llm_policy
-        cfg.llm_api_key = self.llm_api_key_var.get().strip()
-
-        self._set_config_scalar(
-            cfg,
-            "ml_relabel_confidence",
-            self.ml_relabel_confidence_var,
-            float,
-        )
-        self._set_config_scalar(
-            cfg,
-            "ml_retrain_threshold",
-            self.ml_retrain_threshold_var,
-            int,
-        )
-        self._set_config_scalar(
-            cfg,
-            "ml_drift_threshold",
-            self.ml_drift_threshold_var,
-            float,
-        )
-        self._set_config_scalar(
-            cfg,
-            "ml_comparison_threshold",
-            self.ml_comparison_threshold_var,
-            float,
-        )
-        self._set_config_scalar(
-            cfg,
-            "ml_gnn_hidden_dim",
-            self.ml_gnn_hidden_dim_var,
-            int,
-        )
-        self._set_config_scalar(
-            cfg,
-            "ml_gnn_patience",
-            self.ml_gnn_patience_var,
-            int,
-        )
-        self._set_config_scalar(
-            cfg,
-            "llm_temperature",
-            self.llm_temperature_var,
-            float,
-        )
+        # Settings managed by Settings dialogs are already in cfg
+        # via state.config — no need to read from removed widgets.
 
         self.state.set_config(cfg, config_file_path=self.state.config_file_path)
         return cfg
 
     def _apply_config(self, cfg: GroupingConfig) -> None:
-        """Push a GroupingConfig into all UI controls."""
+        """Push a GroupingConfig into all UI controls.
+
+        Only updates controls that still live in the Pipeline tab.
+        Dialog-managed settings are applied via state.config directly.
+        """
         self.state.set_config(cfg, config_file_path=self.state.config_file_path)
         self.tocr_var.set(cfg.enable_tocr)
         self.skew_var.set(cfg.enable_skew)
@@ -856,30 +501,6 @@ class PipelineTab:
         self.ml_hierarchical_var.set(cfg.ml_hierarchical_enabled)
         self.ml_model_path_var.set(cfg.ml_model_path)
         self.ml_stage2_model_path_var.set(cfg.ml_stage2_model_path)
-        self.ml_relabel_confidence_var.set(str(cfg.ml_relabel_confidence))
-        self.ml_retrain_on_startup_var.set(cfg.ml_retrain_on_startup)
-        self.ml_retrain_threshold_var.set(str(cfg.ml_retrain_threshold))
-        self.ml_feature_cache_enabled_var.set(cfg.ml_feature_cache_enabled)
-        self.ml_drift_enabled_var.set(cfg.ml_drift_enabled)
-        self.ml_drift_threshold_var.set(str(cfg.ml_drift_threshold))
-        self.ml_comparison_threshold_var.set(str(cfg.ml_comparison_threshold))
-        self.ml_drift_stats_path_var.set(cfg.ml_drift_stats_path)
-        self.ml_vision_enabled_var.set(cfg.ml_vision_enabled)
-        self.ml_vision_backbone_var.set(cfg.ml_vision_backbone)
-        self.ml_embeddings_enabled_var.set(cfg.ml_embeddings_enabled)
-        self.ml_embeddings_model_var.set(cfg.ml_embeddings_model)
-        self.ml_layout_enabled_var.set(cfg.ml_layout_enabled)
-        self.ml_layout_model_path_var.set(cfg.ml_layout_model_path)
-        self.ml_gnn_enabled_var.set(cfg.ml_gnn_enabled)
-        self.ml_gnn_model_path_var.set(cfg.ml_gnn_model_path)
-        self.ml_gnn_hidden_dim_var.set(str(cfg.ml_gnn_hidden_dim))
-        self.ml_gnn_patience_var.set(str(cfg.ml_gnn_patience))
-        self.llm_provider_var.set(cfg.llm_provider)
-        self.llm_model_var.set(cfg.llm_model)
-        self.llm_api_base_var.set(cfg.llm_api_base)
-        self.llm_policy_var.set(cfg.llm_policy)
-        self.llm_temperature_var.set(str(cfg.llm_temperature))
-        self.llm_api_key_var.set(cfg.llm_api_key)
         self._update_ml_control_state()
         self._refresh_ml_status()
         self._refresh_config_file_label()
@@ -1141,37 +762,8 @@ class PipelineTab:
         if hasattr(self, "_stage2_browse_button"):
             self._stage2_browse_button.configure(state=s2_state)
 
-        # Drift threshold / stats path depend on drift detection enabled
-        drift_state = "normal" if self.ml_drift_enabled_var.get() else "disabled"
-        for _attr in ("_drift_threshold_entry", "_drift_stats_entry"):
-            _w = getattr(self, _attr, None)
-            if _w:
-                _w.configure(state=drift_state)
-
-        # Vision backbone depends on vision features enabled
-        vision_state = "normal" if self.ml_vision_enabled_var.get() else "disabled"
-        _w = getattr(self, "_vision_backbone_entry", None)
-        if _w:
-            _w.configure(state=vision_state)
-
-        # Embeddings model depends on text embeddings enabled
-        embed_state = "normal" if self.ml_embeddings_enabled_var.get() else "disabled"
-        _w = getattr(self, "_embeddings_model_entry", None)
-        if _w:
-            _w.configure(state=embed_state)
-
-        # Layout model path depends on layout model enabled
-        layout_state = "normal" if self.ml_layout_enabled_var.get() else "disabled"
-        _w = getattr(self, "_layout_model_entry", None)
-        if _w:
-            _w.configure(state=layout_state)
-
-        # GNN model path / hidden dim depend on GNN enabled
-        gnn_state = "normal" if self.ml_gnn_enabled_var.get() else "disabled"
-        for _attr in ("_gnn_model_path_entry", "_gnn_hidden_dim_entry"):
-            _w = getattr(self, _attr, None)
-            if _w:
-                _w.configure(state=gnn_state)
+        # Other dependent controls (drift, vision, embeddings, layout, GNN)
+        # have been moved to Settings dialogs — no widget state to manage here.
 
         self._refresh_ml_status()
 
@@ -1373,6 +965,7 @@ class PipelineTab:
         self.log_panel.clear()
         self.error_panel.clear()
         self.stage_bar.reset()
+        self.tocr_bar.reset()
         self.run_button.config(state="disabled")
         self.cancel_button.config(state="normal")
 
@@ -1380,7 +973,8 @@ class PipelineTab:
         self.state.notify("pipeline_starting")
 
         self._worker = PipelineWorker(
-            self.root, self.log_panel, self.stage_bar, self.error_panel
+            self.root, self.log_panel, self.stage_bar, self.error_panel,
+            tocr_bar=self.tocr_bar,
         )
         worker = self._worker
 
@@ -1402,6 +996,7 @@ class PipelineTab:
                     cfg=cfg,
                     cancel_event=worker.cancel_event if worker else None,
                     stage_callback=worker.post_stage if worker else None,
+                    page_callback=worker.post_page if worker else None,
                     db_path=self.state.db_path(),
                 )
                 results.append(run_dir)

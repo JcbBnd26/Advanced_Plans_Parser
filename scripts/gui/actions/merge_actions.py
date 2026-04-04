@@ -29,9 +29,7 @@ def merge_boxes_action(tab: Any) -> None:
         targets.append(tab._selected_box)
 
     if len(targets) < 2:
-        tab._status.configure(
-            text="Select at least 2 boxes to merge (Shift+Click)"
-        )
+        tab._status.configure(text="Select at least 2 boxes to merge (Shift+Click)")
         return
     if not tab._doc_id:
         tab._status.configure(text="No document loaded")
@@ -44,8 +42,7 @@ def merge_boxes_action(tab: Any) -> None:
         largest = max(
             targets,
             key=lambda cb: (
-                (cb.pdf_bbox[2] - cb.pdf_bbox[0])
-                * (cb.pdf_bbox[3] - cb.pdf_bbox[1])
+                (cb.pdf_bbox[2] - cb.pdf_bbox[0]) * (cb.pdf_bbox[3] - cb.pdf_bbox[1])
             ),
         )
         merged_type = largest.element_type
@@ -65,13 +62,9 @@ def merge_boxes_action(tab: Any) -> None:
     merged_bbox = polygon_bbox(merged_poly)
 
     if tab._pdf_path:
-        merged_text = extract_text_in_polygon(
-            tab._pdf_path, tab._page, merged_poly
-        )
+        merged_text = extract_text_in_polygon(tab._pdf_path, tab._page, merged_poly)
     else:
-        merged_text = "\n".join(
-            cb.text_content for cb in targets if cb.text_content
-        )
+        merged_text = "\n".join(cb.text_content for cb in targets if cb.text_content)
 
     largest = max(
         targets,
@@ -145,9 +138,7 @@ def merge_boxes_action(tab: Any) -> None:
     survivor.merged_from = [cb.detection_id for cb in targets]
     tab._session_count += 1
 
-    tab._store.update_detection_polygon(
-        survivor.detection_id, merged_poly, merged_bbox
-    )
+    tab._store.update_detection_polygon(survivor.detection_id, merged_poly, merged_bbox)
 
     tab._selected_box = None
     tab._clear_multi_select()
@@ -179,9 +170,7 @@ def merge_words_into_detection(
         winfo = tab._word_overlay_items.get(rid)
         if not winfo:
             continue
-        word_bboxes.append(
-            (winfo["x0"], winfo["top"], winfo["x1"], winfo["bottom"])
-        )
+        word_bboxes.append((winfo["x0"], winfo["top"], winfo["x1"], winfo["bottom"]))
         if winfo.get("text"):
             texts.append(winfo["text"])
 
@@ -207,9 +196,7 @@ def merge_words_into_detection(
     )
 
     if tab._pdf_path and merged_poly:
-        merged_text = extract_text_in_polygon(
-            tab._pdf_path, tab._page, merged_poly
-        )
+        merged_text = extract_text_in_polygon(tab._pdf_path, tab._page, merged_poly)
     elif tab._pdf_path:
         merged_text = extract_text_in_bbox(tab._pdf_path, tab._page, new_bbox)
     else:
@@ -246,9 +233,7 @@ def merge_words_into_detection(
         cbox.corrected = True
         tab._session_count += 1
 
-        tab._store.update_detection_polygon(
-            cbox.detection_id, merged_poly, new_bbox
-        )
+        tab._store.update_detection_polygon(cbox.detection_id, merged_poly, new_bbox)
         tab._draw_box(cbox)
         tab._clear_word_selection()
         tab._update_session_label()
@@ -262,9 +247,7 @@ def merge_words_into_detection(
         chosen_type = forced_type or (tab._type_var.get() or "misc_title")
         if forced_type is None and features:
             try:
-                prediction = tab._predict_model_suggestion(
-                    features, text=merged_text
-                )
+                prediction = tab._predict_model_suggestion(features, text=merged_text)
                 if prediction is None:
                     raise ValueError("No configured model is available")
                 pred_label, pred_conf, _ = prediction
@@ -346,9 +329,7 @@ def link_column_action(tab: Any) -> None:
 
     already_grouped = [cb for cb in targets if cb.group_id]
     if already_grouped:
-        tab._status.configure(
-            text=f"{len(already_grouped)} box(es) already in a group"
-        )
+        tab._status.configure(text=f"{len(already_grouped)} box(es) already in a group")
         return
 
     x0 = min(cb.pdf_bbox[0] for cb in targets)

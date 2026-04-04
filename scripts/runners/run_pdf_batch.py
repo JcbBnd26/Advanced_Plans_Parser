@@ -6,7 +6,7 @@ import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from plancheck import (
     BlockCluster,
@@ -569,6 +569,7 @@ def run_pdf(
     cfg: GroupingConfig | None = None,
     cancel_event: threading.Event | None = None,
     stage_callback: Callable[[str, str], None] | None = None,
+    page_callback: Callable[..., None] | None = None,
     db_path: Path | None = None,
 ) -> Path:
     """Process pages of a single PDF using batch-by-stage ordering.
@@ -604,6 +605,15 @@ def run_pdf(
     page_states: dict[int, dict] = {}  # keyed by page_num
     processed_pages: list[int] = []
     cancelled = False
+    total_pages_to_process = (end_page - start)
+
+    def _page_event(page: int, status: str, **info: Any) -> None:
+        """Fire page_callback if available, swallowing errors."""
+        if page_callback is not None:
+            try:
+                page_callback(page - start, status, total_pages_to_process, info=info)
+            except Exception:  # noqa: BLE001 — callback must not break batch run
+                pass
 
     # ── Phase 1: early stages (all pages) ────────────────────────────
     for page_num in range(start, end_page):
@@ -611,6 +621,7 @@ def run_pdf(
             cancelled = True
             print("Cancellation requested — stopping after current page.")
             break
+        _page_event(page_num, "running")
         t0 = _time.perf_counter()
         try:
             with stage_callback_hook(stage_callback):
@@ -632,6 +643,7 @@ def run_pdf(
             processed_pages.append(page_num)
             elapsed = _time.perf_counter() - t0
             cand_count = len(getattr(pr, "vocr_candidates", []))
+            _page_event(page_num, "success", duration=elapsed)
             print(
                 f"  page {page_num}: Phase 1 done ({elapsed:.1f}s, "
                 f"{cand_count} VOCR candidates)",
@@ -641,6 +653,7 @@ def run_pdf(
             import traceback
 
             traceback.print_exc()
+            _page_event(page_num, "error")
             print(f"  page {page_num}: Phase 1 ERROR {exc}", flush=True)
             processed_pages.append(page_num)
 
