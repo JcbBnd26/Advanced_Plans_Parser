@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 if TYPE_CHECKING:
     import pdfplumber
@@ -334,8 +334,11 @@ def build_page_context(
 
     if _pdf is not None:
         return _build_page_context_from_pdf(
-            _pdf, pdf_path, page_num,
-            overlay_resolution, ocr_resolution,
+            _pdf,
+            pdf_path,
+            page_num,
+            overlay_resolution,
+            ocr_resolution,
             extract_words_kwargs,
         )
 
@@ -343,8 +346,11 @@ def build_page_context(
 
     with pdfplumber.open(pdf_path) as pdf:
         return _build_page_context_from_pdf(
-            pdf, pdf_path, page_num,
-            overlay_resolution, ocr_resolution,
+            pdf,
+            pdf_path,
+            page_num,
+            overlay_resolution,
+            ocr_resolution,
             extract_words_kwargs,
         )
 

@@ -576,3 +576,69 @@ class TestHasDetectionsForDoc:
 
     def test_returns_false_for_unknown_doc(self, tmp_store: CorrectionStore) -> None:
         assert tmp_store.has_detections_for_doc("sha256:nonexistent") is False
+
+
+class TestPurgeOldDetections:
+    """Tests for purge_old_detections_for_doc FK cleanup."""
+
+    def test_purge_cleans_dismissed_detections(
+        self, tmp_store: CorrectionStore, sample_features: dict
+    ) -> None:
+        """Purge must delete dismissed_detections rows before detections."""
+        doc_id = _mock_register(tmp_store)
+        det_id = tmp_store.save_detection(
+            doc_id=doc_id,
+            page=0,
+            run_id="run_old",
+            element_type="notes_column",
+            bbox=(10.0, 20.0, 30.0, 40.0),
+            text_content="test",
+            features=sample_features,
+        )
+        # Dismiss the detection — creates dismissed_detections FK reference
+        tmp_store.dismiss_detection(det_id, doc_id, 0)
+
+        # Purge with a new run_id — should not raise FK error
+        deleted = tmp_store.purge_old_detections_for_doc(doc_id, "run_new")
+        assert deleted == 1
+
+        # dismissed_detections should be empty
+        row = tmp_store._conn.execute(
+            "SELECT COUNT(*) FROM dismissed_detections"
+        ).fetchone()[0]
+        assert row == 0
+
+    def test_purge_cleans_all_fk_children(
+        self, tmp_store: CorrectionStore, sample_features: dict
+    ) -> None:
+        """Purge must clean corrections, training_examples, and groups."""
+        doc_id = _mock_register(tmp_store)
+        det_id = tmp_store.save_detection(
+            doc_id=doc_id,
+            page=0,
+            run_id="run_old",
+            element_type="notes_column",
+            bbox=(10.0, 20.0, 30.0, 40.0),
+            text_content="test",
+            features=sample_features,
+        )
+        # Create correction referencing the detection
+        tmp_store.save_correction(
+            detection_id=det_id,
+            doc_id=doc_id,
+            page=0,
+            correction_type="relabel",
+            original_label="notes_column",
+            corrected_label="legend",
+            corrected_bbox=(10.0, 20.0, 30.0, 40.0),
+        )
+
+        deleted = tmp_store.purge_old_detections_for_doc(doc_id, "run_new")
+        assert deleted == 1
+
+        # Correction should still exist but with detection_id = NULL
+        corrs = tmp_store._conn.execute(
+            "SELECT detection_id FROM corrections"
+        ).fetchall()
+        assert len(corrs) == 1
+        assert corrs[0][0] is None

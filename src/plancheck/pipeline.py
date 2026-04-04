@@ -759,7 +759,9 @@ def run_document(
     with _pdfplumber.open(pdf_path) as _pdf_handle:
         for idx, pg in enumerate(pages):
             try:
-                ctx = _build_page_context(pdf_path, pg, cfg, resolution, _pdf=_pdf_handle)
+                ctx = _build_page_context(
+                    pdf_path, pg, cfg, resolution, _pdf=_pdf_handle
+                )
                 pr = PageResult(page=pg)
                 boxes, page_w, page_h = _run_early_stages(pr, ctx, cfg, resolution)
                 page_states[idx] = {

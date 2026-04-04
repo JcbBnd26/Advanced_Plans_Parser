@@ -175,7 +175,8 @@ def main():
         for pg in PAGES_TO_PROFILE:
             t0 = time.perf_counter()
             _ctx = build_page_context(
-                PDF_PATH, pg,
+                PDF_PATH,
+                pg,
                 overlay_resolution=RESOLUTION,
                 extract_words_kwargs=kw,
                 _pdf=pdf,

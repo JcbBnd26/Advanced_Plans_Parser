@@ -751,6 +751,30 @@ def recover_vector_symbols(
     char_width = _estimate_char_width(tokens)
     font_size = _estimate_font_size(tokens)
 
+    # ── Pre-filter: compute bboxes once, keep only symbol-sized lines ──
+    max_size = cfg.tocr_vector_symbol_max_size
+    # (original_index, line_dict, bbox)
+    symbol_lines: List[Tuple[int, _LineDct, _Bbox]] = []
+    for i, ln in enumerate(lines):
+        bb = _line_bbox(ln)
+        if _is_symbol_sized(bb, max_size):
+            symbol_lines.append((i, ln, bb))
+
+    # Dense pages (hatching, cross-hatching) produce thousands of
+    # symbol-sized line fragments.  At that density the chance of
+    # finding real orphan symbols is near zero and the cost is high.
+    _MAX_SYMBOL_LINES = 5_000
+    if len(symbol_lines) > _MAX_SYMBOL_LINES:
+        log.info(
+            "Vector symbol recovery: page %d — skipping, %d symbol-sized "
+            "lines exceeds cap (%d) (total lines: %d)",
+            page_num,
+            len(symbol_lines),
+            _MAX_SYMBOL_LINES,
+            len(lines),
+        )
+        return tokens, diag
+
     # Build spatial index once — avoids O(n) scans in every classifier.
     digit_index = _DigitTokenIndex(tokens)
 
@@ -770,10 +794,7 @@ def recover_vector_symbols(
     used_curve_idx: set[int] = set()
 
     # ── Slash (/) ──────────────────────────────────────────────────
-    for i, ln in enumerate(lines):
-        bb = _line_bbox(ln)
-        if not _is_symbol_sized(bb, cfg.tocr_vector_symbol_max_size):
-            continue  # Not a candidate — skip without counting.
+    for i, ln, _bb in symbol_lines:
         g = _classify_as_slash(
             ln, tokens, char_width, page_num, cfg, _digit_index=digit_index
         )
@@ -799,7 +820,7 @@ def recover_vector_symbols(
             _count_rejection("degree")
 
     # ── Percent (%) ────────────────────────────────────────────────
-    remaining_lines = [ln for i, ln in enumerate(lines) if i not in used_line_idx]
+    remaining_lines = [ln for i, ln, _bb in symbol_lines if i not in used_line_idx]
     remaining_curves = [c for i, c in enumerate(curves) if i not in used_curve_idx]
     n_before = len(injected)
     pct_results = _classify_as_percent(
@@ -840,12 +861,11 @@ def recover_vector_symbols(
     injected.extend(hash_results)
 
     # ── Minus / en-dash (-) ────────────────────────────────────────
-    unused_lines = [ln for i, ln in enumerate(lines) if i not in used_line_idx]
+    unused_lines = [ln for i, ln, _bb in symbol_lines if i not in used_line_idx]
     n_horiz_candidates = sum(
         1
         for ln in unused_lines
-        if _is_symbol_sized(_line_bbox(ln), cfg.tocr_vector_symbol_max_size)
-        and _line_angle_deg(ln) <= 10.0
+        if _line_angle_deg(ln) <= 10.0
         and _line_length(ln) >= 2.5
     )
     minus_results = _classify_minus_lines(

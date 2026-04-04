@@ -492,8 +492,9 @@ class CorrectionStore(
         always preserved.  Orphaned ``box_groups`` / ``box_group_members``
         whose detections no longer exist are cleaned up as well.
 
-        Corrections and training_examples that reference purged detections
-        have their detection_id set to NULL (preserving user annotations).
+        Corrections that reference purged detections have their
+        detection_id set to NULL (preserving user annotations).
+        Training examples and dismissed detections are deleted.
 
         Returns the number of deleted detection rows.
         """
@@ -548,6 +549,13 @@ class CorrectionStore(
                 "(SELECT DISTINCT group_id FROM box_group_members)"
             )
 
+            # Delete dismissed_detections referencing these detections
+            self._conn.execute(
+                f"DELETE FROM dismissed_detections "
+                f"WHERE detection_id IN ({placeholders})",
+                to_delete,
+            )
+
             # Now delete the detections
             cur = self._conn.execute(
                 f"DELETE FROM detections WHERE detection_id IN ({placeholders})",
@@ -583,10 +591,48 @@ class CorrectionStore(
 
             total = 0
             for did, rid in keep.items():
+                to_delete = [
+                    row[0]
+                    for row in self._conn.execute(
+                        "SELECT detection_id FROM detections "
+                        "WHERE doc_id = ? AND run_id != ? AND run_id NOT LIKE 'manual%'",
+                        (did, rid),
+                    ).fetchall()
+                ]
+                if not to_delete:
+                    continue
+                ph = ",".join("?" * len(to_delete))
+
+                # Clean FK children before deleting detections
+                self._conn.execute(
+                    f"UPDATE corrections SET detection_id = NULL "
+                    f"WHERE detection_id IN ({ph})",
+                    to_delete,
+                )
+                self._conn.execute(
+                    f"DELETE FROM training_examples "
+                    f"WHERE detection_id IN ({ph})",
+                    to_delete,
+                )
+                self._conn.execute(
+                    f"DELETE FROM dismissed_detections "
+                    f"WHERE detection_id IN ({ph})",
+                    to_delete,
+                )
+                self._conn.execute(
+                    f"DELETE FROM box_group_members "
+                    f"WHERE detection_id IN ({ph})",
+                    to_delete,
+                )
+                self._conn.execute(
+                    f"DELETE FROM box_groups "
+                    f"WHERE root_detection_id IN ({ph})",
+                    to_delete,
+                )
                 cur = self._conn.execute(
-                    "DELETE FROM detections "
-                    "WHERE doc_id = ? AND run_id != ? AND run_id NOT LIKE 'manual%'",
-                    (did, rid),
+                    f"DELETE FROM detections "
+                    f"WHERE detection_id IN ({ph})",
+                    to_delete,
                 )
                 total += cur.rowcount
 
