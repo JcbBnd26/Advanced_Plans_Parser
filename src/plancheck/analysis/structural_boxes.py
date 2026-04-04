@@ -348,6 +348,8 @@ def _detect_boxes_from_lines(
     line segments.  This function finds sets of two horizontal + two
     vertical lines that form a closed rectangle (within snap tolerance).
     """
+    import bisect
+
     # Separate horizontal and vertical lines
     h_lines: List[GraphicElement] = []  # near-horizontal
     v_lines: List[GraphicElement] = []  # near-vertical
@@ -369,9 +371,22 @@ def _detect_boxes_from_lines(
     if len(h_lines) < 2 or len(v_lines) < 2:
         return []
 
-    # Sort horizontal by y, vertical by x
+    # Dense CAD pages (hatching, mechanical details) can have thousands
+    # of axis-aligned lines.  Structural frames use long lines, so raise
+    # the minimum length when line counts are high to keep this tractable.
+    _MAX_LINES = 500
+    if len(h_lines) + len(v_lines) > _MAX_LINES:
+        # Use 10% of page dimension as the minimum length for structural lines.
+        struct_min = max(min_size, min(page_width, page_height) * 0.10)
+        h_lines = [g for g in h_lines if abs(g.x1 - g.x0) >= struct_min]
+        v_lines = [g for g in v_lines if abs(g.y1 - g.y0) >= struct_min]
+        if len(h_lines) < 2 or len(v_lines) < 2:
+            return []
+
+    # Sort horizontal by y, vertical by x-centre for bisect lookups
     h_lines.sort(key=lambda g: (g.y0 + g.y1) / 2)
     v_lines.sort(key=lambda g: (g.x0 + g.x1) / 2)
+    vx_centres = [(g.x0 + g.x1) / 2 for g in v_lines]
 
     boxes: List[StructuralBox] = []
 
@@ -396,32 +411,28 @@ def _detect_boxes_from_lines(
             if overlap_x1 - overlap_x0 < min_size:
                 continue
 
-            # Look for two vertical lines connecting them
-            for j, v_left in enumerate(v_lines):
-                vl_x = (v_left.x0 + v_left.x1) / 2
-                vl_ymin = min(v_left.y0, v_left.y1)
-                vl_ymax = max(v_left.y0, v_left.y1)
+            # Binary-search for vertical lines near overlap_x0 (left edge)
+            lo = bisect.bisect_left(vx_centres, overlap_x0 - snap_tolerance)
+            hi = bisect.bisect_right(vx_centres, overlap_x0 + snap_tolerance)
+            left_verts = []
+            for k in range(lo, hi):
+                vl = v_lines[k]
+                vl_ymin = min(vl.y0, vl.y1)
+                vl_ymax = max(vl.y0, vl.y1)
+                if vl_ymin <= ht_y + snap_tolerance and vl_ymax >= hb_y - snap_tolerance:
+                    left_verts.append(vl)
 
-                # Left vert must be near the left ends of horizontals
-                if abs(vl_x - overlap_x0) > snap_tolerance:
-                    continue
-                if vl_ymin > ht_y + snap_tolerance:
-                    continue
-                if vl_ymax < hb_y - snap_tolerance:
-                    continue
+            if not left_verts:
+                continue
 
-                for v_right in v_lines[j + 1 :]:
-                    vr_x = (v_right.x0 + v_right.x1) / 2
-                    vr_ymin = min(v_right.y0, v_right.y1)
-                    vr_ymax = max(v_right.y0, v_right.y1)
-
-                    if abs(vr_x - overlap_x1) > snap_tolerance:
-                        continue
-                    if vr_ymin > ht_y + snap_tolerance:
-                        continue
-                    if vr_ymax < hb_y - snap_tolerance:
-                        continue
-
+            # Binary-search for vertical lines near overlap_x1 (right edge)
+            lo = bisect.bisect_left(vx_centres, overlap_x1 - snap_tolerance)
+            hi = bisect.bisect_right(vx_centres, overlap_x1 + snap_tolerance)
+            for k in range(lo, hi):
+                vr = v_lines[k]
+                vr_ymin = min(vr.y0, vr.y1)
+                vr_ymax = max(vr.y0, vr.y1)
+                if vr_ymin <= ht_y + snap_tolerance and vr_ymax >= hb_y - snap_tolerance:
                     # Found a rectangle!
                     boxes.append(
                         StructuralBox(
@@ -432,6 +443,7 @@ def _detect_boxes_from_lines(
                             y1=hb_y,
                         )
                     )
+                    break  # one box per h-pair + left-vert
 
     return boxes
 
