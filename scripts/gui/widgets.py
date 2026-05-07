@@ -806,9 +806,7 @@ class TOCRProgressBar(ttk.Frame):
         self._box_size = box
 
         # Calculate rows needed
-        boxes_per_row = max(
-            1, (canvas_w - self._BOX_PAD) // (box + self._BOX_PAD)
-        )
+        boxes_per_row = max(1, (canvas_w - self._BOX_PAD) // (box + self._BOX_PAD))
         rows = (self._page_count + boxes_per_row - 1) // boxes_per_row
         canvas_h = rows * (box + self._BOX_PAD) + self._BOX_PAD
         self._canvas.configure(height=max(canvas_h, box + 8))
@@ -840,9 +838,7 @@ class TOCRProgressBar(ttk.Frame):
             return None
         canvas_w = self._canvas.winfo_width()
         box = self._box_size
-        boxes_per_row = max(
-            1, (canvas_w - self._BOX_PAD) // (box + self._BOX_PAD)
-        )
+        boxes_per_row = max(1, (canvas_w - self._BOX_PAD) // (box + self._BOX_PAD))
         col = (x - self._BOX_PAD) // (box + self._BOX_PAD)
         row = (y - self._BOX_PAD) // (box + self._BOX_PAD)
         if col < 0 or row < 0 or col >= boxes_per_row:

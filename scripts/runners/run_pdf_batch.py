@@ -605,7 +605,7 @@ def run_pdf(
     page_states: dict[int, dict] = {}  # keyed by page_num
     processed_pages: list[int] = []
     cancelled = False
-    total_pages_to_process = (end_page - start)
+    total_pages_to_process = end_page - start
 
     def _page_event(page: int, status: str, **info: Any) -> None:
         """Fire page_callback if available, swallowing errors."""

@@ -973,7 +973,10 @@ class PipelineTab:
         self.state.notify("pipeline_starting")
 
         self._worker = PipelineWorker(
-            self.root, self.log_panel, self.stage_bar, self.error_panel,
+            self.root,
+            self.log_panel,
+            self.stage_bar,
+            self.error_panel,
             tocr_bar=self.tocr_bar,
         )
         worker = self._worker

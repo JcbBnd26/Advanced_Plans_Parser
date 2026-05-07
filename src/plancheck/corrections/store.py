@@ -9,6 +9,7 @@ This module uses mixin composition — see:
 - :mod:`.candidate_outcomes` — VOCR candidate outcome tracking
 - :mod:`.snapshots` — database backup/restore
 - :mod:`.box_groups` — detection grouping
+- :mod:`.group_snapshots` — grouper IsGroup fingerprints and correction signals
 - :mod:`.training_data` — training set generation
 - :mod:`.training_runs` — training experiment metadata
 - :mod:`.db_helpers` — database overview and summary queries
@@ -28,6 +29,7 @@ from .box_groups import BoxGroupMixin
 from .candidate_outcomes import CandidateOutcomesMixin
 from .db_helpers import DbHelpersMixin
 from .feature_cache import FeatureCacheMixin
+from .group_snapshots import GroupSnapshotMixin
 from .snapshots import SnapshotMixin
 from .store_utils import _gen_id, _utcnow_iso
 from .training_data import TrainingDataMixin
@@ -214,6 +216,43 @@ CREATE INDEX IF NOT EXISTS idx_dismissed_doc_page
     ON dismissed_detections(doc_id, page);
 CREATE INDEX IF NOT EXISTS idx_dismissed_detection
     ON dismissed_detections(detection_id);
+
+CREATE TABLE IF NOT EXISTS group_snapshots (
+    example_id      TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL,
+    project_id      TEXT DEFAULT '',
+    pdf_filename    TEXT NOT NULL,
+    page_number     INTEGER NOT NULL,
+    timestamp       TEXT NOT NULL,
+    boxes_json      TEXT NOT NULL,
+    group_geometry  TEXT NOT NULL,
+    normalized_geom TEXT NOT NULL,
+    page_context    TEXT NOT NULL,
+    label           TEXT DEFAULT '',
+    is_verified     INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS group_corrections (
+    correction_id      TEXT PRIMARY KEY,
+    session_id         TEXT NOT NULL,
+    doc_id             TEXT NOT NULL,
+    page_number        INTEGER NOT NULL,
+    timestamp          TEXT NOT NULL,
+    signal             TEXT NOT NULL,
+    machine_grouping   TEXT,
+    corrected_grouping TEXT,
+    delta              TEXT,
+    example_id         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_snapshots_pdf_page
+    ON group_snapshots(pdf_filename, page_number);
+CREATE INDEX IF NOT EXISTS idx_group_snapshots_session
+    ON group_snapshots(session_id);
+CREATE INDEX IF NOT EXISTS idx_group_corrections_session
+    ON group_corrections(session_id);
+CREATE INDEX IF NOT EXISTS idx_group_corrections_doc_page
+    ON group_corrections(doc_id, page_number);
 """
 
 
@@ -222,6 +261,7 @@ class CorrectionStore(
     CandidateOutcomesMixin,
     SnapshotMixin,
     BoxGroupMixin,
+    GroupSnapshotMixin,
     TrainingDataMixin,
     TrainingRunsMixin,
     DbHelpersMixin,
@@ -336,20 +376,17 @@ class CorrectionStore(
             self._conn.commit()
 
         # Create indices for frequently-queried patterns (idempotent)
-        self._conn.executescript(
-            """
+        self._conn.executescript("""
             CREATE INDEX IF NOT EXISTS idx_detections_doc_page ON detections(doc_id, page);
             CREATE INDEX IF NOT EXISTS idx_detections_run ON detections(run_id);
             CREATE INDEX IF NOT EXISTS idx_corrections_doc_page ON corrections(doc_id, page);
             CREATE INDEX IF NOT EXISTS idx_corrections_detection ON corrections(detection_id);
             CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_doc_page ON candidate_outcomes(doc_id, page);
-            """
-        )
+            """)
         self._conn.commit()
 
         # page_images + processing_runs tables (idempotent CREATE IF NOT EXISTS)
-        self._conn.executescript(
-            """
+        self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS page_images (
                 doc_id       TEXT NOT NULL,
                 page         INTEGER NOT NULL,
@@ -373,8 +410,7 @@ class CorrectionStore(
             );
             CREATE INDEX IF NOT EXISTS idx_page_images_doc ON page_images(doc_id, page);
             CREATE INDEX IF NOT EXISTS idx_processing_runs_doc ON processing_runs(doc_id);
-            """
-        )
+            """)
         self._conn.commit()
 
     def refresh(self) -> None:

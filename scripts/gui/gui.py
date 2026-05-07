@@ -314,8 +314,14 @@ class PlanParserGUI:
 
         self.root.configure(bg=bg)
 
-        style.configure(".", background=surface, foreground=fg, bordercolor=border,
-                         focuscolor=accent, font=("TkDefaultFont", 9))
+        style.configure(
+            ".",
+            background=surface,
+            foreground=fg,
+            bordercolor=border,
+            focuscolor=accent,
+            font=("TkDefaultFont", 9),
+        )
         style.configure("TFrame", background=surface)
         style.configure("TLabel", background=surface, foreground=fg)
         style.configure("TLabelframe", background=surface, foreground=fg)
@@ -323,21 +329,30 @@ class PlanParserGUI:
         style.configure("TButton", padding=(8, 4))
         style.configure("TNotebook", background=bg, borderwidth=0)
         style.configure("TNotebook.Tab", padding=(10, 4), font=("Segoe UI", 10))
-        style.map("TNotebook.Tab",
-                  background=[("selected", surface), ("!selected", surface_alt)],
-                  foreground=[("selected", fg), ("!selected", fg_dim)])
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", surface), ("!selected", surface_alt)],
+            foreground=[("selected", fg), ("!selected", fg_dim)],
+        )
         style.configure("TEntry", fieldbackground=surface_alt, foreground=fg)
         style.configure("TCombobox", fieldbackground=surface_alt, foreground=fg)
         style.configure("TCheckbutton", background=surface, foreground=fg)
-        style.configure("Treeview", background=surface_alt, foreground=fg,
-                         fieldbackground=surface_alt)
+        style.configure(
+            "Treeview",
+            background=surface_alt,
+            foreground=fg,
+            fieldbackground=surface_alt,
+        )
         style.configure("Treeview.Heading", background=surface, foreground=fg)
-        style.map("Treeview",
-                  background=[("selected", accent)],
-                  foreground=[("selected", "#ffffff")])
+        style.map(
+            "Treeview",
+            background=[("selected", accent)],
+            foreground=[("selected", "#ffffff")],
+        )
         # Run button (already referenced in tab_pipeline.py)
-        style.configure("Run.TButton", font=("TkDefaultFont", 12, "bold"),
-                         padding=(20, 10))
+        style.configure(
+            "Run.TButton", font=("TkDefaultFont", 12, "bold"), padding=(20, 10)
+        )
 
     def _build_ui(self) -> None:
         self._setup_theme()
@@ -416,7 +431,9 @@ class PlanParserGUI:
         self._view_menu.add_checkbutton(
             label="Database Inspector",
             variable=self._db_visible_var,
-            command=lambda: self._toggle_tab_visibility("database", self._db_visible_var),
+            command=lambda: self._toggle_tab_visibility(
+                "database", self._db_visible_var
+            ),
         )
         self._diag_visible_var = tk.BooleanVar(
             value=self.state.tab_visibility.get("diagnostics", True)

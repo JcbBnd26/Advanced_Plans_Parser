@@ -14,7 +14,6 @@ from typing import Any
 
 from plancheck.config import GroupingConfig
 
-
 # ---------------------------------------------------------------------------
 # Base class for settings dialogs
 # ---------------------------------------------------------------------------
@@ -445,9 +444,7 @@ class MLFeaturesDialog(_SettingsDialog):
         self._set_config_scalar(
             cfg, "ml_gnn_hidden_dim", self.ml_gnn_hidden_dim_var, int
         )
-        self._set_config_scalar(
-            cfg, "ml_gnn_patience", self.ml_gnn_patience_var, int
-        )
+        self._set_config_scalar(cfg, "ml_gnn_patience", self.ml_gnn_patience_var, int)
 
 
 # ---------------------------------------------------------------------------
@@ -548,9 +545,7 @@ class LLMConfigDialog(_SettingsDialog):
         cfg.llm_api_base = self.llm_api_base_var.get().strip() or cfg.llm_api_base
         cfg.llm_policy = self.llm_policy_var.get().strip() or cfg.llm_policy
         cfg.llm_api_key = self.llm_api_key_var.get().strip()
-        self._set_config_scalar(
-            cfg, "llm_temperature", self.llm_temperature_var, float
-        )
+        self._set_config_scalar(cfg, "llm_temperature", self.llm_temperature_var, float)
 
 
 # ---------------------------------------------------------------------------
@@ -611,9 +606,7 @@ class GeneralSettingsDialog(_SettingsDialog):
         ).grid(row=row, column=0, columnspan=2, sticky="w")
 
     def _load_values(self) -> None:
-        self._show_database_var.set(
-            self.state.tab_visibility.get("database", True)
-        )
+        self._show_database_var.set(self.state.tab_visibility.get("database", True))
         self._show_diagnostics_var.set(
             self.state.tab_visibility.get("diagnostics", True)
         )
