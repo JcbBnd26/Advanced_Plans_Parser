@@ -1,12 +1,11 @@
 """Grouper tab — interactive GlyphBox grouping and pattern capture.
 
-Provides three modes accessible via a toolbar:
+Provides two modes accessible via a toolbar:
 
 - **Learn Session** — clean canvas, build groups from scratch by
   Shift+clicking word boxes and confirming them as groups.
 - **Edit Mode** — machine groupings shown; tweak boundaries with
-  add/remove/split/merge gestures.
-- **Inspect Mode** — single-click reveals group membership (read-only).
+  add/remove/split/merge gestures.  Single-click reveals group membership.
 
 Every confirmed group writes an IsGroup fingerprint to the
 ``group_snapshots`` table and a correction signal to the
@@ -68,6 +67,9 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
         # ── Session state ─────────────────────────────────────────────
         self._gsession = GrouperSessionState()
         self._cfg: GroupingConfig = GroupingConfig()
+        self._learned_cfg: Optional[GroupingConfig] = (
+            None  # updated after each page commit
+        )
 
         # ── CorrectionStore ───────────────────────────────────────────
         db_path: Optional[Path] = (
@@ -79,6 +81,7 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
         self._scale: float = 1.0  # PDF-point → canvas-pixel multiplier
         self._zoom: float = 1.0
         self._photo: Any = None  # ImageTk.PhotoImage — must stay alive
+        self._bg_image_base: Any = None  # cached PIL Image for current page
 
         # ── Main frame ────────────────────────────────────────────────
         self.frame = ttk.Frame(notebook)
@@ -90,6 +93,9 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
         self._build_control_bar()
         self._build_canvas_area()
         self._build_status_bar()
+
+        # Bind canvas mouse events (implemented in GrouperEventsMixin)
+        self._bind_canvas_events()
 
         # React to the active Grouper mode
         self._mode_var.trace_add("write", lambda *_: self._on_mode_changed())
@@ -137,6 +143,21 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
                 value=mode_key,
             ).grid(row=0, column=7 + col_offset, padx=2)
 
+        # Zoom controls
+        ttk.Separator(bar, orient="vertical").grid(row=0, column=9, padx=8, sticky="ns")
+        ttk.Label(bar, text="Zoom:").grid(row=0, column=10, padx=(0, 2))
+        ttk.Button(bar, text="−", width=2, command=self._on_zoom_out).grid(
+            row=0, column=11, padx=1
+        )
+        self._zoom_label = ttk.Label(bar, text="100%", width=5, anchor="center")
+        self._zoom_label.grid(row=0, column=12, padx=2)
+        ttk.Button(bar, text="+", width=2, command=self._on_zoom_in).grid(
+            row=0, column=13, padx=1
+        )
+        ttk.Button(bar, text="⟳", width=2, command=self._on_zoom_reset).grid(
+            row=0, column=14, padx=(1, 0)
+        )
+
     # ── Control bar ───────────────────────────────────────────────────────────
 
     def _build_control_bar(self) -> None:
@@ -181,7 +202,7 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
         container.columnconfigure(0, weight=1)
         container.rowconfigure(0, weight=1)
 
-        self._canvas = tk.Canvas(container, background="#2b2b2b", cursor="crosshair")
+        self._canvas = tk.Canvas(container, background="#2b2b2b", cursor="arrow")
         self._canvas.grid(row=0, column=0, sticky="nsew")
 
         vscroll = ttk.Scrollbar(
@@ -280,17 +301,33 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
         self._set_status(f"Loading page {page}…")
         self.root.update_idletasks()
 
+        # Use learned config if available; bypass cache so patterns apply
+        active_cfg = self._learned_cfg if self._learned_cfg is not None else self._cfg
+        force = self._learned_cfg is not None
+
         try:
             from plancheck.grouping.grouper_pipeline import run_grouper_pipeline
 
-            data = run_grouper_pipeline(self._gsession.pdf_path, page, self._cfg)
+            data = run_grouper_pipeline(
+                self._gsession.pdf_path, page, active_cfg, force_refresh=force
+            )
         except Exception as exc:  # noqa: BLE001
             log.error("grouper: pipeline failed for page %d", page, exc_info=True)
             self._set_status(f"Error loading page {page}: {exc}")
             return
 
         self._gsession.page_data = data
-        self._scale = 1.0  # canvas renderer will set real scale in Phase E
+        self._bg_image_base = None  # invalidate cached page image
+
+        # Restore saved groups if this page was previously visited
+        saved = self._gsession.saved_pages.get(page)
+        if saved:
+            self._gsession.confirmed_groups = list(saved)
+            log.debug("grouper: restored %d group(s) for page %d", len(saved), page)
+        else:
+            # New page — propagate patterns from the most recently saved page
+            self._propagate_patterns_to_current_page(data)
+
         self._render_canvas()
         n_groups = len(self._gsession.confirmed_groups)
         self._set_status(
@@ -299,26 +336,66 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
             f"{n_groups} confirmed"
         )
 
-    # ── Canvas rendering ──────────────────────────────────────────────────────
-
-    def _render_canvas(self) -> None:
-        """Full canvas redraw.  Delegated to GrouperCanvasMixin in Phase E."""
-        # Phase D stub: just clear and show token count as text
-        self._canvas.delete("all")
-        if self._gsession.page_data is None:
-            return
-        n = len(self._gsession.page_data.boxes)
-        self._canvas.create_text(
-            10,
-            10,
-            text=f"Page {self._gsession.current_page} — {n} tokens loaded.\n"
-            "Canvas rendering implemented in Phase E.",
-            anchor="nw",
-            fill="#aaaaaa",
-            font=("Segoe UI", 11),
-        )
-
     # ── Session controls ──────────────────────────────────────────────────────
+
+    def _update_learned_cfg(self) -> None:
+        """Recompute learned GroupingConfig from all saved pages so far."""
+        if not self._gsession.saved_pages or self._gsession.pdf_path is None:
+            return
+        try:
+            from plancheck.grouping.grouper_pipeline import (
+                learn_cfg_from_confirmed_groups,
+            )
+
+            self._learned_cfg = learn_cfg_from_confirmed_groups(
+                self._gsession.saved_pages,
+                self._gsession.pdf_path,
+                self._cfg,
+            )
+        except Exception:  # noqa: BLE001
+            log.error("grouper: failed to compute learned cfg", exc_info=True)
+
+    def _propagate_patterns_to_current_page(self, target_data: Any) -> None:
+        """Auto-populate confirmed_groups from the most recently saved page."""
+        if not self._gsession.saved_pages or self._gsession.pdf_path is None:
+            return
+
+        # Use the highest-numbered saved page as the source
+        source_page = max(self._gsession.saved_pages.keys())
+        source_groups = self._gsession.saved_pages[source_page]
+        if not source_groups:
+            return
+
+        try:
+            from plancheck.grouping.grouper_pipeline import (
+                load_cached_page,
+                propagate_page_patterns,
+            )
+            from .grouper_state import ConfirmedGroup
+
+            source_data = load_cached_page(self._gsession.pdf_path, source_page)
+            if source_data is None:
+                return
+
+            matches = propagate_page_patterns(source_groups, source_data, target_data)
+            if not matches:
+                return
+
+            self._gsession.confirmed_groups = [
+                ConfirmedGroup(
+                    indices=m["indices"],
+                    bbox=m["bbox"],
+                    example_id="",  # not yet persisted — pending user confirmation
+                )
+                for m in matches
+            ]
+            self._set_status(
+                f"Page {self._gsession.current_page} — "
+                f"{len(matches)} pattern(s) propagated from page {source_page}. "
+                f"Edit or right-click to confirm."
+            )
+        except Exception:  # noqa: BLE001
+            log.error("grouper: pattern propagation failed", exc_info=True)
 
     def _on_page_spin(self) -> None:
         """Spinbox command: navigate to the selected page number."""
@@ -327,6 +404,9 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
         new_page = self._page_var.get()
         if new_page == self._gsession.current_page:
             return
+        # Auto-save current page before leaving it
+        self._gsession.commit_page()
+        self._update_learned_cfg()
         self._gsession.reset_page_state()
         self._gsession.current_page = new_page
         self._load_current_page()
@@ -348,6 +428,7 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
         if not self._gsession.active:
             return
         self._gsession.commit_page()
+        self._update_learned_cfg()
         n_saved = len(self._gsession.saved_pages.get(self._gsession.current_page, []))
         log.info(
             "grouper: saved page %d (%d groups)",
@@ -409,3 +490,23 @@ class GrouperTab(GrouperCanvasMixin, GrouperEventsMixin):
             self._page_spin,
         ):
             widget.configure(state=state)
+
+    # ── Zoom controls ─────────────────────────────────────────────────────────
+
+    def _on_zoom_in(self) -> None:
+        self._zoom = min(4.0, round(self._zoom + 0.25, 2))
+        self._update_zoom_label()
+        self._render_canvas()
+
+    def _on_zoom_out(self) -> None:
+        self._zoom = max(0.25, round(self._zoom - 0.25, 2))
+        self._update_zoom_label()
+        self._render_canvas()
+
+    def _on_zoom_reset(self) -> None:
+        self._zoom = 1.0
+        self._update_zoom_label()
+        self._render_canvas()
+
+    def _update_zoom_label(self) -> None:
+        self._zoom_label.configure(text=f"{int(self._zoom * 100)}%")

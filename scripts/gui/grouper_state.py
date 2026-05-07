@@ -101,6 +101,9 @@ class GrouperSessionState:
     doc_id: str = ""
     selected_indices: Set[int] = field(default_factory=set)
     inspected_group_idx: Optional[int] = None
+    selected_group_indices: Set[int] = field(
+        default_factory=set
+    )  # groups marked for meta-grouping
     confirmed_groups: List[ConfirmedGroup] = field(default_factory=list)
     saved_pages: Dict[int, List[ConfirmedGroup]] = field(default_factory=dict)
     show_machine_groups: bool = False
@@ -116,6 +119,7 @@ class GrouperSessionState:
         """
         self.selected_indices = set()
         self.inspected_group_idx = None
+        self.selected_group_indices = set()
         self.confirmed_groups = []
         self.page_data = None
 
