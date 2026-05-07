@@ -515,6 +515,7 @@ class PlanParserGUI:
             ("Diagnostics", "_diagnostics_tab", "diagnostics"),
             ("Sheet Recreation", "_recreation_tab", "recreation"),
             ("ML Trainer", "_annotation_tab", "annotation"),
+            ("Grouper", "_grouper_tab", "grouper"),
             ("Query", "_query_tab", "query"),
         ]
 
@@ -606,6 +607,10 @@ class PlanParserGUI:
             from .tab_annotation import AnnotationTab
 
             return AnnotationTab(self.notebook, gui_state=self.state)
+        if key == "grouper":
+            from .tab_grouper import GrouperTab
+
+            return GrouperTab(self.notebook, gui_state=self.state)
         if key == "query":
             from .tab_query import QueryTab
 
